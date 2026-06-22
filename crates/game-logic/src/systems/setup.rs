@@ -45,12 +45,10 @@ use std::{collections::HashMap, path::PathBuf};
 ///
 /// Fields:
 /// - `localized_name`: Directory slug used for local champion assets.
-/// - `display_name`: Display name assigned to the spawned player profile.
 /// - `model_name`: GLB model filename loaded from the champion model directory.
 /// - `animations`: Animation key-to-index mappings used to build the graph.
 struct ChampionDataFile {
     localized_name: String,
-    display_name: String,
     model_name: String,
     animations: Vec<ChampionAnimationEntry>,
 }
@@ -126,6 +124,7 @@ pub(super) fn spawn_local_player_and_camera(
     mut graphs: ResMut<Assets<AnimationGraph>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    health_bar_style: Res<super::healthbar::OverheadHealthBarStyle>,
 ) {
     let champion_data = load_champion_data(LOCAL_CHAMPION_ID).unwrap_or_else(|| {
         warn!(
@@ -134,7 +133,6 @@ pub(super) fn spawn_local_player_and_camera(
         );
         ChampionDataFile {
             localized_name: "lira".to_string(),
-            display_name: "Lira".to_string(),
             model_name: "model.glb".to_string(),
             animations: vec![
                 ChampionAnimationEntry {
@@ -197,14 +195,21 @@ pub(super) fn spawn_local_player_and_camera(
             PlayerBundle::new(PlayerId(1), TeamSpec::Light),
             CurrentChampionVisual::default(),
             PlayerProfile {
-                display_name: champion_data.display_name,
+                display_name: "Player".to_string(),
             },
             TranslationInterpolation,
             RotationInterpolation,
             Transform::from_xyz(0.0, 0.0, 0.0),
         ))
         .id();
-    healthbar::spawn_player_health_bar(&mut commands, &mut meshes, &mut materials, player_entity);
+    healthbar::spawn_player_health_bar(
+        &mut commands,
+        &asset_server,
+        &mut meshes,
+        &mut materials,
+        player_entity,
+        health_bar_style.accent_color,
+    );
 
     commands.spawn((
         Name::new("TopDownCamera"),

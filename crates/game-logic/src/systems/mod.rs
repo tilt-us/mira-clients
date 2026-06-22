@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use bevy_fontmesh::FontMeshPlugin;
 use game_shared::network::ChampionId;
 
 mod animation;
@@ -11,6 +12,7 @@ mod setup;
 mod targeting;
 mod ui_state;
 
+pub use healthbar::{OverheadHealthBarStyle, OverheadPlayerProfiles};
 pub use ui_state::MiraHudState;
 
 /// Registers server-safe gameplay systems shared by client and dedicated server.
@@ -165,6 +167,7 @@ impl Plugin for MiraGameplaySystemsPlugin {
 
 impl Plugin for MiraClientSystemsPlugin {
     fn build(&self, app: &mut App) {
+        app.add_plugins(FontMeshPlugin::<StandardMaterial>::default());
         app.add_plugins((
             LocalSpawnSystemsPlugin,
             NetworkedPlayersSystemsPlugin,
@@ -215,6 +218,8 @@ impl Plugin for LocalSpawnSystemsPlugin {
             .init_resource::<characters::sophia::SophiaESettings>()
             .init_resource::<characters::sophia::SophiaECastState>()
             .init_resource::<ui_state::MiraHudState>()
+            .init_resource::<healthbar::OverheadHealthBarStyle>()
+            .init_resource::<healthbar::OverheadPlayerProfiles>()
             .init_resource::<setup::ClientChampionCatalog>()
             .init_resource::<networked_players::AppliedLocalNetworkSpawn>()
             .init_resource::<networked_players::PlayerStateUpdateTimer>()
@@ -432,7 +437,7 @@ impl Plugin for HudSystemsPlugin {
         app.add_systems(
             Update,
             (
-                healthbar::update_health_bar_positions,
+                healthbar::update_health_bar_positions.after(camera::update_top_down_camera),
                 healthbar::update_health_bar_fills,
                 ui_state::update_mira_hud_state,
             )

@@ -1,8 +1,7 @@
 mod app;
 mod network;
-mod ui_components;
 
-use app::settings::ClientLaunchSettings;
+use app::settings::{ClientLaunchSettings, ClientScreenMode};
 use network::ClientNetworkSettings;
 use std::env;
 use std::net::ToSocketAddrs;
@@ -67,6 +66,7 @@ where
             | "--matchmaking-api-base-url"
             | "--server-control-base-url"
             | "--server-host"
+            | "--screen"
             | "--port"
             | "-p"
             | "--char"
@@ -125,6 +125,7 @@ fn apply_client_arg(
         "server-control-base-url" => {
             launch_settings.server_control_base_url = Some(value.to_string());
         }
+        "screen" => launch_settings.screen_mode = parse_screen_mode(value)?,
         "server-host" => {
             network_settings.server_addr =
                 resolve_server_addr(value, network_settings.server_addr.port())?;
@@ -135,6 +136,15 @@ fn apply_client_arg(
     }
 
     Ok(())
+}
+
+fn parse_screen_mode(value: &str) -> Result<ClientScreenMode, String> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "full" => Ok(ClientScreenMode::Full),
+        "window" => Ok(ClientScreenMode::Window),
+        "borderless" => Ok(ClientScreenMode::Borderless),
+        _ => Err(format!("Invalid screen mode: {value}")),
+    }
 }
 
 fn parse_player_public_id(value: &str) -> Result<u64, String> {
@@ -209,7 +219,7 @@ fn parse_port(value: &str) -> Result<u16, String> {
 /// Description:
 /// Returns CLI usage text for the playable client.
 fn usage() -> &'static str {
-    "Usage: mira-game-client [OPTIONS]\n\nOptions:\n  --access-token <TOKEN>                 Matchmaking access token\n  --accent-color <HEX>                   Mira client accent color override\n  --match-id <MATCH_ID>                  Matchmaking match id\n  --player-public-id <PLAYER_PUBLIC_ID>  Public player id\n  --champion <CHAMPION>                  Champion slug or id\n  --matchmaking-api-base-url <URL>       Matchmaking API base URL\n  --server-control-base-url <URL>        Dedicated server REST control API base URL\n  --server-host <HOST>                   Hostname or IP of the dedicated server\n  -p, --port <PORT>                      UDP port of the dedicated server\n  -h, --help                             Print help"
+    "Usage: mira-game-client [OPTIONS]\n\nOptions:\n  --access-token <TOKEN>                 Matchmaking access token\n  --accent-color <HEX>                   Mira client accent color override\n  --match-id <MATCH_ID>                  Matchmaking match id\n  --player-public-id <PLAYER_PUBLIC_ID>  Public player id\n  --champion <CHAMPION>                  Champion slug or id\n  --matchmaking-api-base-url <URL>       Matchmaking API base URL\n  --server-control-base-url <URL>        Dedicated server REST control API base URL\n  --server-host <HOST>                   Hostname or IP of the dedicated server\n  --screen <full|window|borderless>      Game window mode\n  -p, --port <PORT>                      UDP port of the dedicated server\n  -h, --help                             Print help"
 }
 
 #[cfg(test)]
@@ -244,6 +254,8 @@ mod tests {
             "https://matchmaking.example.test",
             "--server-control-base-url",
             "http://127.0.0.1:6000",
+            "--screen",
+            "full",
         ])
         .unwrap()
         .unwrap();
@@ -261,6 +273,7 @@ mod tests {
             launch_settings.server_control_base_url.as_deref(),
             Some("http://127.0.0.1:6000")
         );
+        assert_eq!(launch_settings.screen_mode, ClientScreenMode::Full);
         assert_eq!(
             network_settings.server_addr.port(),
             DEFAULT_SERVER_ADDR.port()
@@ -277,6 +290,7 @@ mod tests {
             "--champion=ignara",
             "--matchmaking-api-base-url=https://matchmaking.example.test",
             "--server-control-base-url=http://127.0.0.1:6000",
+            "--screen=window",
             "--port=7777",
         ])
         .unwrap()
@@ -294,7 +308,17 @@ mod tests {
             launch_settings.server_control_base_url.as_deref(),
             Some("http://127.0.0.1:6000")
         );
+        assert_eq!(launch_settings.screen_mode, ClientScreenMode::Window);
         assert_eq!(network_settings.server_addr.port(), 7777);
+    }
+
+    #[test]
+    fn defaults_to_borderless_screen_mode() {
+        let (launch_settings, _) = client_settings_from_args(Vec::<String>::new())
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(launch_settings.screen_mode, ClientScreenMode::Borderless);
     }
 
     #[test]
@@ -352,5 +376,12 @@ mod tests {
         let error = client_settings_from_args(["--port", "70000"]).unwrap_err();
 
         assert_eq!(error, "Invalid port: 70000");
+    }
+
+    #[test]
+    fn rejects_invalid_screen_mode() {
+        let error = client_settings_from_args(["--screen", "giant"]).unwrap_err();
+
+        assert_eq!(error, "Invalid screen mode: giant");
     }
 }

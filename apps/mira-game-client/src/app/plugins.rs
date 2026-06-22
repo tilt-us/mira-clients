@@ -1,22 +1,20 @@
 use bevy::asset::AssetMetaCheck;
+use bevy::feathers::{FeathersPlugins, dark_theme::create_dark_theme, theme::UiTheme};
 use bevy::prelude::*;
-use bevy::window::WindowResolution;
-use bevy_extended_ui::{
-    ExtendedCam, ExtendedUiConfiguration, ExtendedUiPlugin,
-    framework::ExtendedFrameworkConfiguration,
-};
+use bevy::ui::IsDefaultUiCamera;
+use bevy::window::{MonitorSelection, VideoModeSelection, WindowMode, WindowResolution};
 use bevy_transform_interpolation::prelude::TransformInterpolationPlugin;
-use game_logic::{MiraClientSystemsPlugin, MiraGameplaySystemsPlugin};
+use game_logic::{MiraClientSystemsPlugin, MiraGameplaySystemsPlugin, OverheadHealthBarStyle};
 use game_shared::MiraSharedPlugin;
 use game_shared::network::FIXED_TIMESTEP_HZ;
 use game_world::MiraWorldPlugin;
 
-use super::settings::ClientAppSettings;
+use super::settings::{ClientAppSettings, ClientLaunchSettings, ClientScreenMode};
 use super::states::ClientState;
+use crate::app::leave_menu::LeaveMenuPlugin;
 use crate::app::loading_screen::LoadingScreenPlugin;
+use crate::app::main_hud::MainHudPlugin;
 use crate::network::ClientNetworkPlugin;
-use crate::ui_components::loading_screen_component::LoadingScreenComponentPlugin;
-use crate::ui_components::main_component::MainComponentPlugin;
 
 /// Description:
 /// Registers the playable client plugin stack.
@@ -28,8 +26,21 @@ impl Plugin for ClientAppPlugins {
         let asset_root = settings.asset_root.clone();
         let asset_root_text = asset_root.to_string_lossy().into_owned();
         let ui_enabled = settings.ui_enabled;
+        let screen_mode = app
+            .world()
+            .get_resource::<ClientLaunchSettings>()
+            .map(|settings| settings.screen_mode)
+            .unwrap_or_default();
+        let health_bar_style = app
+            .world()
+            .get_resource::<ClientLaunchSettings>()
+            .map(|settings| OverheadHealthBarStyle {
+                accent_color: settings.accent_color_bevy(),
+            })
+            .unwrap_or_default();
 
         app.insert_resource(Time::<Fixed>::from_hz(FIXED_TIMESTEP_HZ))
+            .insert_resource(health_bar_style)
             .insert_resource(settings)
             .add_plugins(
                 DefaultPlugins
@@ -37,6 +48,7 @@ impl Plugin for ClientAppPlugins {
                         primary_window: Some(Window {
                             title: "mira-game-client".to_string(),
                             resolution: WindowResolution::new(1920, 1080),
+                            mode: bevy_window_mode(screen_mode),
                             ..default()
                         }),
                         ..default()
@@ -47,6 +59,8 @@ impl Plugin for ClientAppPlugins {
                         ..default()
                     }),
             )
+            .add_plugins(FeathersPlugins)
+            .insert_resource(UiTheme(create_dark_theme()))
             .init_state::<ClientState>()
             .add_plugins(TransformInterpolationPlugin::default())
             .add_plugins((
@@ -59,27 +73,30 @@ impl Plugin for ClientAppPlugins {
             ));
 
         if ui_enabled {
-            let component_root = asset_root.join("components").to_string_lossy().into_owned();
-
-            app.insert_resource(ExtendedUiConfiguration {
-                assets_path: asset_root
-                    .join("extended_ui")
-                    .to_string_lossy()
-                    .into_owned(),
-                camera: ExtendedCam::Simple,
-                ..default()
-            })
-            .insert_resource(ExtendedFrameworkConfiguration {
-                asset_root_fs_path: asset_root_text,
-                assets_component_root: "components".to_string(),
-                rust_component_root: component_root,
-                index_html_file: "index.html".to_string(),
-            })
-            .add_plugins((
-                ExtendedUiPlugin,
-                MainComponentPlugin,
-                LoadingScreenComponentPlugin,
-            ));
+            app.add_systems(Startup, setup_ui_camera)
+                .add_plugins((MainHudPlugin, LeaveMenuPlugin));
         }
     }
+}
+
+fn bevy_window_mode(screen_mode: ClientScreenMode) -> WindowMode {
+    match screen_mode {
+        ClientScreenMode::Full => {
+            WindowMode::Fullscreen(MonitorSelection::Primary, VideoModeSelection::Current)
+        }
+        ClientScreenMode::Window => WindowMode::Windowed,
+        ClientScreenMode::Borderless => WindowMode::BorderlessFullscreen(MonitorSelection::Primary),
+    }
+}
+
+fn setup_ui_camera(mut commands: Commands) {
+    commands.spawn((
+        Camera2d,
+        Camera {
+            order: 100,
+            clear_color: ClearColorConfig::None,
+            ..default()
+        },
+        IsDefaultUiCamera,
+    ));
 }

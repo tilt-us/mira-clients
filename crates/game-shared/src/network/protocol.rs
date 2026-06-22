@@ -334,6 +334,11 @@ pub struct PlayerStateUpdate {
 pub struct DisplayReady;
 
 /// Description:
+/// Sent by a client before it intentionally leaves the running match.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClientLeave;
+
+/// Description:
 /// Sends the server-side loading-screen state to clients.
 ///
 /// Fields:
@@ -403,6 +408,9 @@ impl Plugin for SharedNetworkPlugin {
             .add_direction(NetworkDirection::ClientToServer);
 
         app.register_message::<DisplayReady>()
+            .add_direction(NetworkDirection::ClientToServer);
+
+        app.register_message::<ClientLeave>()
             .add_direction(NetworkDirection::ClientToServer);
 
         app.register_message::<MatchSnapshot>()

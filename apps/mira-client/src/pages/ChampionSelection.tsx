@@ -162,12 +162,22 @@ function getPlayerHoveredChampion(match: _8083ApiMatchResponse, publicId?: numbe
   })?.champion;
 }
 
+function getChampionWallpaper(champion?: string) {
+  return champion ? championWallpapersByName.get(champion.toLowerCase()) : undefined;
+}
+
 function getChampionImage(champion?: string) {
   return champion ? championImagesByName.get(champion.toLowerCase()) : undefined;
 }
 
-function getChampionWallpaper(champion?: string) {
-  return champion ? championWallpapersByName.get(champion.toLowerCase()) : undefined;
+function getPlayerName(player: MatchPlayerResponse) {
+  const playerName = getPublicDisplayName(player.displayName, "");
+
+  if (!playerName || /^(player|user)(?:\s+\d+)?$/i.test(playerName)) {
+    return "User";
+  }
+
+  return playerName;
 }
 
 function getPickGroups(teams: MatchLobbyResponse[]) {
@@ -282,24 +292,69 @@ function ChampionSelection({
       : localPickHoverChampion ?? preselectedChampion;
   const selectedChampionWallpaper = getChampionWallpaper(selectedChampion);
   const previewedChampionWallpaper = getChampionWallpaper(previewedChampion);
-  const activePickerChampions = activePickGroup
+  function getPlayerTeamIndex(player: MatchPlayerResponse) {
+    return teams[1]?.players?.some((teamPlayer) => {
+      return teamPlayer.publicId === player.publicId;
+    })
+      ? 1
+      : 0;
+  }
+  function canShowPlayerPreviewToCurrentClient(player: MatchPlayerResponse) {
+    const playerTeamIndex = getPlayerTeamIndex(player);
+    const sameTeam = playerTeamIndex === currentPlayerTeamIndex;
+    const isActivePicker =
+      activePhase === "pick" && activePickPublicIds.has(player.publicId ?? -1);
+
+    return sameTeam || isActivePicker;
+  }
+  const activePickerPreviewChampions = activePickGroup
     .map((player) => {
+      if (!canShowPlayerPreviewToCurrentClient(player)) {
+        return undefined;
+      }
+
+      if (
+        player.publicId === currentPlayerPublicId &&
+        (activePhase === "warmup" || canCurrentPlayerPick)
+      ) {
+        return (
+          previewedChampion ??
+          getPlayerHoveredChampion(match, player.publicId) ??
+          getPlayerSelection(match, player.publicId)?.champion
+        );
+      }
+
       return (
         getPlayerHoveredChampion(match, player.publicId) ??
         getPlayerSelection(match, player.publicId)?.champion
       );
     })
     .filter((champion): champion is string => Boolean(champion));
+  const activePickerPreviewWallpapers = activePickerPreviewChampions
+    .map(getChampionWallpaper)
+    .filter((wallpaper): wallpaper is string => Boolean(wallpaper));
   const bubbleChampionWallpapers =
     activePhase === "ready"
       ? [selectedChampionWallpaper].filter((wallpaper): wallpaper is string => Boolean(wallpaper))
       : Array.from(
           new Set(
-            [previewedChampionWallpaper, ...activePickerChampions.map(getChampionWallpaper)].filter(
+            [previewedChampionWallpaper, ...activePickerPreviewWallpapers].filter(
               (wallpaper): wallpaper is string => Boolean(wallpaper),
             ),
           ),
         ).slice(0, 2);
+  const bubbleChampionNames =
+    activePhase === "ready"
+      ? [selectedChampion].filter((champion): champion is string => Boolean(champion))
+      : Array.from(
+          new Set(
+            [previewedChampion, ...activePickerPreviewChampions].filter(
+              (champion): champion is string => Boolean(champion),
+            ),
+          ),
+        ).slice(0, 2);
+  const centerChampionName =
+    activePhase === "ready" ? selectedChampion : bubbleChampionNames[0];
   const isCurrentPlayerPicking =
     activePhase === "pick" &&
     typeof currentPlayerPublicId === "number" &&
@@ -316,9 +371,8 @@ function ChampionSelection({
       ? activePickCardIndexes.reduce((sum, playerIndex) => sum + playerIndex, 0) /
         activePickCardIndexes.length
       : 2;
-  const pickIndicatorOffset = `${(activePickCardIndex - 2) * 80 + 12}px`;
-  const pickIndicatorSide =
-    activePickGroup.length > 1 ? "dual" : currentPickTeamIndex === 1 ? "light" : "dark";
+  const pickIndicatorOffset = `${(activePickCardIndex - 2) * 93}px`;
+  const pickIndicatorSide = currentPickTeamIndex === 1 ? "light" : "dark";
   const phaseDurationSeconds =
     activePhase === "warmup"
       ? warmupSeconds
@@ -329,7 +383,7 @@ function ChampionSelection({
   const phaseElapsedSeconds = Math.floor(phaseElapsedMs / 1_000);
   const phaseSeconds = Math.max(0, phaseDurationSeconds - phaseElapsedSeconds);
   const phaseProgress = Math.min(1, phaseElapsedMs / (phaseDurationSeconds * 1_000));
-  const canCurrentPlayerPreselect = activePhase === "warmup" || canCurrentPlayerPick;
+  const canCurrentPlayerPreselect = activePhase !== "ready" && !selectedChampion;
   const confirmableChampion = canCurrentPlayerPick ? preselectedChampion : undefined;
 
   async function handleChampionSelect(champion: string) {
@@ -397,6 +451,7 @@ function ChampionSelection({
 
     if (activePhase === "warmup") {
       setLocalWarmupHoverChampion(champion);
+      void onChampionHover(champion, true);
       return;
     }
 
@@ -534,47 +589,52 @@ function ChampionSelection({
             >
               <h2>{getTeamName(teamIndex)}</h2>
               <div className="champion-selection-team-list">
-                {(team.players ?? []).map((player, playerIndex) => {
+                {(team.players ?? []).map((player) => {
                   const playerSelection = getPlayerSelection(match, player.publicId);
                   const playerHoveredChampion =
                     player.publicId === currentPlayerPublicId &&
                     (activePhase === "warmup" || canCurrentPlayerPick)
                       ? previewedChampion
                       : getPlayerHoveredChampion(match, player.publicId);
-                  const previewChampion = playerSelection?.champion ?? playerHoveredChampion;
+                  const visiblePlayerHoveredChampion = canShowPlayerPreviewToCurrentClient(player)
+                    ? playerHoveredChampion
+                    : undefined;
+                  const previewChampion =
+                    playerSelection?.champion ?? visiblePlayerHoveredChampion;
                   const playerChampionImage = getChampionImage(previewChampion);
                   const isCurrentPick = activePickPublicIds.has(player.publicId ?? -1);
                   const playerName = isOpponentTeam
-                    ? `${t("champion-select-opponent")} ${playerIndex + 1}`
-                    : getPublicDisplayName(
-                        player.displayName,
-                        `#${player.publicId ?? "?"}`,
-                      );
+                    ? t("champion-select-opponent")
+                    : getPlayerName(player);
 
                   return (
                     <article
                       className={
-                        isCurrentPick
-                          ? "champion-selection-player current"
-                          : "champion-selection-player"
+                        [
+                          "champion-selection-player",
+                          isCurrentPick ? "current" : "",
+                          isOpponentTeam ? "opponent" : "ally",
+                        ]
+                          .filter(Boolean)
+                          .join(" ")
                       }
                       key={player.publicId}
                     >
                       <div className="champion-selection-player-avatar">
                         {playerChampionImage ? (
                           <img alt="" src={playerChampionImage} />
-                        ) : player.avatarUrl && !isOpponentTeam ? (
+                        ) : !isOpponentTeam && player.avatarUrl ? (
                           <img alt="" src={player.avatarUrl} />
-                        ) : isOpponentTeam ? (
-                          playerIndex + 1
-                        ) : (
+                        ) : !isOpponentTeam ? (
                           getProfileInitials(player.displayName ?? "?")
-                        )}
+                        ) : null}
                       </div>
-                      <span>{playerName}</span>
-                      {previewChampion ? (
-                        <small>{previewChampion}</small>
-                      ) : null}
+                      <div className="champion-selection-player-meta">
+                        <span>{playerName}</span>
+                        {previewChampion ? (
+                          <small>{previewChampion}</small>
+                        ) : null}
+                      </div>
                     </article>
                   );
                 })}
@@ -630,7 +690,7 @@ function ChampionSelection({
                   ) : null}
                 </div>
               ) : null}
-              <strong>{selectedChampion}</strong>
+              {centerChampionName ? <strong>{centerChampionName}</strong> : null}
             </div>
           ) : (
             <>
@@ -644,10 +704,7 @@ function ChampionSelection({
                         ? "champion-selection-champion selected"
                         : "champion-selection-champion"
                     }
-                    disabled={
-                      activePhase !== "warmup" &&
-                      (!canCurrentPlayerPick || Boolean(selectingChampion))
-                    }
+                    disabled={!canCurrentPlayerPreselect || Boolean(selectingChampion)}
                     key={champion.name}
                     type="button"
                     onClick={() => handleChampionPreselect(champion.name)}
@@ -670,7 +727,9 @@ function ChampionSelection({
                   type="button"
                   onClick={handleChampionConfirm}
                 >
-                  {selectingChampion ? selectingChampion : t("champion-select-confirm")}
+                  <span>
+                    {selectingChampion ? selectingChampion : t("champion-select-confirm")}
+                  </span>
                 </button>
               ) : null}
             </>

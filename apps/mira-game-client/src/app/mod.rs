@@ -1,4 +1,6 @@
+pub mod leave_menu;
 pub mod loading_screen;
+pub mod main_hud;
 pub mod plugins;
 pub mod settings;
 pub mod states;

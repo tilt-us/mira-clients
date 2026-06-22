@@ -1,13 +1,14 @@
 import { useState } from "react";
-import { Monitor, Users } from "lucide-react";
+import { Gamepad2, Monitor, Users } from "lucide-react";
 import type { AppLocale } from "../i18n";
-import type { AppResolution, ClientAnimation } from "../settings";
+import type { AppResolution, ClientAnimation, GameScreenMode } from "../settings";
 import type { SettingsVision, Translate } from "../types/ui";
 
 type SettingsModalProps = {
   accentColor: string;
   allowFriendRequests: boolean;
   clientAnimation: ClientAnimation;
+  gameScreenMode: GameScreenMode;
   locale: AppLocale;
   resolution: AppResolution;
   supportsFourKResolution: boolean;
@@ -16,13 +17,14 @@ type SettingsModalProps = {
   onAllowFriendRequestsChange: (allowFriendRequests: boolean) => void;
   onClientAnimationChange: (clientAnimation: ClientAnimation) => void;
   onClose: () => void;
+  onGameScreenModeChange: (gameScreenMode: GameScreenMode) => void;
   onLocaleChange: (locale: AppLocale) => void;
   onResolutionChange: (resolution: AppResolution) => void;
   t: Translate;
   vision: SettingsVision;
 };
 
-type SettingsTab = "interface" | "social";
+type SettingsTab = "interface" | "game" | "social";
 
 const resolutionOptions: Array<{
   label: string;
@@ -48,10 +50,20 @@ const clientAnimationOptions: Array<{
   { label: "None", value: "none" },
 ];
 
+const gameScreenModeOptions: Array<{
+  label: string;
+  value: GameScreenMode;
+}> = [
+  { label: "Borderless", value: "borderless" },
+  { label: "Fullscreen", value: "full" },
+  { label: "Window", value: "window" },
+];
+
 function SettingsModal({
   accentColor,
   allowFriendRequests,
   clientAnimation,
+  gameScreenMode,
   locale,
   resolution,
   supportsFourKResolution,
@@ -60,6 +72,7 @@ function SettingsModal({
   onAllowFriendRequestsChange,
   onClientAnimationChange,
   onClose,
+  onGameScreenModeChange,
   onLocaleChange,
   onResolutionChange,
   t,
@@ -68,6 +81,8 @@ function SettingsModal({
   const [activeSettingsTab, setActiveSettingsTab] =
     useState<SettingsTab>("interface");
   const [clientAnimationDropdownOpen, setClientAnimationDropdownOpen] =
+    useState(false);
+  const [gameScreenModeDropdownOpen, setGameScreenModeDropdownOpen] =
     useState(false);
   const [languageDropdownOpen, setLanguageDropdownOpen] = useState(false);
   const [resolutionDropdownOpen, setResolutionDropdownOpen] = useState(false);
@@ -92,6 +107,9 @@ function SettingsModal({
   const selectedClientAnimation =
     clientAnimationOptions.find((option) => option.value === clientAnimation)?.label ??
     "All";
+  const selectedGameScreenMode =
+    gameScreenModeOptions.find((option) => option.value === gameScreenMode)?.label ??
+    "Borderless";
 
   function handleLocaleSelect(nextLocale: AppLocale) {
     onLocaleChange(nextLocale);
@@ -101,6 +119,11 @@ function SettingsModal({
   function handleClientAnimationSelect(nextClientAnimation: ClientAnimation) {
     onClientAnimationChange(nextClientAnimation);
     setClientAnimationDropdownOpen(false);
+  }
+
+  function handleGameScreenModeSelect(nextGameScreenMode: GameScreenMode) {
+    onGameScreenModeChange(nextGameScreenMode);
+    setGameScreenModeDropdownOpen(false);
   }
 
   function handleResolutionSelect(nextResolution: AppResolution) {
@@ -132,6 +155,14 @@ function SettingsModal({
               <Monitor size={17} />
               <span>{t("settings-interface")}</span>
             </button>
+            <button
+              className={activeSettingsTab === "game" ? "active" : ""}
+              type="button"
+              onClick={() => setActiveSettingsTab("game")}
+            >
+              <Gamepad2 size={17} />
+              <span>{t("settings-game")}</span>
+            </button>
             {socialTabAvailable ? (
               <button
                 className={activeSettingsTab === "social" ? "active" : ""}
@@ -160,6 +191,7 @@ function SettingsModal({
                       type="button"
                       onClick={() => {
                         setClientAnimationDropdownOpen(false);
+                        setGameScreenModeDropdownOpen(false);
                         setLanguageDropdownOpen(false);
                         setResolutionDropdownOpen((open) => !open);
                       }}
@@ -207,6 +239,7 @@ function SettingsModal({
                       className="settings-dropdown-trigger"
                       type="button"
                       onClick={() => {
+                        setGameScreenModeDropdownOpen(false);
                         setResolutionDropdownOpen(false);
                         setLanguageDropdownOpen(false);
                         setClientAnimationDropdownOpen((open) => !open);
@@ -246,6 +279,7 @@ function SettingsModal({
                       type="button"
                       onClick={() => {
                         setClientAnimationDropdownOpen(false);
+                        setGameScreenModeDropdownOpen(false);
                         setResolutionDropdownOpen(false);
                         setLanguageDropdownOpen((open) => !open);
                       }}
@@ -279,6 +313,47 @@ function SettingsModal({
                   </div>
                 </div>
               </>
+            ) : null}
+
+            {activeSettingsTab === "game" ? (
+              <div className="settings-row">
+                <span>{t("settings-game-screen-mode")}</span>
+                <div
+                  className="settings-dropdown"
+                  onMouseDown={(event) => event.stopPropagation()}
+                >
+                  <button
+                    aria-expanded={gameScreenModeDropdownOpen}
+                    aria-haspopup="listbox"
+                    className="settings-dropdown-trigger"
+                    type="button"
+                    onClick={() => {
+                      setClientAnimationDropdownOpen(false);
+                      setLanguageDropdownOpen(false);
+                      setResolutionDropdownOpen(false);
+                      setGameScreenModeDropdownOpen((open) => !open);
+                    }}
+                  >
+                    <span>{selectedGameScreenMode}</span>
+                  </button>
+
+                  {gameScreenModeDropdownOpen ? (
+                    <div className="settings-dropdown-menu" role="listbox">
+                      {gameScreenModeOptions.map((option) => (
+                        <button
+                          aria-selected={gameScreenMode === option.value}
+                          key={option.value}
+                          role="option"
+                          type="button"
+                          onClick={() => handleGameScreenModeSelect(option.value)}
+                        >
+                          <span>{option.label}</span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              </div>
             ) : null}
 
             {socialTabAvailable && activeSettingsTab === "social" ? (

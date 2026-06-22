@@ -4,8 +4,9 @@ use bevy::prelude::*;
 use game_shared::game::team::TeamSpec;
 use game_shared::network::{
     AbilitySlot, AbilityVisualEvent, AbilityVisualTuning, ChampionCatalogUpdate, ChampionId,
-    DisplayReady, LoadingScreenPlayer, LoadingScreenStatus, MatchSnapshot, NetworkPlayer,
-    PlayerCommand, PlayerStateChannel, PlayerStateUpdate, ReliableCommandChannel, WorldPosition,
+    ClientLeave, DisplayReady, LoadingScreenPlayer, LoadingScreenStatus, MatchSnapshot,
+    NetworkPlayer, PlayerCommand, PlayerStateChannel, PlayerStateUpdate, ReliableCommandChannel,
+    WorldPosition,
 };
 use lightyear::prelude::server::ClientOf;
 use lightyear::prelude::*;
@@ -323,9 +324,9 @@ pub(super) struct LoadingScreenReadyPlayers {
 
 #[derive(Resource, Debug, Default)]
 /// Description:
-/// Caches the last logged loading-screen status so server diagnostics do not spam every tick.
-pub(super) struct LoadingScreenStatusLogCache {
-    last_status: Option<(usize, usize, Vec<u64>, bool)>,
+/// Tracks players that intentionally left but whose transport connection may not have timed out yet.
+pub(super) struct LeavingPlayers {
+    player_ids: HashSet<u64>,
 }
 
 impl Default for MatchSnapshotBroadcastTimer {
@@ -338,6 +339,32 @@ impl Default for MatchSnapshotBroadcastTimer {
 }
 
 /// Description:
+/// Receives explicit leave messages so players disappear before the transport timeout.
+pub(super) fn receive_client_leave(
+    mut clients: Query<
+        (&RemoteId, &mut MessageReceiver<ClientLeave>),
+        (With<ClientOf>, With<Connected>),
+    >,
+    mut players: ResMut<ConnectedPlayers>,
+    mut ready_players: ResMut<LoadingScreenReadyPlayers>,
+    mut leaving_players: ResMut<LeavingPlayers>,
+) {
+    for (remote_id, mut receiver) in &mut clients {
+        let Some(player_id) = netcode_player_id(*remote_id) else {
+            continue;
+        };
+
+        if receiver.receive().next().is_none() {
+            continue;
+        }
+
+        leaving_players.player_ids.insert(player_id);
+        ready_players.ready_player_ids.remove(&player_id);
+        players.states.remove(&player_id);
+    }
+}
+
+/// Description:
 /// Receives client display-ready signals after each client has loaded local visuals.
 pub(super) fn receive_display_ready(
     mut clients: Query<
@@ -345,11 +372,13 @@ pub(super) fn receive_display_ready(
         (With<ClientOf>, With<Connected>),
     >,
     mut ready_players: ResMut<LoadingScreenReadyPlayers>,
+    mut leaving_players: ResMut<LeavingPlayers>,
     manifest: Res<ServerMatchManifest>,
 ) {
     let connected_player_ids = clients
         .iter()
         .filter_map(|(remote_id, _)| netcode_player_id(*remote_id))
+        .filter(|player_id| !leaving_players.player_ids.contains(player_id))
         .collect::<HashSet<_>>();
     ready_players
         .ready_player_ids
@@ -364,6 +393,7 @@ pub(super) fn receive_display_ready(
         }
 
         for _ in receiver.receive() {
+            leaving_players.player_ids.remove(&player_id);
             ready_players.ready_player_ids.insert(player_id);
         }
     }
@@ -377,13 +407,14 @@ pub(super) fn broadcast_loading_screen_status(
         (With<ClientOf>, With<Connected>),
     >,
     mut ready_players: ResMut<LoadingScreenReadyPlayers>,
-    mut log_cache: ResMut<LoadingScreenStatusLogCache>,
+    leaving_players: Res<LeavingPlayers>,
     manifest: Res<ServerMatchManifest>,
     players: Res<ConnectedPlayers>,
 ) {
     let connected_player_ids = clients
         .iter()
         .filter_map(|(remote_id, _)| netcode_player_id(*remote_id))
+        .filter(|player_id| !leaving_players.player_ids.contains(player_id))
         .collect::<HashSet<_>>();
     ready_players
         .ready_player_ids
@@ -411,19 +442,6 @@ pub(super) fn broadcast_loading_screen_status(
         &connected_player_ids,
         &ready_player_ids,
     );
-    let status_signature = (
-        ready_count,
-        total_players,
-        ready_player_ids.clone(),
-        can_close,
-    );
-    if log_cache.last_status.as_ref() != Some(&status_signature) {
-        info!(
-            "Loading screen status: ready={}/{} ids={:?} can_close={}",
-            ready_count, total_players, ready_player_ids, can_close
-        );
-        log_cache.last_status = Some(status_signature);
-    }
 
     for (_, mut sender) in &mut clients {
         sender.send::<PlayerStateChannel>(LoadingScreenStatus {
@@ -486,12 +504,16 @@ pub(super) fn receive_player_state_updates(
     >,
     mut players: ResMut<ConnectedPlayers>,
     catalog: Res<ServerChampionCatalog>,
+    leaving_players: Res<LeavingPlayers>,
     manifest: Res<ServerMatchManifest>,
 ) {
     for (remote_id, mut receiver) in &mut clients {
         let Some(player_id) = netcode_player_id(*remote_id) else {
             continue;
         };
+        if leaving_players.player_ids.contains(&player_id) {
+            continue;
+        }
         let Some(match_player) = authorized_match_player(&manifest, player_id) else {
             continue;
         };
@@ -577,6 +599,7 @@ pub(super) fn receive_player_commands(
     mut players: ResMut<ConnectedPlayers>,
     mut abilities: ResMut<ActiveServerAbilities>,
     catalog: Res<ServerChampionCatalog>,
+    leaving_players: Res<LeavingPlayers>,
     manifest: Res<ServerMatchManifest>,
     time: Res<Time>,
 ) {
@@ -590,6 +613,9 @@ pub(super) fn receive_player_commands(
             let Some(caster_player_id) = netcode_player_id(*remote_id) else {
                 continue;
             };
+            if leaving_players.player_ids.contains(&caster_player_id) {
+                continue;
+            }
 
             for command in receiver.receive() {
                 if let PlayerCommand::CastAbility { champion, .. } = command {
@@ -928,6 +954,7 @@ pub(super) fn broadcast_match_snapshots(
     abilities: Res<ActiveServerAbilities>,
     catalog: Res<ServerChampionCatalog>,
     manifest: Res<ServerMatchManifest>,
+    leaving_players: Res<LeavingPlayers>,
     mut timer: ResMut<MatchSnapshotBroadcastTimer>,
     time: Res<Time>,
 ) {
@@ -938,6 +965,7 @@ pub(super) fn broadcast_match_snapshots(
     let mut player_ids = clients
         .iter()
         .filter_map(|(remote_id, _)| netcode_player_id(*remote_id))
+        .filter(|player_id| !leaving_players.player_ids.contains(player_id))
         .collect::<Vec<_>>();
     player_ids.sort_unstable();
 
@@ -970,20 +998,10 @@ pub(super) fn broadcast_match_snapshots(
                 .map(|player| DevelopmentTeam::from(player.team))
                 .unwrap_or(DEFAULT_DEVELOPMENT_TEAM);
             let fallback_max_health = development_champion_max_health(&catalog, fallback_champion);
-            let state = players.states.entry(*player_id).or_insert_with(|| {
-                info!(
-                    "Initialized server player {} from {}: champion={:?} team={:?} max_health={}",
-                    player_id,
-                    if manifest_player.is_some() {
-                        "match manifest"
-                    } else {
-                        "development fallback"
-                    },
-                    fallback_champion,
-                    fallback_team,
-                    fallback_max_health
-                );
-                ConnectedPlayerState {
+            let state = players
+                .states
+                .entry(*player_id)
+                .or_insert_with(|| ConnectedPlayerState {
                     position: development_spawn_position(index, player_ids.len()),
                     yaw: 0.0,
                     moving: false,
@@ -1011,8 +1029,7 @@ pub(super) fn broadcast_match_snapshots(
                     respawn_timer: None,
                     respawn_generation: 0,
                     respawn_input_grace: 0.0,
-                }
-            });
+                });
             let champion = state.champion;
             let team = state.team;
             let max_health = development_champion_max_health(&catalog, champion);
@@ -1042,17 +1059,6 @@ pub(super) fn broadcast_match_snapshots(
             }
         })
         .collect::<Vec<_>>();
-    debug!(
-        "Broadcasting match snapshot players={}",
-        players
-            .iter()
-            .map(|player| format!(
-                "{}:{:?}:{:?}:{}/{}",
-                player.player_id, player.champion, player.team, player.health, player.max_health
-            ))
-            .collect::<Vec<_>>()
-            .join(",")
-    );
 
     for (remote_id, mut sender) in &mut clients {
         let Some(local_player_id) = netcode_player_id(*remote_id) else {

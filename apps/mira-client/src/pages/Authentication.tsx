@@ -169,6 +169,7 @@ function Authentication() {
     accentColor,
     allowFriendRequests,
     clientAnimation,
+    gameScreenMode,
     locale,
     resolution,
     supportsFourKResolution,
@@ -177,6 +178,7 @@ function Authentication() {
     setAccentColor,
     setAllowFriendRequests,
     setClientAnimation,
+    setGameScreenMode,
     setLocale,
     setResolution,
   } = useClientSettings();
@@ -484,6 +486,7 @@ function Authentication() {
         <Client
           accentColor={accentColor}
           clientAnimation={clientAnimation}
+          gameScreenMode={gameScreenMode}
           closeDialogOpen={closeDialogOpen}
           locale={locale}
           profileAvatarUrl={profileAvatarUrl}
@@ -498,6 +501,7 @@ function Authentication() {
           onAccentColorChange={setAccentColor}
           onAllowFriendRequestsChange={setAllowFriendRequests}
           onClientAnimationChange={setClientAnimation}
+          onGameScreenModeChange={setGameScreenMode}
           onCloseDialogClose={() => setCloseDialogOpen(false)}
           onLocaleChange={setLocale}
           onLogout={handleLogout}
@@ -633,6 +637,7 @@ function Authentication() {
           accentColor={accentColor}
           allowFriendRequests={allowFriendRequests}
           clientAnimation={clientAnimation}
+          gameScreenMode={gameScreenMode}
           locale={locale}
           resolution={resolution}
           supportsFourKResolution={supportsFourKResolution}
@@ -642,6 +647,7 @@ function Authentication() {
           onAccentColorChange={setAccentColor}
           onAllowFriendRequestsChange={setAllowFriendRequests}
           onClientAnimationChange={setClientAnimation}
+          onGameScreenModeChange={setGameScreenMode}
           onClose={() => setSettingsOpen(false)}
           onLocaleChange={setLocale}
           onResolutionChange={setResolution}

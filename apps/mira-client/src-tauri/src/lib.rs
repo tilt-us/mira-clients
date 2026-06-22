@@ -69,12 +69,16 @@ struct LaunchGameRequest {
     champion: String,
     #[serde(default)]
     force_restart: bool,
+    #[serde(default)]
+    match_manifest_json: String,
     match_id: String,
     matchmaking_api_base_url: String,
     player_public_id: u64,
     server_host: String,
     server_control_base_url: String,
     port: u16,
+    #[serde(default)]
+    screen: String,
     team: String,
 }
 
@@ -138,9 +142,17 @@ fn launch_game(
         .arg("--port")
         .arg(request.port.to_string())
         .arg("--server-control-base-url")
-        .arg(request.server_control_base_url)
-        .arg("--team")
-        .arg(request.team);
+        .arg(request.server_control_base_url);
+
+    if !request.screen.trim().is_empty() {
+        command.arg("--screen").arg(request.screen);
+    }
+
+    command.arg("--team").arg(request.team);
+
+    if !request.match_manifest_json.trim().is_empty() {
+        command.env("MIRA_MATCH_MANIFEST_JSON", &request.match_manifest_json);
+    }
 
     let mut active_child = process_state
         .child
@@ -224,6 +236,35 @@ fn game_client_status(
     })
 }
 
+#[tauri::command]
+fn stop_game_client(process_state: tauri::State<'_, GameProcessState>) -> Result<(), String> {
+    let mut active_child = process_state
+        .child
+        .lock()
+        .map_err(|_| "Game-Client-Status konnte nicht gesperrt werden.".to_string())?;
+
+    if let Some(child) = active_child.as_mut() {
+        match child.try_wait() {
+            Ok(Some(_)) => {
+                *active_child = None;
+                return Ok(());
+            }
+            Ok(None) => {
+                stop_game_child(child)?;
+                *active_child = None;
+                return Ok(());
+            }
+            Err(error) => {
+                return Err(format!(
+                    "Game-Client-Status konnte nicht geprüft werden: {error}"
+                ));
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn stop_game_child(child: &mut Child) -> Result<(), String> {
     child
         .kill()
@@ -273,7 +314,10 @@ fn resolve_game_binary(app: &tauri::AppHandle) -> Result<PathBuf, String> {
         .ok_or_else(|| "files/mira-game-client wurde nicht gefunden.".to_string())
 }
 
-fn resolve_game_asset_root(app: &tauri::AppHandle, game_dir: &std::path::Path) -> Result<PathBuf, String> {
+fn resolve_game_asset_root(
+    app: &tauri::AppHandle,
+    game_dir: &std::path::Path,
+) -> Result<PathBuf, String> {
     game_asset_root_candidates(app, game_dir)
         .into_iter()
         .find(|candidate| candidate.join("index.html").is_file())
@@ -438,7 +482,8 @@ pub fn run() {
             client_config,
             game_client_status,
             launcher_status,
-            launch_game
+            launch_game,
+            stop_game_client
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -11,16 +11,19 @@ import type { AppLocale } from "./i18n";
 import {
   defaultAccentColor,
   defaultClientAnimation,
+  defaultGameScreenMode,
   defaultResolution,
   getResolutionFromSize,
   getResolutionSize,
   isAppResolution,
   isClientAnimation,
+  isGameScreenMode,
   isHexColor,
   isLocale,
   readStoredSettings,
   type AppResolution,
   type ClientAnimation,
+  type GameScreenMode,
   writeStoredSettings,
 } from "./settings";
 
@@ -62,6 +65,12 @@ export function useClientSettings() {
     return isClientAnimation(storedSettings.clientAnimation)
       ? storedSettings.clientAnimation
       : defaultClientAnimation;
+  });
+  const [gameScreenMode, setGameScreenMode] = useState<GameScreenMode>(() => {
+    const storedSettings = readStoredSettings();
+    return isGameScreenMode(storedSettings.gameScreenMode)
+      ? storedSettings.gameScreenMode
+      : defaultGameScreenMode;
   });
   const [monitorResolutionSupport, setMonitorResolutionSupport] = useState<
     MonitorResolutionSupport | undefined
@@ -113,10 +122,11 @@ export function useClientSettings() {
       accentColor,
       allowFriendRequests,
       clientAnimation,
+      gameScreenMode,
       locale,
       resolution,
     });
-  }, [accentColor, allowFriendRequests, clientAnimation, locale, resolution]);
+  }, [accentColor, allowFriendRequests, clientAnimation, gameScreenMode, locale, resolution]);
 
   useEffect(() => {
     if (!runsInTauriLikeShell()) {
@@ -173,6 +183,7 @@ export function useClientSettings() {
     accentColor,
     allowFriendRequests,
     clientAnimation,
+    gameScreenMode,
     locale,
     resolution,
     supportsFourKResolution: monitorResolutionSupport?.fourK === true,
@@ -181,6 +192,7 @@ export function useClientSettings() {
     setAccentColor,
     setAllowFriendRequests,
     setClientAnimation,
+    setGameScreenMode,
     setLocale,
     setResolution,
   };

@@ -246,13 +246,23 @@ function mapUserStatusToPresence(
   }
 }
 
-function isFriendInOpenLobby(publicId: number | undefined, lobbies: LobbySnapshot[]) {
-  return (
-    typeof publicId === "number" &&
-    lobbies.some((lobby) =>
-      lobby.members?.some((member) => member.publicId === publicId),
-    )
+function getFriendLobbyPresence(
+  publicId: number | undefined,
+  lobbies: LobbySnapshot[],
+): PresenceStatus | undefined {
+  if (typeof publicId !== "number") {
+    return undefined;
+  }
+
+  const lobby = lobbies.find((currentLobby) =>
+    currentLobby.members?.some((member) => member.publicId === publicId),
   );
+
+  if (!lobby) {
+    return undefined;
+  }
+
+  return lobby.status === "SEARCHING" ? "inqueue" : "inlobby";
 }
 
 function mapApiFriendsToProfiles(
@@ -275,16 +285,19 @@ function mapApiFriendsToProfiles(
     const id = getFriendUserId(friend);
     const folderId = friendFolders?.[id];
     const userStatus = statusesByPublicId.get(friend.publicId);
+    const lobbyPresence = getFriendLobbyPresence(friend.publicId, openLobbies);
     const forcedOnline =
       typeof friend.publicId === "number" &&
       forcedOnlinePublicIds.has(friend.publicId);
-    const status = forcedOnline && userStatus?.status === "OFFLINE"
-      ? "online"
-      : userStatus
-        ? mapUserStatusToPresence(userStatus.status, userStatus.mode)
-      : isFriendInOpenLobby(friend.publicId, openLobbies)
-        ? "inlobby"
-        : "offline";
+    const apiPresence = userStatus
+      ? mapUserStatusToPresence(userStatus.status, userStatus.mode)
+      : undefined;
+    const status =
+      lobbyPresence && (!apiPresence || apiPresence === "offline" || apiPresence === "online")
+        ? lobbyPresence
+        : forcedOnline && apiPresence === "offline"
+          ? "online"
+          : apiPresence ?? lobbyPresence ?? "offline";
     const gameMode =
       status === "inqueue" || status === "championselection"
         ? undefined

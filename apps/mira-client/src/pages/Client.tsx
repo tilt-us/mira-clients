@@ -7,6 +7,7 @@ import {
   accept,
   bootstrap as liveBootstrap,
   cancelChampionPhase,
+  cancelChampionPhaseDuplicate,
   clearChampionHover,
   clearChampionHoverDuplicate,
   client,
@@ -56,7 +57,7 @@ import SettingsModal from "../components/SettingsModal";
 import Sidebar from "../components/Sidebar";
 import type { AppLocale } from "../i18n";
 import { useNotifications } from "../notifications";
-import type { AppResolution, ClientAnimation } from "../settings";
+import type { AppResolution, ClientAnimation, GameScreenMode } from "../settings";
 import type { FriendProfile, PresenceStatus, Translate } from "../types/ui";
 import {
   getAvatarUrl,
@@ -69,11 +70,13 @@ type ClientProps = {
   allowFriendRequests: boolean;
   clientAnimation: ClientAnimation;
   closeDialogOpen: boolean;
+  gameScreenMode: GameScreenMode;
   locale: AppLocale;
   onAccentColorChange: (accentColor: string) => void;
   onAllowFriendRequestsChange: (allowFriendRequests: boolean) => void;
   onClientAnimationChange: (clientAnimation: ClientAnimation) => void;
   onCloseDialogClose: () => void;
+  onGameScreenModeChange: (gameScreenMode: GameScreenMode) => void;
   onLocaleChange: (locale: AppLocale) => void;
   onLogout: () => void;
   onQuit: () => void;
@@ -102,16 +105,38 @@ type LaunchGameRequest = {
   accentColor: string;
   champion: string;
   forceRestart?: boolean;
+  matchManifestJson: string;
   matchId: string;
   matchmakingApiBaseUrl: string;
   playerPublicId: number;
   serverHost: string;
   serverControlBaseUrl: string;
   port: number;
+  screen: GameScreenMode;
   team: GameTeam;
 };
 
 type GameLaunchParameters = Omit<LaunchGameRequest, "accessToken" | "accentColor">;
+
+type GameMatchManifestPlayer = {
+  avatarUrl?: string;
+  champion: string;
+  championId: number;
+  displayName?: string;
+  playerPublicId: number;
+  team: "Dark" | "Light";
+};
+
+type GameMatchManifest = {
+  matchId: string;
+  players: GameMatchManifestPlayer[];
+};
+
+type StoredGameSession = {
+  closedByClient?: boolean;
+  parameters: GameLaunchParameters;
+  playerPublicId?: number;
+};
 
 type GameClientStatus = {
   running: boolean;
@@ -125,6 +150,11 @@ type PartyInviteCandidate = {
   publicId?: number;
   source: "friend" | "user";
 };
+type CurrentMatchPlayerProfile = {
+  avatarUrl?: string;
+  displayName: string;
+  publicId?: number;
+};
 type LobbyMemberContextMenuState = {
   left: number;
   member: LobbyMember;
@@ -134,6 +164,7 @@ type MatchDecision = "accept" | "decline";
 
 const afkDelayMs = 5 * 60 * 1000;
 const matchAcceptTimeoutMs = 20_000;
+const storedGameSessionKey = "mira:last-game-session";
 
 function mapUserStatusToPresence(
   status?: UserStatusSnapshot["status"],
@@ -190,6 +221,61 @@ function getMatchChampionForPlayer(match: _8083ApiMatchResponse, playerPublicId:
 
 function getGameClientChampionId(champion: string) {
   return champion.trim().toLowerCase();
+}
+
+function getGameServerChampionId(champion: string) {
+  switch (getGameClientChampionId(champion)) {
+    case "lira":
+      return 6606;
+    case "ignara":
+      return 6607;
+    case "sophia":
+      return 6608;
+    case "yuna":
+      return 6609;
+    default:
+      return 6606;
+  }
+}
+
+function createGameMatchManifest(
+  match: _8083ApiMatchResponse,
+  matchId: string,
+): GameMatchManifest {
+  const teams = getMatchTeams(match);
+  const players: GameMatchManifestPlayer[] = [];
+
+  teams.forEach((team, teamIndex) => {
+    const teamName = teamIndex === 0 ? "Dark" : "Light";
+
+    for (const player of team.players ?? []) {
+      if (typeof player.publicId !== "number") {
+        continue;
+      }
+
+      const champion = getMatchChampionForPlayer(match, player.publicId);
+
+      if (!champion) {
+        continue;
+      }
+
+      const displayName = getPublicDisplayName(player.displayName, "");
+
+      players.push({
+        ...(player.avatarUrl ? { avatarUrl: player.avatarUrl } : {}),
+        champion,
+        championId: getGameServerChampionId(champion),
+        ...(displayName ? { displayName } : {}),
+        playerPublicId: player.publicId,
+        team: teamName,
+      });
+    }
+  });
+
+  return {
+    matchId,
+    players,
+  };
 }
 
 function getMatchPort(match: _8083ApiMatchResponse) {
@@ -482,16 +568,110 @@ function mergeMatchChampionHovers(
   };
 }
 
-function mapLobbyToMatchPlayers(lobby: LobbySnapshot) {
+function isGenericPlayerName(value?: string) {
+  return /^(player|user)(?:\s+\d+)?$/i.test(value?.trim() ?? "");
+}
+
+function mapLobbyToMatchPlayers(
+  lobby: LobbySnapshot,
+  currentPlayerProfile?: CurrentMatchPlayerProfile,
+) {
   return (
     lobby.members
       ?.filter((member) => typeof member.publicId === "number")
-      .map((member) => ({
-        publicId: member.publicId as number,
-        displayName: member.displayName,
-        avatarUrl: member.avatarUrl,
-      })) ?? []
+      .map((member) => {
+        const isCurrentPlayer = member.publicId === currentPlayerProfile?.publicId;
+        const displayName = isCurrentPlayer
+          ? currentPlayerProfile?.displayName
+          : member.displayName;
+        const avatarUrl = isCurrentPlayer
+          ? currentPlayerProfile?.avatarUrl ?? member.avatarUrl
+          : member.avatarUrl;
+
+        return {
+          publicId: member.publicId as number,
+          displayName: getPublicDisplayName(displayName, "User"),
+          avatarUrl,
+        };
+      }) ?? []
   );
+}
+
+function mergeKnownMatchPlayer(
+  player: MatchPlayerResponse,
+  knownPlayer?: MatchPlayerResponse,
+): MatchPlayerResponse {
+  const playerDisplayName = !isGenericPlayerName(player.displayName)
+    ? getPublicDisplayName(player.displayName, "")
+    : undefined;
+  const knownDisplayName = !isGenericPlayerName(knownPlayer?.displayName)
+    ? getPublicDisplayName(knownPlayer?.displayName, "")
+    : undefined;
+
+  return {
+    ...player,
+    displayName:
+      playerDisplayName ??
+      knownDisplayName ??
+      "User",
+    avatarUrl: player.avatarUrl ?? knownPlayer?.avatarUrl,
+  };
+}
+
+function enrichMatchPlayers(
+  match: _8083ApiMatchResponse,
+  knownPlayers: Map<number, MatchPlayerResponse>,
+) {
+  return {
+    ...match,
+    lobbies: match.lobbies?.map((lobby) => ({
+      ...lobby,
+      players: lobby.players?.map((player) => {
+        const knownPlayer =
+          typeof player.publicId === "number"
+            ? knownPlayers.get(player.publicId)
+            : undefined;
+
+        return mergeKnownMatchPlayer(player, knownPlayer);
+      }),
+    })),
+  };
+}
+
+function readStoredGameSession() {
+  try {
+    const rawSession = window.localStorage.getItem(storedGameSessionKey);
+
+    if (!rawSession) {
+      return undefined;
+    }
+
+    const session = JSON.parse(rawSession) as StoredGameSession;
+
+    return session?.parameters?.matchId ? session : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function writeStoredGameSession(session: StoredGameSession) {
+  window.localStorage.setItem(storedGameSessionKey, JSON.stringify(session));
+}
+
+function clearStoredGameSession() {
+  window.localStorage.removeItem(storedGameSessionKey);
+}
+
+function sendCancelChampionPhaseKeepalive(matchId: string) {
+  const accessToken = readTokens()?.accessToken;
+
+  void fetch(`${MATCHMAKING_API_BASE_URL}/api/matches/${matchId}/champion-phase`, {
+    headers: {
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+    },
+    keepalive: true,
+    method: "DELETE",
+  }).catch(() => undefined);
 }
 
 function toPublicId(value: unknown) {
@@ -846,11 +1026,13 @@ function Client({
   allowFriendRequests,
   clientAnimation,
   closeDialogOpen,
+  gameScreenMode,
   locale,
   onAccentColorChange,
   onAllowFriendRequestsChange,
   onClientAnimationChange,
   onCloseDialogClose,
+  onGameScreenModeChange,
   onLocaleChange,
   onLogout,
   onQuit,
@@ -892,6 +1074,7 @@ function Client({
   const [gameLaunchParameters, setGameLaunchParameters] =
     useState<GameLaunchParameters>();
   const [gameClientRunning, setGameClientRunning] = useState(false);
+  const [gameClientClosedByClient, setGameClientClosedByClient] = useState(false);
   const [gameReconnectBusy, setGameReconnectBusy] = useState(false);
   const [matchDecisionBusy, setMatchDecisionBusy] = useState<MatchDecision>();
   const [matchFoundStartedAt, setMatchFoundStartedAt] = useState<number>();
@@ -901,6 +1084,8 @@ function Client({
   const [forceOnlinePublicIds, setForceOnlinePublicIds] = useState<number[]>([]);
   const activeLobbyRef = useRef<LobbySnapshot | undefined>(undefined);
   const championSelectionMatchRef = useRef<_8083ApiMatchResponse | undefined>(undefined);
+  const gameInProgressRef = useRef(false);
+  const gameLaunchParametersRef = useRef<GameLaunchParameters | undefined>(undefined);
   const [presenceStatus, setPresenceStatus] = useState<PresenceStatus>("online");
   const lastActivityRef = useRef(Date.now());
   const hiddenSinceRef = useRef<number | undefined>(undefined);
@@ -910,6 +1095,14 @@ function Client({
   const playButtonAnimated =
     clientAnimation === "all" || clientAnimation === "ui-elements";
   const { notify } = useNotifications();
+  const currentMatchPlayerProfile = useMemo<CurrentMatchPlayerProfile>(
+    () => ({
+      avatarUrl: profileAvatarUrl,
+      displayName: getPublicDisplayName(profileName, "User"),
+      publicId: profilePublicId,
+    }),
+    [profileAvatarUrl, profileName, profilePublicId],
+  );
   const playerSlots = Array.from({ length: 5 }, (_, index) => index);
   const lobbySlotMembers = activeLobby ? getLobbySlotMembers(activeLobby) : [];
   const activeLobbyHost = activeLobby ? getLobbyHost(activeLobby) : undefined;
@@ -1010,6 +1203,31 @@ function Client({
   useEffect(() => {
     championSelectionMatchRef.current = championSelectionMatch;
   }, [championSelectionMatch]);
+
+  useEffect(() => {
+    gameInProgressRef.current = gameInProgress;
+  }, [gameInProgress]);
+
+  useEffect(() => {
+    gameLaunchParametersRef.current = gameLaunchParameters;
+  }, [gameLaunchParameters]);
+
+  useEffect(() => {
+    const storedSession = readStoredGameSession();
+
+    if (
+      !storedSession ||
+      (typeof storedSession.playerPublicId === "number" &&
+        storedSession.playerPublicId !== profilePublicId)
+    ) {
+      return;
+    }
+
+    setGameLaunchParameters(storedSession.parameters);
+    setGameInProgress(true);
+    setGameClientRunning(false);
+    setGameClientClosedByClient(Boolean(storedSession.closedByClient));
+  }, [profilePublicId]);
 
   useEffect(() => {
     if (!gameInProgress || !isTauri()) {
@@ -1247,7 +1465,7 @@ function Client({
       path: { matchId },
     }).then(async (result) => {
       if (!result.error && result.data) {
-        setChampionSelectionMatch(normalizeMatchResponse(result.data));
+        setChampionSelectionMatch(hydrateMatch(normalizeMatchResponse(result.data)));
         return;
       }
 
@@ -1257,7 +1475,7 @@ function Client({
       });
 
       if (!fallbackResult.error && fallbackResult.data) {
-        setChampionSelectionMatch(fallbackResult.data);
+        setChampionSelectionMatch(hydrateMatch(fallbackResult.data));
       }
     });
   }, [championSelectionMatch, championsReadyMarkedMatchId]);
@@ -1302,6 +1520,45 @@ function Client({
     );
   }
 
+  function hydrateMatch(match: _8083ApiMatchResponse) {
+    const knownPlayers = new Map<number, MatchPlayerResponse>();
+
+    function rememberPlayer(player?: MatchPlayerResponse | LobbyMember) {
+      if (typeof player?.publicId !== "number") {
+        return;
+      }
+
+      const currentPlayer = knownPlayers.get(player.publicId);
+      knownPlayers.set(player.publicId, mergeKnownMatchPlayer(player, currentPlayer));
+    }
+
+    for (const lobby of championSelectionMatchRef.current?.lobbies ?? []) {
+      for (const player of lobby.players ?? []) {
+        rememberPlayer(player);
+      }
+    }
+
+    for (const lobby of match.lobbies ?? []) {
+      for (const player of lobby.players ?? []) {
+        rememberPlayer(player);
+      }
+    }
+
+    for (const member of activeLobbyRef.current?.members ?? []) {
+      rememberPlayer(member);
+    }
+
+    if (typeof currentMatchPlayerProfile.publicId === "number") {
+      rememberPlayer({
+        avatarUrl: currentMatchPlayerProfile.avatarUrl,
+        displayName: currentMatchPlayerProfile.displayName,
+        publicId: currentMatchPlayerProfile.publicId,
+      });
+    }
+
+    return enrichMatchPlayers(match, knownPlayers);
+  }
+
   async function restartMatchSearchForLobby(lobby: LobbySnapshot) {
     if (!lobby.id || requeueingLobbyIdsRef.current.has(lobby.id)) {
       return;
@@ -1320,7 +1577,7 @@ function Client({
         body: {
           lobbyId: lobby.id,
           mode: "RANKED",
-          players: mapLobbyToMatchPlayers(lobby),
+          players: mapLobbyToMatchPlayers(lobby, currentMatchPlayerProfile),
         },
       });
 
@@ -1340,12 +1597,15 @@ function Client({
       return;
     }
 
+    const hydratedMatch = hydrateMatch(match);
+
     if (gameInProgress) {
       if (
-        match.status === "ENDED" &&
-        (!gameLaunchParameters?.matchId || match.matchId === gameLaunchParameters.matchId)
+        hydratedMatch.status === "ENDED" &&
+        (!gameLaunchParameters?.matchId ||
+          hydratedMatch.matchId === gameLaunchParameters.matchId)
       ) {
-        finishGameSession(match);
+        finishGameSession(hydratedMatch);
       }
 
       return;
@@ -1353,12 +1613,12 @@ function Client({
 
     if (
       championSelectionMatch?.matchId &&
-      match.matchId !== championSelectionMatch.matchId
+      hydratedMatch.matchId !== championSelectionMatch.matchId
     ) {
       return;
     }
 
-    if (match.status === "CANCELLED") {
+    if (hydratedMatch.status === "CANCELLED") {
       const lobby = activeLobbyRef.current;
       const keepSearching =
         options.keepSearchingOnCancel ?? lobby?.status === "SEARCHING";
@@ -1397,27 +1657,27 @@ function Client({
       return;
     }
 
-    if (isMatchReady(match)) {
+    if (isMatchReady(hydratedMatch)) {
       setPendingMatch(undefined);
       setMatchFoundStartedAt(undefined);
       setMatchAutoDeclinedId(undefined);
-      setChampionSelectionMatch(match);
+      setChampionSelectionMatch(hydratedMatch);
       return;
     }
 
-    if (match.status === "PENDING_ACCEPTANCE") {
+    if (hydratedMatch.status === "PENDING_ACCEPTANCE") {
       setMatchFoundStartedAt((currentStartedAt) => {
-        if (currentStartedAt && pendingMatch?.matchId === match.matchId) {
+        if (currentStartedAt && pendingMatch?.matchId === hydratedMatch.matchId) {
           return currentStartedAt;
         }
 
         return Date.now();
       });
       setMatchFoundNow(Date.now());
-      if (pendingMatch?.matchId !== match.matchId) {
+      if (pendingMatch?.matchId !== hydratedMatch.matchId) {
         setMatchAutoDeclinedId(undefined);
       }
-      setPendingMatch(match);
+      setPendingMatch(hydratedMatch);
     }
   }
 
@@ -1658,6 +1918,7 @@ function Client({
 
   function finishGameSession(match?: _8083ApiMatchResponse) {
     suppressMatchLobbyInvitations(match);
+    clearStoredGameSession();
     activeLobbyRef.current = undefined;
     championSelectionMatchRef.current = undefined;
     setLobbyInvitations([]);
@@ -1668,6 +1929,7 @@ function Client({
     setChampionsReadyMarkedMatchId(undefined);
     setGameInProgress(false);
     setGameClientRunning(false);
+    setGameClientClosedByClient(false);
     setGameLaunchParameters(undefined);
     setGameReconnectBusy(false);
     setLobbySearchStartedAt(undefined);
@@ -1772,6 +2034,12 @@ function Client({
 
   useEffect(() => {
     function leaveActiveLobby() {
+      const championSelectionMatch = championSelectionMatchRef.current;
+      if (championSelectionMatch?.matchId) {
+        sendCancelChampionPhaseKeepalive(championSelectionMatch.matchId);
+        return;
+      }
+
       const lobby = activeLobbyRef.current;
 
       if (!lobby?.id) {
@@ -1785,6 +2053,19 @@ function Client({
     }
 
     function publishOffline() {
+      const gameLaunchParameters = gameLaunchParametersRef.current;
+      if (gameInProgressRef.current && gameLaunchParameters) {
+        writeStoredGameSession({
+          closedByClient: true,
+          parameters: gameLaunchParameters,
+          playerPublicId: profilePublicId,
+        });
+
+        if (isTauri()) {
+          void invoke("stop_game_client").catch(() => undefined);
+        }
+      }
+
       sendPresenceKeepalive("OFFLINE");
       void publishPresence("OFFLINE");
     }
@@ -1927,14 +2208,72 @@ function Client({
     setGameSelectorOpen((open) => !open);
   }
 
+  async function cancelActiveChampionSelection() {
+    const matchId = championSelectionMatchRef.current?.matchId;
+
+    if (!matchId) {
+      return;
+    }
+
+    sendCancelChampionPhaseKeepalive(matchId);
+
+    const result = await cancelChampionPhase({
+      baseUrl: MATCHMAKING_API_BASE_URL,
+      path: { matchId },
+    }).catch(() => undefined);
+
+    if (!result || result.error) {
+      await cancelChampionPhaseDuplicate({
+        baseUrl: MATCHMAKING_API_BASE_URL,
+        path: { matchId },
+      }).catch(() => undefined);
+    }
+  }
+
+  async function stopRunningGameClientForShutdown() {
+    const parameters = gameLaunchParametersRef.current;
+
+    if (!gameInProgressRef.current || !parameters) {
+      return;
+    }
+
+    writeStoredGameSession({
+      closedByClient: true,
+      parameters,
+      playerPublicId: profilePublicId,
+    });
+    setGameClientClosedByClient(true);
+    setGameClientRunning(false);
+
+    if (isTauri()) {
+      await invoke("stop_game_client").catch((caughtError) => {
+        console.error(caughtError);
+      });
+    }
+  }
+
+  async function prepareClientShutdown(options: { leaveLobby: boolean }) {
+    if (championSelectionMatchRef.current?.matchId) {
+      await cancelActiveChampionSelection();
+    }
+
+    await stopRunningGameClientForShutdown();
+
+    if (options.leaveLobby) {
+      await leaveCurrentLobby();
+    }
+  }
+
   async function handleClientLogout() {
-    await leaveCurrentLobby();
+    await prepareClientShutdown({ leaveLobby: true });
     await publishPresence("OFFLINE");
     onLogout();
   }
 
   async function handleClientQuit() {
-    await leaveCurrentLobby();
+    await prepareClientShutdown({
+      leaveLobby: !championSelectionMatchRef.current?.matchId,
+    });
     await publishPresence("OFFLINE");
     onQuit();
   }
@@ -1947,6 +2286,8 @@ function Client({
     setLobbyError(undefined);
     setGameInProgress(false);
     setGameLaunchParameters(undefined);
+    setGameClientClosedByClient(false);
+    clearStoredGameSession();
 
     const result = await createRankedLobby({
       baseUrl: LIVE_API_BASE_URL,
@@ -2015,7 +2356,7 @@ function Client({
         body: {
           lobbyId: activeLobby.id,
           mode: "RANKED",
-          players: mapLobbyToMatchPlayers(activeLobby),
+          players: mapLobbyToMatchPlayers(activeLobby, currentMatchPlayerProfile),
         },
       });
 
@@ -2036,7 +2377,7 @@ function Client({
         body: {
           lobbyId: activeLobby.id,
           mode: "RANKED",
-          players: mapLobbyToMatchPlayers(activeLobby),
+          players: mapLobbyToMatchPlayers(activeLobby, currentMatchPlayerProfile),
         },
       }),
     ]);
@@ -2403,7 +2744,7 @@ function Client({
       return false;
     }
 
-    setChampionSelectionMatch(nextMatch);
+    setChampionSelectionMatch(hydrateMatch(nextMatch));
     return true;
   }
 
@@ -2422,7 +2763,9 @@ function Client({
 
       if (!result.error && result.data) {
         setChampionSelectionMatch((currentMatch) =>
-          currentMatch ? mergeMatchChampionHovers(currentMatch, result.data.hovers) : currentMatch,
+          currentMatch
+            ? hydrateMatch(mergeMatchChampionHovers(currentMatch, result.data.hovers))
+            : currentMatch,
         );
         return;
       }
@@ -2439,7 +2782,7 @@ function Client({
       if (!fallbackResult.error && fallbackResult.data) {
         setChampionSelectionMatch((currentMatch) =>
           currentMatch
-            ? mergeMatchChampionHovers(currentMatch, fallbackResult.data.hovers)
+            ? hydrateMatch(mergeMatchChampionHovers(currentMatch, fallbackResult.data.hovers))
             : currentMatch,
         );
       }
@@ -2455,7 +2798,9 @@ function Client({
 
     if (!result.error && result.data) {
       setChampionSelectionMatch((currentMatch) =>
-        currentMatch ? mergeMatchChampionHovers(currentMatch, result.data.hovers) : currentMatch,
+        currentMatch
+          ? hydrateMatch(mergeMatchChampionHovers(currentMatch, result.data.hovers))
+          : currentMatch,
       );
       return;
     }
@@ -2473,7 +2818,7 @@ function Client({
     if (!fallbackResult.error && fallbackResult.data) {
       setChampionSelectionMatch((currentMatch) =>
         currentMatch
-          ? mergeMatchChampionHovers(currentMatch, fallbackResult.data.hovers)
+          ? hydrateMatch(mergeMatchChampionHovers(currentMatch, fallbackResult.data.hovers))
           : currentMatch,
       );
     }
@@ -2569,12 +2914,14 @@ function Client({
 
     return {
       champion,
+      matchManifestJson: JSON.stringify(createGameMatchManifest(match, match.matchId)),
       matchId: match.matchId,
       matchmakingApiBaseUrl: MATCHMAKING_API_BASE_URL,
       playerPublicId: profilePublicId,
       serverHost,
       serverControlBaseUrl,
       port,
+      screen: gameScreenMode,
       team,
     };
   }
@@ -2594,12 +2941,19 @@ function Client({
       accessToken,
       accentColor,
       ...parameters,
+      screen: parameters.screen ?? gameScreenMode,
       forceRestart,
     };
 
     await invoke("launch_game", { request });
     setGameLaunchParameters(parameters);
     setGameClientRunning(true);
+    setGameClientClosedByClient(false);
+    writeStoredGameSession({
+      closedByClient: false,
+      parameters,
+      playerPublicId: profilePublicId,
+    });
   }
 
   function finishGameStart() {
@@ -2718,7 +3072,13 @@ function Client({
         {gameInProgress ? (
           <div className="client-game-running-message" role="status">
             <strong>
-              {t(gameClientRunning ? "client-game-running" : "client-game-closed")}
+              {t(
+                gameClientRunning
+                  ? "client-game-running"
+                  : gameClientClosedByClient
+                    ? "client-game-closed-reconnect"
+                    : "client-game-closed",
+              )}
             </strong>
             {!gameClientRunning && gameLaunchParameters ? (
               <button
@@ -3251,6 +3611,7 @@ function Client({
           accentColor={accentColor}
           allowFriendRequests={allowFriendRequests}
           clientAnimation={clientAnimation}
+          gameScreenMode={gameScreenMode}
           locale={locale}
           resolution={resolution}
           supportsFourKResolution={supportsFourKResolution}
@@ -3261,6 +3622,7 @@ function Client({
           onAllowFriendRequestsChange={onAllowFriendRequestsChange}
           onClientAnimationChange={onClientAnimationChange}
           onClose={onSettingsClose}
+          onGameScreenModeChange={onGameScreenModeChange}
           onLocaleChange={onLocaleChange}
           onResolutionChange={onResolutionChange}
         />

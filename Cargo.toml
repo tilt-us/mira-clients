@@ -18,9 +18,7 @@ version = "0.1.0"
 
 [workspace.dependencies]
 avian3d = "0.6.1"
-bevy = "0.18.1"
-bevy_extended_ui = { version = "=1.6.0", features = ["extended-framework"] }
-bevy_extended_ui_macros = "=1.6.0"
+bevy = { version = "0.18.1", features = ["experimental_bevy_feathers", "jpeg"] }
 bevy_transform_interpolation = "0.4.0"
 lightyear = { version = "0.26.4", features = ["udp", "netcode"] }
 serde = { version = "1", features = ["derive"] }

@@ -7,7 +7,7 @@ pub use config::{
 };
 pub use protocol::{
     AbilitySlot, AbilityVisualEvent, AbilityVisualTuning, CastTarget, ChampionCatalogUpdate,
-    ChampionId, DisplayReady, LoadingScreenPlayer, LoadingScreenStatus, MatchSnapshot,
+    ChampionId, ClientLeave, DisplayReady, LoadingScreenPlayer, LoadingScreenStatus, MatchSnapshot,
     NetworkAbilityDamage, NetworkAbilityDefinition, NetworkChampionAbilities,
     NetworkChampionBaseStats, NetworkChampionDefinition, NetworkChampionStats, NetworkPlayer,
     PlayerCommand, PlayerStateChannel, PlayerStateUpdate, ReliableCommandChannel,

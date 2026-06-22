@@ -1,8 +1,8 @@
 use super::ServerNetworkSettings;
 use super::lobby::{
-    ActiveServerAbilities, ConnectedPlayers, LoadingScreenReadyPlayers,
-    LoadingScreenStatusLogCache, MatchSnapshotBroadcastTimer, SentChampionCatalogClients,
-    broadcast_loading_screen_status, broadcast_match_snapshots, rebroadcast_ability_visuals,
+    ActiveServerAbilities, ConnectedPlayers, LeavingPlayers, LoadingScreenReadyPlayers,
+    MatchSnapshotBroadcastTimer, SentChampionCatalogClients, broadcast_loading_screen_status,
+    broadcast_match_snapshots, rebroadcast_ability_visuals, receive_client_leave,
     receive_display_ready, receive_player_commands, receive_player_state_updates,
     send_champion_catalogs, update_player_death_and_respawn, update_server_abilities,
 };
@@ -38,7 +38,7 @@ impl Plugin for ServerNetworkPlugin {
         .init_resource::<ConnectedPlayers>()
         .init_resource::<ActiveServerAbilities>()
         .init_resource::<LoadingScreenReadyPlayers>()
-        .init_resource::<LoadingScreenStatusLogCache>()
+        .init_resource::<LeavingPlayers>()
         .init_resource::<MatchSnapshotBroadcastTimer>()
         .init_resource::<SentChampionCatalogClients>()
         .init_resource::<EmptyServerShutdown>()
@@ -47,6 +47,7 @@ impl Plugin for ServerNetworkPlugin {
             Update,
             (
                 send_champion_catalogs,
+                receive_client_leave,
                 receive_display_ready,
                 broadcast_loading_screen_status,
                 receive_player_state_updates,
@@ -77,7 +78,6 @@ fn handle_new_client(trigger: On<Add, Connected>, mut commands: Commands) {
             SendUpdatesMode::SinceLastAck,
             false,
         ));
-    info!("Lightyear client connected: {:?}", trigger.entity);
 }
 
 /// Description:

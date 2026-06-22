@@ -232,6 +232,7 @@ pub(super) fn sync_remote_players_from_match_snapshot(
             &mut Health,
             &mut Transform,
             &mut CurrentChampionVisual,
+            &mut PlayerProfile,
         ),
         (With<PlayerControlled>, Without<RemotePlayerStandIn>),
     >,
@@ -241,10 +242,13 @@ pub(super) fn sync_remote_players_from_match_snapshot(
         Option<&mut TrainingDummy>,
         &mut Health,
         &mut Transform,
+        &mut PlayerProfile,
     )>,
     mut hud_state: ResMut<MiraHudState>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    health_bar_style: Res<healthbar::OverheadHealthBarStyle>,
+    player_profiles: Res<healthbar::OverheadPlayerProfiles>,
 ) {
     let mut latest_snapshot = None;
     for mut receiver in &mut receivers {
@@ -281,6 +285,7 @@ pub(super) fn sync_remote_players_from_match_snapshot(
         &mut local_spawn,
         &mut local_players,
         &mut hud_state,
+        &player_profiles,
     );
     sync_remote_player_stand_ins(
         &mut commands,
@@ -289,6 +294,8 @@ pub(super) fn sync_remote_players_from_match_snapshot(
         &mut remote_players,
         &mut meshes,
         &mut materials,
+        health_bar_style.accent_color,
+        &player_profiles,
     );
 }
 
@@ -430,10 +437,12 @@ fn apply_local_player_snapshot(
             &mut Health,
             &mut Transform,
             &mut CurrentChampionVisual,
+            &mut PlayerProfile,
         ),
         (With<PlayerControlled>, Without<RemotePlayerStandIn>),
     >,
     hud_state: &mut MiraHudState,
+    player_profiles: &healthbar::OverheadPlayerProfiles,
 ) {
     let Some(local_snapshot) = snapshot
         .players
@@ -443,11 +452,16 @@ fn apply_local_player_snapshot(
         return;
     };
 
-    for (entity, mut player, mut team, mut health, mut transform, mut visual) in local_players {
+    for (entity, mut player, mut team, mut health, mut transform, mut visual, mut profile) in
+        local_players
+    {
         player.id = PlayerId(snapshot.local_player_id);
         *team = Team(local_snapshot.team);
         health.current = local_snapshot.health.max(0.0) as u32;
         health.max = local_snapshot.max_health.max(1.0) as u32;
+        if let Some(display_name) = player_profiles.display_name(snapshot.local_player_id) {
+            profile.display_name = display_name.to_string();
+        }
         hud_state.set_respawn_seconds(local_snapshot.respawn_seconds);
         commands.entity(entity).insert(ExternalMovementModifier {
             speed_multiplier: local_snapshot.move_speed_multiplier.clamp(0.0, 2.0),
@@ -524,9 +538,12 @@ fn sync_remote_player_stand_ins(
         Option<&mut TrainingDummy>,
         &mut Health,
         &mut Transform,
+        &mut PlayerProfile,
     )>,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
+    accent_color: Color,
+    player_profiles: &healthbar::OverheadPlayerProfiles,
 ) {
     let local_team = snapshot
         .players
@@ -541,7 +558,9 @@ fn sync_remote_player_stand_ins(
         .collect::<Vec<_>>();
     let mut existing_player_ids = Vec::with_capacity(remote_snapshot_players.len());
 
-    for (entity, mut stand_in, maybe_dummy, mut health, mut transform) in remote_players {
+    for (entity, mut stand_in, maybe_dummy, mut health, mut transform, mut profile) in
+        remote_players
+    {
         let Some(snapshot_player) = remote_snapshot_players
             .iter()
             .find(|player| player.player_id == stand_in.player_id)
@@ -577,6 +596,7 @@ fn sync_remote_player_stand_ins(
         }
         health.current = snapshot_player.health.max(0.0) as u32;
         health.max = snapshot_player.max_health.max(1.0) as u32;
+        profile.display_name = player_display_name(snapshot_player, player_profiles);
         existing_player_ids.push(stand_in.player_id);
     }
 
@@ -592,6 +612,8 @@ fn sync_remote_player_stand_ins(
             materials,
             snapshot_player,
             local_team,
+            accent_color,
+            player_profiles,
         );
     }
 }
@@ -612,6 +634,8 @@ fn spawn_remote_player_stand_in(
     materials: &mut Assets<StandardMaterial>,
     snapshot_player: &NetworkPlayer,
     local_team: TeamSpec,
+    accent_color: Color,
+    player_profiles: &healthbar::OverheadPlayerProfiles,
 ) {
     let is_enemy = snapshot_player.team != local_team;
     let mut player = commands.spawn((
@@ -636,7 +660,7 @@ fn spawn_remote_player_stand_in(
             id: PlayerId(snapshot_player.player_id),
         },
         PlayerProfile {
-            display_name: format!("Player {}", snapshot_player.player_id),
+            display_name: player_display_name(snapshot_player, player_profiles),
         },
         Team(snapshot_player.team),
         Health {
@@ -678,18 +702,22 @@ fn spawn_remote_player_stand_in(
     let health_bar = if is_enemy {
         healthbar::spawn_remote_enemy_player_health_bar(
             commands,
+            asset_server,
             meshes,
             materials,
             player_entity,
             snapshot_player.max_health,
+            accent_color,
         )
     } else {
         healthbar::spawn_remote_ally_player_health_bar(
             commands,
+            asset_server,
             meshes,
             materials,
             player_entity,
             snapshot_player.max_health,
+            accent_color,
         )
     };
     commands.entity(player_entity).insert(RemotePlayerStandIn {
@@ -768,6 +796,16 @@ fn champion_display_name(champion: ChampionId) -> &'static str {
         6609 => "Sophia",
         _ => "Lira",
     }
+}
+
+fn player_display_name(
+    player: &NetworkPlayer,
+    player_profiles: &healthbar::OverheadPlayerProfiles,
+) -> String {
+    player_profiles
+        .display_name(player.player_id)
+        .map(str::to_string)
+        .unwrap_or_else(|| "Player".to_string())
 }
 
 /// Description:

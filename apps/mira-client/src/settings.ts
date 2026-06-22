@@ -4,6 +4,7 @@ export const settingsStorageKey = "mira-client-settings";
 export const defaultAccentColor = "#f2c45b";
 export const defaultResolution = "1600x900";
 export const defaultClientAnimation = "all";
+export const defaultGameScreenMode = "borderless";
 
 export type AppResolution =
   | "1270x720"
@@ -13,11 +14,13 @@ export type AppResolution =
   | "2140x1440";
 
 export type ClientAnimation = "all" | "ui-elements" | "images" | "none";
+export type GameScreenMode = "full" | "window" | "borderless";
 
 export type StoredSettings = {
   accentColor?: string;
   allowFriendRequests?: boolean;
   clientAnimation?: ClientAnimation;
+  gameScreenMode?: GameScreenMode;
   locale?: AppLocale;
   resolution?: AppResolution;
 };
@@ -65,6 +68,10 @@ export function isClientAnimation(value: unknown): value is ClientAnimation {
     value === "images" ||
     value === "none"
   );
+}
+
+export function isGameScreenMode(value: unknown): value is GameScreenMode {
+  return value === "full" || value === "window" || value === "borderless";
 }
 
 export function getResolutionSize(resolution: AppResolution) {

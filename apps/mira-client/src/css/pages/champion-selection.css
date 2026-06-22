@@ -102,7 +102,7 @@
   position: relative;
   z-index: 1;
   display: grid;
-  grid-template-columns: minmax(190px, 250px) minmax(0, 1fr) minmax(190px, 250px);
+  grid-template-columns: 200px minmax(0, 1fr) 200px;
   grid-template-areas: "dark center light";
   align-items: center;
   gap: 26px;
@@ -146,8 +146,8 @@
   position: relative;
   z-index: 2;
   display: grid;
-  min-height: 396px;
-  grid-template-rows: repeat(5, 72px);
+  min-height: 457px;
+  grid-template-rows: repeat(5, 85px);
   align-content: center;
   gap: 8px;
 }
@@ -156,11 +156,14 @@
   position: relative;
   display: grid;
   grid-template-columns: 54px minmax(0, 1fr);
+  width: 200px;
+  height: 85px;
   align-items: center;
   gap: 10px;
+  box-sizing: border-box;
   border: 1px solid rgba(255, 255, 255, 0.11);
   border-radius: 8px;
-  padding: 14px;
+  padding: 14px 12px;
   background: rgba(21, 25, 33, 0.72);
   transition:
     border-color 160ms ease,
@@ -186,14 +189,14 @@
 }
 
 .champion-selection-player-avatar,
-.champion-selection-player span,
-.champion-selection-player small {
+.champion-selection-player-meta,
+.champion-selection-player-meta span,
+.champion-selection-player-meta small {
   position: relative;
   z-index: 1;
 }
 
 .champion-selection-player-avatar {
-  grid-row: span 2;
   display: grid;
   width: 54px;
   height: 54px;
@@ -205,13 +208,25 @@
   font-weight: 950;
 }
 
+.champion-selection-player.opponent .champion-selection-player-avatar {
+  border: 1px solid color-mix(in srgb, var(--accent-color) 48%, rgba(255, 255, 255, 0.18));
+  background: rgba(7, 10, 16, 0.36);
+}
+
 .champion-selection-player-avatar img {
   width: 100%;
   height: 100%;
   object-fit: cover;
 }
 
-.champion-selection-player span {
+.champion-selection-player-meta {
+  display: grid;
+  min-height: 54px;
+  align-content: center;
+  gap: 3px;
+}
+
+.champion-selection-player-meta span {
   max-width: 100%;
   overflow: hidden;
   color: #edf2f7;
@@ -220,7 +235,7 @@
   white-space: nowrap;
 }
 
-.champion-selection-player small {
+.champion-selection-player-meta small {
   min-width: 0;
   overflow: hidden;
   color: color-mix(in srgb, var(--accent-color) 72%, #edf2f7);
@@ -394,90 +409,80 @@
 
 .champion-selection-pick-indicator {
   position: absolute;
-  top: calc(50% + var(--pick-indicator-offset, 12px));
+  top: calc(50% + var(--pick-indicator-offset, 0px));
   z-index: 5;
   display: flex;
   align-items: center;
-  gap: 8px;
-  border: 1px solid color-mix(in srgb, var(--accent-color) 54%, rgba(255, 255, 255, 0.16));
-  border-radius: 999px;
-  padding: 8px 12px;
+  gap: 10px;
+  padding: 0;
   color: #edf2f7;
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--accent-color) 20%, transparent), transparent),
-    rgba(10, 13, 20, 0.82);
-  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.34);
   font-weight: 950;
   pointer-events: none;
+  filter: drop-shadow(0 12px 18px rgba(0, 0, 0, 0.42));
 }
 
 .champion-selection-pick-indicator strong {
-  min-width: 24px;
+  min-width: 28px;
+  color: #edf2f7;
   font-size: 0.86rem;
+  font-variant-numeric: tabular-nums;
   line-height: 1;
+  text-align: center;
+  text-shadow:
+    0 0 12px color-mix(in srgb, var(--accent-color) 42%, transparent),
+    0 2px 8px rgba(0, 0, 0, 0.55);
+}
+
+.champion-selection-pick-indicator strong::after {
+  display: none;
 }
 
 .champion-selection-pick-indicator span {
   position: relative;
-  width: 0;
-  height: 0;
-  border-top: 8px solid transparent;
-  border-bottom: 8px solid transparent;
+  width: 38px;
+  height: 48px;
+}
+
+.champion-selection-pick-indicator span::before,
+.champion-selection-pick-indicator span::after {
+  position: absolute;
+  left: 2px;
+  width: 42px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--accent-color);
+  box-shadow: 0 0 18px color-mix(in srgb, var(--accent-color) 42%, transparent);
+  content: "";
+  transform-origin: left center;
+}
+
+.champion-selection-pick-indicator span::before {
+  top: 22px;
+  transform: rotate(-40deg);
+}
+
+.champion-selection-pick-indicator span::after {
+  bottom: 22px;
+  transform: rotate(40deg);
 }
 
 .champion-selection-pick-indicator-dark {
-  left: 290px;
+  left: 286px;
   animation: champion-pick-indicator-dark 1s ease-in-out infinite;
 }
 
-.champion-selection-pick-indicator-dark span {
-  border-right: 14px solid var(--accent-color);
-}
-
 .champion-selection-pick-indicator-light {
-  right: 290px;
+  right: 286px;
   flex-direction: row-reverse;
   animation: champion-pick-indicator-light 1s ease-in-out infinite;
 }
 
 .champion-selection-pick-indicator-light span {
-  border-left: 14px solid var(--accent-color);
+  transform: scaleX(-1);
 }
 
-.champion-selection-pick-indicator-dual {
-  left: 50%;
-  transform: translate(-50%, -50%);
-  animation: champion-pick-indicator-dual 1s ease-in-out infinite;
-}
-
-.champion-selection-pick-indicator-dual span {
-  width: 34px;
-  height: 2px;
-  border: 0;
-  background: var(--accent-color);
-}
-
-.champion-selection-pick-indicator-dual span::before,
-.champion-selection-pick-indicator-dual span::after {
-  position: absolute;
-  top: 50%;
-  width: 0;
-  height: 0;
-  border-top: 7px solid transparent;
-  border-bottom: 7px solid transparent;
-  content: "";
-}
-
-.champion-selection-pick-indicator-dual span::before {
-  left: 10px;
-  border-right: 12px solid var(--accent-color);
-  transform: translate(-100%, -50%);
-}
-
-.champion-selection-pick-indicator-dual span::after {
-  right: 10px;
-  border-left: 12px solid var(--accent-color);
-  transform: translate(100%, -50%);
+.champion-selection-pick-indicator-light strong::after {
+  display: none;
 }
 
 .champion-selection-champions {
@@ -548,22 +553,87 @@
 }
 
 .champion-selection-confirm-button {
+  position: relative;
+  isolation: isolate;
   min-width: 190px;
   min-height: 44px;
-  border: 1px solid color-mix(in srgb, var(--accent-color) 52%, rgba(255, 255, 255, 0.16));
-  border-radius: 4px;
+  border: 0;
   color: var(--accent-foreground-color);
-  background: var(--accent-color);
+  background: transparent;
   font-size: 0.82rem;
   font-weight: 950;
+  letter-spacing: 0;
   text-transform: uppercase;
   cursor: pointer;
+}
+
+.champion-selection-confirm-button::before,
+.champion-selection-confirm-button::after {
+  position: absolute;
+  z-index: 0;
   clip-path: polygon(0 0, 100% 0, 90% 100%, 10% 100%);
+  content: "";
+  pointer-events: none;
+}
+
+.champion-selection-confirm-button::before {
+  inset: 0;
+  background:
+    linear-gradient(
+      115deg,
+      color-mix(in srgb, var(--accent-color) 58%, #111827) 0%,
+      var(--accent-color) 24%,
+      color-mix(in srgb, var(--accent-color) 76%, #ffffff) 42%,
+      color-mix(in srgb, var(--accent-color) 68%, #06080d) 62%,
+      var(--accent-color) 84%,
+      color-mix(in srgb, var(--accent-color) 58%, #111827) 100%
+    );
+  background-size: 200% 100%;
+  filter: drop-shadow(0 14px 24px rgba(0, 0, 0, 0.35));
+}
+
+.champion-selection-confirm-button::after {
+  inset: 2px;
+  background:
+    linear-gradient(
+      115deg,
+      color-mix(in srgb, var(--accent-color) 34%, #101216),
+      color-mix(in srgb, var(--accent-color) 66%, #101216),
+      color-mix(in srgb, var(--accent-color) 42%, #ffffff),
+      color-mix(in srgb, var(--accent-color) 66%, #101216),
+      color-mix(in srgb, var(--accent-color) 34%, #101216)
+    );
+  background-size: 200% 100%;
+  opacity: 0.92;
+}
+
+.champion-selection-confirm-button span {
+  position: relative;
+  z-index: 1;
+  color: var(--accent-foreground-color);
+  font-size: inherit;
+  font-weight: inherit;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.28);
+  text-transform: inherit;
+}
+
+.champion-selection-confirm-button:hover::before {
+  filter: drop-shadow(0 16px 30px color-mix(in srgb, var(--accent-color) 32%, transparent));
+  animation: play-button-gradient 4.2s linear infinite;
+}
+
+.champion-selection-confirm-button:hover::after {
+  animation: play-button-gradient 5.6s linear infinite reverse;
 }
 
 .champion-selection-confirm-button:disabled {
   cursor: default;
   opacity: 0.64;
+}
+
+.champion-selection-confirm-button:disabled::before,
+.champion-selection-confirm-button:disabled::after {
+  animation: none;
 }
 
 @keyframes champion-current-card {

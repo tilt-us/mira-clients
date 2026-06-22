@@ -12,6 +12,11 @@ use lightyear::prelude::*;
 /// Registers Lightyear client networking and starts the development client link.
 pub struct ClientNetworkPlugin;
 
+#[derive(Resource, Debug, Clone, Copy, Default)]
+pub struct NetworkPingState {
+    pub rtt: Option<Duration>,
+}
+
 impl Plugin for ClientNetworkPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(ClientPlugins {
@@ -19,7 +24,9 @@ impl Plugin for ClientNetworkPlugin {
         })
         .add_plugins(SharedNetworkPlugin)
         .init_resource::<ClientNetworkSettings>()
-        .add_systems(Startup, connect_to_server);
+        .init_resource::<NetworkPingState>()
+        .add_systems(Startup, connect_to_server)
+        .add_systems(Update, update_network_ping);
     }
 }
 
@@ -67,4 +74,33 @@ fn connect_to_server(mut commands: Commands, settings: Res<ClientNetworkSettings
         settings.local_addr, settings.server_addr
     );
     Ok(())
+}
+
+fn update_network_ping(mut ping: ResMut<NetworkPingState>, clients: Query<&Link, With<Client>>) {
+    ping.rtt = clients
+        .iter()
+        .next()
+        .map(|link| link.stats.rtt)
+        .filter(|rtt| !rtt.is_zero());
+}
+
+pub fn ping_millis(ping: &NetworkPingState) -> u32 {
+    ping.rtt
+        .map(|rtt| rtt.as_secs_f32() * 1000.0)
+        .unwrap_or(0.0)
+        .round()
+        .max(0.0) as u32
+}
+
+pub fn ping_text(ping: &NetworkPingState) -> String {
+    format!("{}ms", ping_millis(ping))
+}
+
+pub fn ping_color(ping: &NetworkPingState) -> Color {
+    match ping_millis(ping) {
+        0..=40 => Color::srgb_u8(0x2B, 0xB8, 0x61),
+        41..=80 => Color::srgb_u8(0xCC, 0x90, 0x1C),
+        81..=120 => Color::srgb_u8(0xCC, 0x39, 0x1C),
+        _ => Color::srgb_u8(0x99, 0x19, 0x00),
+    }
 }

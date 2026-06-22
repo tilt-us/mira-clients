@@ -3,6 +3,14 @@ use std::path::PathBuf;
 
 const DEFAULT_ACCENT_COLOR: &str = "#f2c45b";
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum ClientScreenMode {
+    Full,
+    Window,
+    #[default]
+    Borderless,
+}
+
 /// Description:
 /// Stores process-level settings for the playable client app.
 ///
@@ -34,6 +42,7 @@ pub struct ClientLaunchSettings {
     pub champion: Option<String>,
     pub matchmaking_api_base_url: Option<String>,
     pub server_control_base_url: Option<String>,
+    pub screen_mode: ClientScreenMode,
 }
 
 impl ClientLaunchSettings {

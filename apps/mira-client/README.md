@@ -9,6 +9,14 @@ Desktop launcher and lobby client for Mira.
 - TypeScript
 - Vite 8
 
+## Game Client Rendering
+
+The Bevy game client uses `bevy_fontmesh` for overhead 3D text such as player
+names and level digits on health bars. Bevy 0.18 provides UI text and `Text2d`,
+but no built-in 3D mesh text; health-bar labels must be real 3D child entities
+so they stay attached to the bar transform. The font asset is Roboto Bold at
+`assets/fonts/Roboto-Bold.ttf`.
+
 ## Commands
 
 ```bash
