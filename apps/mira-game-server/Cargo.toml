@@ -1,6 +1,15 @@
 [package]
 name = "mira-game-server"
-version = "0.1.0"
-edition = "2024"
+edition.workspace = true
+authors.workspace = true
+version.workspace = true
+description = "Mira game server app"
 
 [dependencies]
+bevy.workspace = true
+game-logic.workspace = true
+game-shared.workspace = true
+game-world.workspace = true
+lightyear.workspace = true
+serde.workspace = true
+serde_json.workspace = true

@@ -17,6 +17,8 @@ dist-ssr
 # Local game client binaries are too large for GitHub.
 files/mira-moba-client
 files/mira-moba-client.exe
+files/mira-game-client
+files/mira-game-client.exe
 
 # Editor directories and files
 .vscode/*

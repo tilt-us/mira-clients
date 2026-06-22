@@ -1,0 +1,43 @@
+<div id="loading-screen-root" class="loading-screen-root">
+    <div class="loading-screen-vignette"></div>
+
+    <div class="loading-team-lane loading-team-lane-light">
+        <div class="loading-team-row loading-team-row-light">
+            @for(player in loading_screen_store.light_players) {
+            <div class="loading-player-card loading-player-card-light {{ player.champion_class }}">
+                <div class="loading-card-shade"></div>
+                <div class="loading-player-meta">
+                    <div class="loading-player-avatar">{{ player.initial }}</div>
+                    <p class="loading-player-name">{{ player.name }}</p>
+                    <p class="loading-player-champion">{{ player.champion }}</p>
+                    <p class="loading-player-state">{{ player.state }}</p>
+                </div>
+            </div>
+            }
+        </div>
+    </div>
+
+    <div class="loading-progress-panel">
+        <div class="loading-progress-inner">
+            <div class="loading-progress-track">
+                <div id="loading-screen-progress-fill" class="loading-progress-fill"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="loading-team-lane loading-team-lane-dark">
+        <div class="loading-team-row loading-team-row-dark">
+            @for(player in loading_screen_store.dark_players) {
+            <div class="loading-player-card loading-player-card-dark {{ player.champion_class }}">
+                <div class="loading-card-shade"></div>
+                <div class="loading-player-meta">
+                    <div class="loading-player-avatar">{{ player.initial }}</div>
+                    <p class="loading-player-name">{{ player.name }}</p>
+                    <p class="loading-player-champion">{{ player.champion }}</p>
+                    <p class="loading-player-state">{{ player.state }}</p>
+                </div>
+            </div>
+            }
+        </div>
+    </div>
+</div>

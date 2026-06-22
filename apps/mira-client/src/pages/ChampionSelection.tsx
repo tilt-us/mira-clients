@@ -300,7 +300,11 @@ function ChampionSelection({
             ),
           ),
         ).slice(0, 2);
-  const showPreviewBubble = !canCurrentPlayerPick && bubbleChampionWallpapers.length > 0;
+  const isCurrentPlayerPicking =
+    activePhase === "pick" &&
+    typeof currentPlayerPublicId === "number" &&
+    activePickPublicIds.has(currentPlayerPublicId);
+  const showSelectedChampionBubble = activePhase === "ready" || !isCurrentPlayerPicking;
   const activePickCardIndexes =
     teams[currentPickTeamIndex]?.players
       ?.map((player, playerIndex) => {
@@ -601,38 +605,9 @@ function ChampionSelection({
                   ? t("champion-select-own-champion")
                   : getTeamName(currentPickTeamIndex)}
               </span>
-              <div className="champion-selection-opponent-bubble">
-                {bubbleChampionWallpapers.length > 0 ? (
-                  <div
-                    className={
-                      bubbleChampionWallpapers.length > 1
-                        ? "champion-selection-bubble-wallpapers split"
-                        : "champion-selection-bubble-wallpapers"
-                    }
-                    aria-hidden="true"
-                  >
-                    {bubbleChampionWallpapers.map((wallpaper, index) => (
-                      <span
-                        key={`${wallpaper}-${index}`}
-                        style={
-                          {
-                            "--bubble-wallpaper": `url(${wallpaper})`,
-                          } as CSSProperties
-                        }
-                      />
-                    ))}
-                  </div>
-                ) : null}
-              </div>
-              <strong>{selectedChampion}</strong>
-            </div>
-          ) : (
-            <>
-              <span>{match.mode ?? "Ranked"}</span>
-              <h1>{t("champion-select-title")}</h1>
-              {showPreviewBubble ? (
-                <div className="champion-selection-picked champion-selection-picked-preview">
-                  <div className="champion-selection-opponent-bubble">
+              {showSelectedChampionBubble ? (
+                <div className="champion-selection-opponent-bubble">
+                  {bubbleChampionWallpapers.length > 0 ? (
                     <div
                       className={
                         bubbleChampionWallpapers.length > 1
@@ -652,10 +627,15 @@ function ChampionSelection({
                         />
                       ))}
                     </div>
-                  </div>
-                  {previewedChampion ? <strong>{previewedChampion}</strong> : null}
+                  ) : null}
                 </div>
               ) : null}
+              <strong>{selectedChampion}</strong>
+            </div>
+          ) : (
+            <>
+              <span>{match.mode ?? "Ranked"}</span>
+              <h1>{t("champion-select-title")}</h1>
               <div className="champion-selection-champions">
                 {champions.map((champion) => (
                   <button

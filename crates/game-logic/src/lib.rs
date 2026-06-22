@@ -1,14 +1,12 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
-}
+#![deny(unsafe_code)]
+#![warn(missing_docs)]
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+//! Reusable gameplay systems that can run in both client and server apps.
+//!
+//! This crate stays free of rendering, UI, and client-only world setup so it can be
+//! registered by the dedicated server without requiring Bevy render resources.
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-}
+mod systems;
+pub use systems::{
+    MiraClientSystemsPlugin, MiraGameplaySystemsPlugin, MiraHudState, MiraSystemsPlugin,
+};

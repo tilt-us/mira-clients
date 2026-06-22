@@ -1,0 +1,28 @@
+{
+  "localized_name": "ignara",
+  "display_name": "Ignara",
+  "full_name": "Ignara",
+  "model_name": "model.glb",
+  "animations": [
+    {
+      "key": "idle",
+      "index": 0
+    },
+    {
+      "key": "walk",
+      "index": 5
+    },
+    {
+      "key": "sprint",
+      "index": 6
+    },
+    {
+      "key": "slow_walk",
+      "index": 3
+    },
+    {
+      "key": "jump",
+      "index": 2
+    }
+  ]
+}

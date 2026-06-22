@@ -1,14 +1,8 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
-}
+#![deny(unsafe_code)]
+#![warn(missing_docs)]
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+//! World and map scene setup for the client runtime.
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-}
+mod scene;
+
+pub use scene::MiraWorldPlugin;

@@ -1,6 +1,11 @@
 [package]
 name = "game-shared"
-version = "0.1.0"
-edition = "2024"
+edition.workspace = true
+authors.workspace = true
+version.workspace = true
+description = "Shared protocol, components, and gameplay data for Mira Game"
 
 [dependencies]
+bevy.workspace = true
+lightyear.workspace = true
+serde.workspace = true

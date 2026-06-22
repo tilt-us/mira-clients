@@ -1,0 +1,195 @@
+p {
+    margin: 0;
+}
+
+.loading-screen-root {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    min-width: 100%;
+    min-height: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    padding: 38px 54px 38px 54px;
+    overflow: hidden;
+    background: linear-gradient(180deg, #0c1018 0%, #090b10 47%, #111018 100%);
+    color: #edf2f7;
+    pointer-events: auto;
+    z-index: 9000;
+}
+
+.loading-screen-vignette {
+    display: none;
+}
+
+.loading-team-lane {
+    position: relative;
+    width: 100%;
+    min-height: 344px;
+    display: flex;
+    flex-direction: column;
+    z-index: 1;
+}
+
+.loading-team-lane-light {
+    justify-content: flex-start;
+}
+
+.loading-team-lane-dark {
+    justify-content: flex-end;
+}
+
+.loading-team-row {
+    width: 100%;
+    min-height: 344px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 22px;
+}
+
+.loading-player-card {
+    position: relative;
+    width: 220px;
+    height: 344px;
+    min-width: 220px;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    overflow: hidden;
+    border: 1px solid #ffffff24;
+    border-radius: 8px;
+    background-color: #10141d;
+    background-position: center;
+    background-size: cover;
+    box-shadow: 0 18px 44px #00000078;
+}
+
+.loading-card-shade {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    background: #00000066;
+}
+
+.loading-player-card-light {
+    border-color: #f0d28a54;
+}
+
+.loading-player-card-dark {
+    border-color: #7d83ff42;
+}
+
+.loading-card-lira {
+    background-image: url("wallpapers/lira-loading.jpg");
+}
+
+.loading-card-ignara {
+    background-image: url("wallpapers/ignara-loading.jpg");
+}
+
+.loading-card-yuna {
+    background-image: url("wallpapers/yuna-loading.jpg");
+}
+
+.loading-card-sophia {
+    background-image: url("wallpapers/sophia-loading.jpg");
+}
+
+.loading-player-meta {
+    position: relative;
+    min-height: 116px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    gap: 4px;
+    padding: 14px 12px 12px 12px;
+    border-top: 1px solid #ffffff24;
+    background: #151922ed;
+}
+
+.loading-player-avatar {
+    width: 46px;
+    height: 46px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin-bottom: 2px;
+    border: 1px solid #ffffff33;
+    border-radius: 23px;
+    background: #20242c;
+    color: #edf2f7;
+    font-size: 18px;
+    font-weight: 950;
+    text-transform: uppercase;
+}
+
+.loading-player-name {
+    max-width: 100%;
+    color: #edf2f7;
+    font-size: 15px;
+    font-weight: 950;
+    text-align: center;
+}
+
+.loading-player-champion {
+    max-width: 100%;
+    color: #aeb8c6;
+    font-size: 12px;
+    font-weight: 900;
+    text-align: center;
+    text-transform: uppercase;
+}
+
+.loading-player-state {
+    color: #f2c45b;
+    font-size: 10px;
+    font-weight: 950;
+    text-transform: uppercase;
+}
+
+.loading-progress-panel {
+    position: relative;
+    width: 100%;
+    display: flex;
+    justify-content: center;
+    z-index: 1;
+}
+
+.loading-progress-inner {
+    width: 720px;
+    max-width: 80%;
+    display: flex;
+    flex-direction: column;
+    padding: 0;
+    border: 0 solid transparent;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+}
+
+.loading-progress-track {
+    width: 100%;
+    height: 12px;
+    overflow: hidden;
+    border: 1px solid #ffffff24;
+    border-radius: 4px;
+    background: #07090e;
+}
+
+.loading-progress-fill {
+    width: 0%;
+    height: 100%;
+    min-width: 0;
+    border-radius: 3px;
+    background: #f2c45b;
+    box-shadow: 0 0 20px #f2c45b66;
+}

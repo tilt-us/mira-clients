@@ -1,6 +1,11 @@
 [package]
 name = "game-world"
-version = "0.1.0"
-edition = "2024"
+edition.workspace = true
+authors.workspace = true
+version.workspace = true
+description = "World, map, physics, and navigation setup for Mira Game"
 
 [dependencies]
+avian3d.workspace = true
+bevy.workspace = true
+game-shared.workspace = true

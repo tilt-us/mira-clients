@@ -426,7 +426,7 @@
 }
 
 .champion-selection-pick-indicator-dark {
-  left: 260px;
+  left: 290px;
   animation: champion-pick-indicator-dark 1s ease-in-out infinite;
 }
 
@@ -435,7 +435,7 @@
 }
 
 .champion-selection-pick-indicator-light {
-  right: 260px;
+  right: 290px;
   flex-direction: row-reverse;
   animation: champion-pick-indicator-light 1s ease-in-out infinite;
 }
@@ -616,11 +616,11 @@
 
 @media (max-width: 980px) {
   .champion-selection-pick-indicator-dark {
-    left: 200px;
+    left: 225px;
   }
 
   .champion-selection-pick-indicator-light {
-    right: 200px;
+    right: 225px;
   }
 }
 

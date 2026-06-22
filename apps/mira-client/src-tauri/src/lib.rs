@@ -65,6 +65,7 @@ struct KeycloakConfigFile {
 #[serde(rename_all = "camelCase")]
 struct LaunchGameRequest {
     access_token: String,
+    accent_color: String,
     champion: String,
     #[serde(default)]
     force_restart: bool,
@@ -94,7 +95,7 @@ struct GameClientStatus {
 #[tauri::command]
 fn launcher_status() -> LauncherStatus {
     LauncherStatus {
-        game_binary: "mira-moba-client",
+        game_binary: "mira-game-client",
         connected: false,
     }
 }
@@ -114,12 +115,16 @@ fn launch_game(
     let game_dir = game_binary
         .parent()
         .ok_or_else(|| "Game-Client-Verzeichnis konnte nicht bestimmt werden.".to_string())?;
+    let asset_root = resolve_game_asset_root(&app, game_dir)?;
 
     let mut command = Command::new(&game_binary);
     command
         .current_dir(game_dir)
+        .env("MIRA_GAME_ASSET_ROOT", &asset_root)
         .arg("--access-token")
         .arg(request.access_token)
+        .arg("--accent-color")
+        .arg(request.accent_color)
         .arg("--champion")
         .arg(request.champion)
         .arg("--match-id")
@@ -231,9 +236,9 @@ fn stop_game_child(child: &mut Child) -> Result<(), String> {
 
 fn resolve_game_binary(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let binary_name = if cfg!(windows) {
-        "mira-moba-client.exe"
+        "mira-game-client.exe"
     } else {
-        "mira-moba-client"
+        "mira-game-client"
     };
 
     let mut candidates = Vec::new();
@@ -265,7 +270,48 @@ fn resolve_game_binary(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     candidates
         .into_iter()
         .find(|candidate| candidate.is_file())
-        .ok_or_else(|| "files/mira-moba-client wurde nicht gefunden.".to_string())
+        .ok_or_else(|| "files/mira-game-client wurde nicht gefunden.".to_string())
+}
+
+fn resolve_game_asset_root(app: &tauri::AppHandle, game_dir: &std::path::Path) -> Result<PathBuf, String> {
+    game_asset_root_candidates(app, game_dir)
+        .into_iter()
+        .find(|candidate| candidate.join("index.html").is_file())
+        .ok_or_else(|| "Game-Assets wurden nicht gefunden: assets/index.html fehlt.".to_string())
+}
+
+fn game_asset_root_candidates(app: &tauri::AppHandle, game_dir: &std::path::Path) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+
+    candidates.push(game_dir.join("assets"));
+
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        candidates.push(resource_dir.join("files").join("assets"));
+        candidates.push(resource_dir.join("assets"));
+    }
+
+    if let Ok(current_dir) = std::env::current_dir() {
+        candidates.push(current_dir.join("files").join("assets"));
+        candidates.push(current_dir.join("assets"));
+        candidates.push(current_dir.join("..").join("assets"));
+    }
+
+    candidates.push(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("files")
+            .join("assets"),
+    );
+
+    candidates.push(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("..")
+            .join("assets"),
+    );
+
+    candidates
 }
 
 fn load_client_config(app: &tauri::AppHandle) -> Result<ClientConfig, String> {

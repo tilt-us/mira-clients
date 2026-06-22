@@ -99,6 +99,7 @@ type GameTeam = "dark" | "light";
 
 type LaunchGameRequest = {
   accessToken: string;
+  accentColor: string;
   champion: string;
   forceRestart?: boolean;
   matchId: string;
@@ -110,7 +111,7 @@ type LaunchGameRequest = {
   team: GameTeam;
 };
 
-type GameLaunchParameters = Omit<LaunchGameRequest, "accessToken">;
+type GameLaunchParameters = Omit<LaunchGameRequest, "accessToken" | "accentColor">;
 
 type GameClientStatus = {
   running: boolean;
@@ -2591,6 +2592,7 @@ function Client({
 
     const request: LaunchGameRequest = {
       accessToken,
+      accentColor,
       ...parameters,
       forceRestart,
     };

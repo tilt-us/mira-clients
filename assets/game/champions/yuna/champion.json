@@ -1,0 +1,28 @@
+{
+  "localized_name": "yuna",
+  "display_name": "Yuna",
+  "full_name": "Yuna",
+  "model_name": "model.glb",
+  "animations": [
+    {
+      "key": "idle",
+      "index": 1
+    },
+    {
+      "key": "walk",
+      "index": 5
+    },
+    {
+      "key": "sprint",
+      "index": 6
+    },
+    {
+      "key": "slow_walk",
+      "index": 4
+    },
+    {
+      "key": "jump",
+      "index": 3
+    }
+  ]
+}
