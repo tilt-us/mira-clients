@@ -27,9 +27,9 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["deb"],
     "resources": {
-      "../mira-client.toml": "mira-client.toml",
+      "../mira-client.prod.toml": "mira-client.toml",
       "../files/": "files"
     },
     "icon": [

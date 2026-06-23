@@ -1,11 +1,11 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const DEFAULT_INPUTS = [
-  "http://localhost:8080/v3/api-docs",
-  "http://localhost:8082/v3/api-docs",
-  "http://localhost:8083/v3/api-docs",
+  "https://api.tilt-us.com/auth/v3/api-docs",
+  "https://api.tilt-us.com/live/v3/api-docs",
+  "https://api.tilt-us.com/match/v3/api-docs",
 ];
 const DEFAULT_OUTPUT = ".openapi/api-docs.json";
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -17,11 +17,19 @@ if (process.env.OPENAPI_INPUT) {
   process.exit(0);
 }
 
-const inputs = parseInputs(process.env.OPENAPI_INPUTS) ?? DEFAULT_INPUTS;
+const configuredInputs = parseInputs(process.env.OPENAPI_INPUTS);
+const inputs = configuredInputs ?? DEFAULT_INPUTS;
 const output = process.env.OPENAPI_MERGED_OUTPUT ?? DEFAULT_OUTPUT;
-const specs = await Promise.all(inputs.map(readSpec));
-const mergedSpec = mergeSpecs(specs, inputs);
 const outputPath = path.resolve(repoRoot, output);
+const specs = await readSpecs(inputs, outputPath, output, {
+  allowCachedFallback: !configuredInputs,
+});
+
+if (!specs) {
+  process.exit(0);
+}
+
+const mergedSpec = mergeSpecs(specs, inputs);
 
 await mkdir(path.dirname(outputPath), { recursive: true });
 await writeFile(outputPath, `${JSON.stringify(mergedSpec, null, 2)}\n`, "utf8");
@@ -45,9 +53,40 @@ function parseInputs(value) {
   return inputs;
 }
 
+async function readSpecs(inputs, outputPath, output, { allowCachedFallback }) {
+  try {
+    return await Promise.all(inputs.map(readSpec));
+  } catch (error) {
+    if (allowCachedFallback && (await fileExists(outputPath))) {
+      console.warn(
+        `Could not fetch default OpenAPI inputs: ${formatError(error)}`,
+      );
+      console.warn(
+        `Using existing ${output}. Make the API services reachable or set OPENAPI_INPUTS to refresh it.`,
+      );
+
+      return undefined;
+    }
+
+    const hint = allowCachedFallback
+      ? ` No cached ${output} exists. Make the API services reachable or set OPENAPI_INPUTS.`
+      : "";
+
+    throw new Error(`${formatError(error)}${hint}`);
+  }
+}
+
 async function readSpec(input) {
   if (isHttpUrl(input)) {
-    const response = await fetch(input);
+    let response;
+
+    try {
+      response = await fetch(input);
+    } catch (error) {
+      throw new Error(`Failed to fetch ${input}: ${formatError(error)}`, {
+        cause: error,
+      });
+    }
 
     if (!response.ok) {
       throw new Error(
@@ -60,6 +99,15 @@ async function readSpec(input) {
 
   const filePath = path.resolve(repoRoot, input);
   return JSON.parse(await readFile(filePath, "utf8"));
+}
+
+async function fileExists(filePath) {
+  try {
+    await access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function mergeSpecs(specs, inputs) {
@@ -374,4 +422,18 @@ function isPlainObject(value) {
 
 function isSameJson(left, right) {
   return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function formatError(error) {
+  if (!(error instanceof Error)) {
+    return String(error);
+  }
+
+  const cause = error.cause;
+
+  if (cause instanceof Error) {
+    return `${error.message}; ${cause.message}`;
+  }
+
+  return error.message;
 }

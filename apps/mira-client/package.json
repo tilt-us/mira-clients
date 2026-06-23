@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "dev:desktop": "tauri dev --config src-tauri/tauri.desktop-dev.conf.json",
+    "dev:desktop": "MIRA_CLIENT_CONFIG=mira-client.prod.toml tauri dev --config src-tauri/tauri.desktop-dev.conf.json",
+    "local:desktop": "MIRA_CLIENT_CONFIG=mira-client.toml tauri dev --config src-tauri/tauri.desktop-dev.conf.json",
+    "prod:desktop": "tauri build --bundles deb --ci",
     "generate:api": "node scripts/merge-openapi.mjs && openapi-ts",
     "build": "tsc && vite build",
     "preview": "vite preview",

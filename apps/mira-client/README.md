@@ -25,17 +25,21 @@ npm run generate:api
 npm run build
 npm run tauri dev
 npm run dev:desktop
+npm run local:desktop
+npm run prod:desktop
 ```
 
-`npm run tauri dev` starts Vite for frontend hot reload. Use
-`npm run dev:desktop` when you want to run only the desktop client without the
-separate Vite web dev server.
+`npm run dev:desktop` starts the Tauri app with the built React UI and the
+`api.tilt-us.com` desktop config, without starting a Vite web server. Use
+`npm run local:desktop` for the same desktop start against localhost services.
+Use `npm run prod:desktop` for the Tauri `deb` release bundle with the
+production desktop config.
 
 ## Backend API
 
-The desktop client reads runtime service addresses from `mira-client.toml`.
-Adjust this file when the services are exposed through Docker on a different
-host or port:
+The desktop client reads runtime service addresses from `mira-client.toml` in
+development. Adjust this file when the services are exposed through Docker on a
+different host or port:
 
 ```toml
 [services]
@@ -52,7 +56,26 @@ password_client_id = "mira-e2e"
 
 The desktop client looks for the config in this order: `MIRA_CLIENT_CONFIG`, next
 to the app executable, the current working directory, the app config directory,
-the bundled resource, and finally the repository root in development.
+the bundled resource, and finally the repository root in development. Release
+bundles include `mira-client.prod.toml` as `mira-client.toml`, so production
+desktop builds use:
+
+```toml
+[services]
+api_base_url = "https://api.tilt-us.com/auth"
+live_api_base_url = "https://api.tilt-us.com/live"
+matchmaking_api_base_url = "https://api.tilt-us.com/match"
+
+[keycloak]
+base_url = "https://api.tilt-us.com/keycloak"
+```
+
+The matching Keycloak service settings are:
+
+```bash
+KEYCLOAK_HOSTNAME=https://api.tilt-us.com/keycloak
+KEYCLOAK_ISSUER_URI=https://api.tilt-us.com/keycloak/realms/mira
+```
 
 For browser/Vite development you can still override the addresses with:
 
@@ -74,11 +97,11 @@ npm run generate:api
 
 By default, generation reads and merges:
 
-- `http://localhost:8080/v3/api-docs`
-- `http://localhost:8082/v3/api-docs`
-- `http://localhost:8083/v3/api-docs`
+- `https://api.tilt-us.com/auth/v3/api-docs`
+- `https://api.tilt-us.com/live/v3/api-docs`
+- `https://api.tilt-us.com/match/v3/api-docs`
 
-Both backends must expose those endpoints, for example with Springdoc OpenAPI.
+The services must expose those endpoints, for example with Springdoc OpenAPI.
 If the backends are running somewhere else, override the input URLs:
 
 ```bash

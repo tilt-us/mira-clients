@@ -8,10 +8,22 @@ use std::{
 use tauri::Manager;
 
 const CONFIG_FILE_NAME: &str = "mira-client.toml";
+#[cfg(debug_assertions)]
 const DEFAULT_API_BASE_URL: &str = "http://localhost:8080";
+#[cfg(not(debug_assertions))]
+const DEFAULT_API_BASE_URL: &str = "https://api.tilt-us.com/auth";
+#[cfg(debug_assertions)]
 const DEFAULT_KEYCLOAK_BASE_URL: &str = "http://localhost:8081";
+#[cfg(not(debug_assertions))]
+const DEFAULT_KEYCLOAK_BASE_URL: &str = "https://api.tilt-us.com/keycloak";
+#[cfg(debug_assertions)]
 const DEFAULT_LIVE_API_BASE_URL: &str = "http://localhost:8082";
+#[cfg(not(debug_assertions))]
+const DEFAULT_LIVE_API_BASE_URL: &str = "https://api.tilt-us.com/live";
+#[cfg(debug_assertions)]
 const DEFAULT_MATCHMAKING_API_BASE_URL: &str = "http://localhost:8083";
+#[cfg(not(debug_assertions))]
+const DEFAULT_MATCHMAKING_API_BASE_URL: &str = "https://api.tilt-us.com/match";
 const DEFAULT_KEYCLOAK_REALM: &str = "mira";
 const DEFAULT_KEYCLOAK_CLIENT_ID: &str = "mira-bevy";
 const DEFAULT_KEYCLOAK_PASSWORD_CLIENT_ID: &str = "mira-e2e";

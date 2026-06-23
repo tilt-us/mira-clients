@@ -1,0 +1,10 @@
+[services]
+api_base_url = "https://api.tilt-us.com/auth"
+live_api_base_url = "https://api.tilt-us.com/live"
+matchmaking_api_base_url = "https://api.tilt-us.com/match"
+
+[keycloak]
+base_url = "https://api.tilt-us.com/keycloak"
+realm = "mira"
+client_id = "mira-bevy"
+password_client_id = "mira-e2e"

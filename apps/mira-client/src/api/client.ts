@@ -125,4 +125,9 @@ export function getLobbyRoles(options: GetLobbyRolesOptions) {
 }
 
 export { client };
+export type {
+  ApiTiltUsComApiChampionHoverRequest as _8083ApiChampionHoverRequest,
+  ApiTiltUsComApiMatchChampionHoversResponse as _8083ApiMatchChampionHoversResponse,
+  ApiTiltUsComApiMatchResponse as _8083ApiMatchResponse,
+} from "./generated";
 export * from "./generated";
