@@ -1,5 +1,6 @@
 import {
   Folder,
+  Eye,
   LogIn,
   MessageCircle,
   MoreHorizontal,
@@ -18,6 +19,8 @@ type FriendCardProps = {
   friend: FriendProfile;
   isDragging?: boolean;
   menuOpen: boolean;
+  queueActionsLocked?: boolean;
+  timedPresenceLabel?: string;
   onChat: (friendId: string) => void;
   onDragPointerDown: (
     friendId: string,
@@ -30,6 +33,7 @@ type FriendCardProps = {
   onTooltipHide: () => void;
   onTooltipShow: (friendId: string, element: HTMLElement) => void;
   onUnfriend: (friendId: string) => void;
+  onViewProfile: (friendId: string) => void;
   t: Translate;
 };
 
@@ -40,6 +44,8 @@ function FriendCard({
   friend,
   isDragging,
   menuOpen,
+  queueActionsLocked = false,
+  timedPresenceLabel,
   onChat,
   onDragPointerDown,
   onInviteParty,
@@ -49,6 +55,7 @@ function FriendCard({
   onTooltipHide,
   onTooltipShow,
   onUnfriend,
+  onViewProfile,
   t,
 }: FriendCardProps) {
   const initials = getProfileInitials(friend.name);
@@ -86,7 +93,7 @@ function FriendCard({
       <div className="friend-card-copy">
         <p className="friend-card-name">{friend.name}</p>
         <p className={`friend-card-status presence-text-${friend.status}`}>
-          {presenceLabel}
+          {timedPresenceLabel ?? presenceLabel}
           {friend.gameMode ? ` · ${friend.gameMode}` : ""}
         </p>
       </div>
@@ -112,61 +119,74 @@ function FriendCard({
           onClick={(event) => event.stopPropagation()}
           onPointerDown={(event) => event.stopPropagation()}
         >
-          <button type="button" role="menuitem" onClick={() => onChat(friend.id)}>
-            <MessageCircle size={15} />
-            <span>{t("friend-chat")}</span>
-          </button>
-          {canJoinParty ? (
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => onJoinParty(friend.id)}
-            >
-              <LogIn size={15} />
-              <span>{t("friend-join-party")}</span>
-            </button>
-          ) : null}
-          {canInviteParty ? (
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => onInviteParty(friend.id)}
-            >
-              <Send size={15} />
-              <span>{t("friend-invite-party")}</span>
-            </button>
-          ) : null}
           <button
-            className="danger"
             type="button"
             role="menuitem"
-            onClick={() => onUnfriend(friend.id)}
+            onClick={() => onViewProfile(friend.id)}
           >
-            <UserMinus size={15} />
-            <span>{t("friend-unfriend")}</span>
+            <Eye size={15} />
+            <span>{t("friend-view-profile")}</span>
           </button>
 
-          <div className="friend-context-divider" />
-          <p className="friend-context-label">
-            <Folder size={14} />
-            <span>{t("friend-move-to")}</span>
-          </p>
-
-          {folders.length > 0 ? (
-            folders.map((folder) => (
+          {queueActionsLocked ? null : (
+            <>
+              <button type="button" role="menuitem" onClick={() => onChat(friend.id)}>
+                <MessageCircle size={15} />
+                <span>{t("friend-chat")}</span>
+              </button>
+              {canJoinParty ? (
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => onJoinParty(friend.id)}
+                >
+                  <LogIn size={15} />
+                  <span>{t("friend-join-party")}</span>
+                </button>
+              ) : null}
+              {canInviteParty ? (
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => onInviteParty(friend.id)}
+                >
+                  <Send size={15} />
+                  <span>{t("friend-invite-party")}</span>
+                </button>
+              ) : null}
               <button
-                disabled={friend.folderId === folder.id}
-                key={folder.id}
+                className="danger"
                 type="button"
                 role="menuitem"
-                onClick={() => onMoveToFolder(friend.id, folder.id)}
+                onClick={() => onUnfriend(friend.id)}
               >
-                <Folder size={15} />
-                <span>{folder.name}</span>
+                <UserMinus size={15} />
+                <span>{t("friend-unfriend")}</span>
               </button>
-            ))
-          ) : (
-            <p className="friend-context-empty">{t("friend-no-folders")}</p>
+
+              <div className="friend-context-divider" />
+              <p className="friend-context-label">
+                <Folder size={14} />
+                <span>{t("friend-move-to")}</span>
+              </p>
+
+              {folders.length > 0 ? (
+                folders.map((folder) => (
+                  <button
+                    disabled={friend.folderId === folder.id}
+                    key={folder.id}
+                    type="button"
+                    role="menuitem"
+                    onClick={() => onMoveToFolder(friend.id, folder.id)}
+                  >
+                    <Folder size={15} />
+                    <span>{folder.name}</span>
+                  </button>
+                ))
+              ) : (
+                <p className="friend-context-empty">{t("friend-no-folders")}</p>
+              )}
+            </>
           )}
         </div>
       ) : null}

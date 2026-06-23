@@ -167,8 +167,9 @@ function Authentication() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const {
     accentColor,
-    allowFriendRequests,
+    backgroundChampion,
     clientAnimation,
+    friendRequestPolicy,
     gameScreenMode,
     locale,
     resolution,
@@ -176,8 +177,9 @@ function Authentication() {
     supportsTwoKResolution,
     t,
     setAccentColor,
-    setAllowFriendRequests,
+    setBackgroundChampion,
     setClientAnimation,
+    setFriendRequestPolicy,
     setGameScreenMode,
     setLocale,
     setResolution,
@@ -485,7 +487,9 @@ function Authentication() {
       {profile && profileName ? (
         <Client
           accentColor={accentColor}
+          backgroundChampion={backgroundChampion}
           clientAnimation={clientAnimation}
+          friendRequestPolicy={friendRequestPolicy}
           gameScreenMode={gameScreenMode}
           closeDialogOpen={closeDialogOpen}
           locale={locale}
@@ -497,10 +501,10 @@ function Authentication() {
           supportsFourKResolution={supportsFourKResolution}
           supportsTwoKResolution={supportsTwoKResolution}
           t={t}
-          allowFriendRequests={allowFriendRequests}
           onAccentColorChange={setAccentColor}
-          onAllowFriendRequestsChange={setAllowFriendRequests}
+          onBackgroundChampionChange={setBackgroundChampion}
           onClientAnimationChange={setClientAnimation}
+          onFriendRequestPolicyChange={setFriendRequestPolicy}
           onGameScreenModeChange={setGameScreenMode}
           onCloseDialogClose={() => setCloseDialogOpen(false)}
           onLocaleChange={setLocale}
@@ -635,8 +639,9 @@ function Authentication() {
       {!profile && settingsOpen ? (
         <SettingsModal
           accentColor={accentColor}
-          allowFriendRequests={allowFriendRequests}
+          backgroundChampion={backgroundChampion}
           clientAnimation={clientAnimation}
+          friendRequestPolicy={friendRequestPolicy}
           gameScreenMode={gameScreenMode}
           locale={locale}
           resolution={resolution}
@@ -645,8 +650,9 @@ function Authentication() {
           t={t}
           vision="Vision.Auth"
           onAccentColorChange={setAccentColor}
-          onAllowFriendRequestsChange={setAllowFriendRequests}
+          onBackgroundChampionChange={setBackgroundChampion}
           onClientAnimationChange={setClientAnimation}
+          onFriendRequestPolicyChange={setFriendRequestPolicy}
           onGameScreenModeChange={setGameScreenMode}
           onClose={() => setSettingsOpen(false)}
           onLocaleChange={setLocale}

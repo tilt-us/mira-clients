@@ -8,21 +8,31 @@ import {
 } from "@tauri-apps/api/window";
 import { translate } from "./i18n";
 import type { AppLocale } from "./i18n";
+import ignaraWallpaper from "../../../assets/wallpapers/ignara-wallpaper.png";
+import liraWallpaper from "../../../assets/wallpapers/lira-wallpaper.png";
+import sophiaWallpaper from "../../../assets/wallpapers/sophia-wallpaper.png";
+import yunaWallpaper from "../../../assets/wallpapers/yuna-wallpaper.png";
 import {
   defaultAccentColor,
+  defaultBackgroundChampion,
   defaultClientAnimation,
+  defaultFriendRequestPolicy,
   defaultGameScreenMode,
   defaultResolution,
   getResolutionFromSize,
   getResolutionSize,
   isAppResolution,
+  isBackgroundChampion,
   isClientAnimation,
+  isFriendRequestPolicy,
   isGameScreenMode,
   isHexColor,
   isLocale,
   readStoredSettings,
   type AppResolution,
+  type BackgroundChampion,
   type ClientAnimation,
+  type FriendRequestPolicy,
   type GameScreenMode,
   writeStoredSettings,
 } from "./settings";
@@ -44,6 +54,12 @@ export function useClientSettings() {
       ? storedSettings.accentColor
       : defaultAccentColor;
   });
+  const [backgroundChampion, setBackgroundChampion] = useState<BackgroundChampion>(() => {
+    const storedSettings = readStoredSettings();
+    return isBackgroundChampion(storedSettings.backgroundChampion)
+      ? storedSettings.backgroundChampion
+      : defaultBackgroundChampion;
+  });
   const [locale, setLocale] = useState<AppLocale>(() => {
     const storedSettings = readStoredSettings();
     return isLocale(storedSettings.locale) ? storedSettings.locale : "de";
@@ -54,11 +70,17 @@ export function useClientSettings() {
       ? storedSettings.resolution
       : defaultResolution;
   });
-  const [allowFriendRequests, setAllowFriendRequests] = useState(() => {
+  const [friendRequestPolicy, setFriendRequestPolicy] = useState<FriendRequestPolicy>(() => {
     const storedSettings = readStoredSettings();
-    return typeof storedSettings.allowFriendRequests === "boolean"
-      ? storedSettings.allowFriendRequests
-      : true;
+    if (isFriendRequestPolicy(storedSettings.friendRequestPolicy)) {
+      return storedSettings.friendRequestPolicy;
+    }
+
+    if (typeof storedSettings.allowFriendRequests === "boolean") {
+      return storedSettings.allowFriendRequests ? "allow" : "disallow";
+    }
+
+    return defaultFriendRequestPolicy;
   });
   const [clientAnimation, setClientAnimation] = useState<ClientAnimation>(() => {
     const storedSettings = readStoredSettings();
@@ -118,15 +140,29 @@ export function useClientSettings() {
       "--accent-foreground-color",
       getAccentForegroundColor(accentColor),
     );
+    document.documentElement.style.setProperty(
+      "--app-background-wallpaper",
+      `url(${backgroundChampionWallpapers[backgroundChampion]})`,
+    );
     writeStoredSettings({
       accentColor,
-      allowFriendRequests,
+      allowFriendRequests: friendRequestPolicy === "allow",
+      backgroundChampion,
       clientAnimation,
+      friendRequestPolicy,
       gameScreenMode,
       locale,
       resolution,
     });
-  }, [accentColor, allowFriendRequests, clientAnimation, gameScreenMode, locale, resolution]);
+  }, [
+    accentColor,
+    backgroundChampion,
+    clientAnimation,
+    friendRequestPolicy,
+    gameScreenMode,
+    locale,
+    resolution,
+  ]);
 
   useEffect(() => {
     if (!runsInTauriLikeShell()) {
@@ -181,8 +217,9 @@ export function useClientSettings() {
 
   return {
     accentColor,
-    allowFriendRequests,
+    backgroundChampion,
     clientAnimation,
+    friendRequestPolicy,
     gameScreenMode,
     locale,
     resolution,
@@ -190,8 +227,9 @@ export function useClientSettings() {
     supportsTwoKResolution: monitorResolutionSupport?.twoK === true,
     t,
     setAccentColor,
-    setAllowFriendRequests,
+    setBackgroundChampion,
     setClientAnimation,
+    setFriendRequestPolicy,
     setGameScreenMode,
     setLocale,
     setResolution,
@@ -226,6 +264,13 @@ async function applyWindowResolution(
 type MonitorResolutionSupport = {
   fourK: boolean;
   twoK: boolean;
+};
+
+const backgroundChampionWallpapers: Record<BackgroundChampion, string> = {
+  ignara: ignaraWallpaper,
+  lira: liraWallpaper,
+  sophia: sophiaWallpaper,
+  yuna: yunaWallpaper,
 };
 
 async function detectTauriMonitorResolutionSupport() {

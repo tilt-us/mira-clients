@@ -97,6 +97,24 @@ export type UserStatusSnapshot = {
     updatedAt?: string;
 };
 
+export type UpdateLobbyRolesRequest = {
+    primaryRole?: 'TOP' | 'JUNGLE' | 'MID' | 'ADC' | 'SUPPORT';
+    secondaryRole?: 'TOP' | 'JUNGLE' | 'MID' | 'ADC' | 'SUPPORT';
+};
+
+export type LobbyMemberRoles = {
+    publicId?: number;
+    displayName?: string;
+    avatarUrl?: string;
+    primaryRole?: 'TOP' | 'JUNGLE' | 'MID' | 'ADC' | 'SUPPORT';
+    secondaryRole?: 'TOP' | 'JUNGLE' | 'MID' | 'ADC' | 'SUPPORT';
+};
+
+export type LobbyRolesResponse = {
+    lobbyId?: string;
+    members?: Array<LobbyMemberRoles>;
+};
+
 export type TransferHostRequest = {
     targetPublicId: number;
 };
@@ -106,6 +124,8 @@ export type LobbyMember = {
     displayName?: string;
     avatarUrl?: string;
     joinedAt?: string;
+    primaryRole?: 'TOP' | 'JUNGLE' | 'MID' | 'ADC' | 'SUPPORT';
+    secondaryRole?: 'TOP' | 'JUNGLE' | 'MID' | 'ADC' | 'SUPPORT';
 };
 
 export type LobbySnapshot = {
@@ -150,6 +170,11 @@ export type MatchPlayerPayload = {
     publicId?: number;
     displayName?: string;
     avatarUrl?: string;
+    team?: string;
+    primaryRole?: 'TOP' | 'JUNGLE' | 'MID' | 'ADC' | 'SUPPORT';
+    secondaryRole?: 'TOP' | 'JUNGLE' | 'MID' | 'ADC' | 'SUPPORT';
+    assignedRole?: 'TOP' | 'JUNGLE' | 'MID' | 'ADC' | 'SUPPORT';
+    roleAssignmentSource?: string;
 };
 
 export type MatchResponse = {
@@ -160,9 +185,19 @@ export type MatchResponse = {
     acceptances?: Array<PlayerAcceptancePayload>;
     championSelections?: Array<ChampionSelectionPayload>;
     championHovers?: Array<ChampionHoverPayload>;
+    roleAssignments?: Array<MatchRoleAssignmentPayload>;
     gameServer?: GameServerPayload;
     createdAt?: string;
     updatedAt?: string;
+};
+
+export type MatchRoleAssignmentPayload = {
+    publicId?: number;
+    team?: string;
+    primaryRole?: 'TOP' | 'JUNGLE' | 'MID' | 'ADC' | 'SUPPORT';
+    secondaryRole?: 'TOP' | 'JUNGLE' | 'MID' | 'ADC' | 'SUPPORT';
+    assignedRole?: 'TOP' | 'JUNGLE' | 'MID' | 'ADC' | 'SUPPORT';
+    source?: string;
 };
 
 export type PlayerAcceptancePayload = {
@@ -259,6 +294,31 @@ export type LiveBootstrapResponse = {
     lobbyInvitations?: Array<LobbyInvitation>;
 };
 
+export type MatchRoleAssignmentPlayerRequest = {
+    publicId: number;
+    team?: string;
+    primaryRole?: 'TOP' | 'JUNGLE' | 'MID' | 'ADC' | 'SUPPORT';
+    secondaryRole?: 'TOP' | 'JUNGLE' | 'MID' | 'ADC' | 'SUPPORT';
+};
+
+export type MatchRoleAssignmentsRequest = {
+    players: Array<MatchRoleAssignmentPlayerRequest>;
+};
+
+export type MatchRoleAssignmentResponse = {
+    publicId?: number;
+    team?: string;
+    primaryRole?: 'TOP' | 'JUNGLE' | 'MID' | 'ADC' | 'SUPPORT';
+    secondaryRole?: 'TOP' | 'JUNGLE' | 'MID' | 'ADC' | 'SUPPORT';
+    assignedRole?: 'TOP' | 'JUNGLE' | 'MID' | 'ADC' | 'SUPPORT';
+    source?: 'PRIMARY' | 'SECONDARY' | 'AUTOFILL';
+};
+
+export type MatchRoleAssignmentsResponse = {
+    matchId?: string;
+    assignments?: Array<MatchRoleAssignmentResponse>;
+};
+
 export type ChampionHoverResponse = {
     playerPublicId?: number;
     champion?: string;
@@ -291,6 +351,10 @@ export type MatchPlayerResponse = {
     displayName?: string;
     avatarUrl?: string;
     team?: string;
+    primaryRole?: 'TOP' | 'JUNGLE' | 'MID' | 'ADC' | 'SUPPORT';
+    secondaryRole?: 'TOP' | 'JUNGLE' | 'MID' | 'ADC' | 'SUPPORT';
+    assignedRole?: 'TOP' | 'JUNGLE' | 'MID' | 'ADC' | 'SUPPORT';
+    roleAssignmentSource?: 'PRIMARY' | 'SECONDARY' | 'AUTOFILL';
 };
 
 export type PlayerAcceptanceResponse = {
@@ -312,6 +376,8 @@ export type MatchPlayerRequest = {
     publicId: number;
     displayName?: string;
     avatarUrl?: string;
+    primaryRole?: 'TOP' | 'JUNGLE' | 'MID' | 'ADC' | 'SUPPORT';
+    secondaryRole?: 'TOP' | 'JUNGLE' | 'MID' | 'ADC' | 'SUPPORT';
 };
 
 export type MatchSearchRequest = {
@@ -330,6 +396,8 @@ export type MatchRosterPlayerResponse = {
     displayName?: string;
     avatarUrl?: string;
     team?: string;
+    assignedRole?: 'TOP' | 'JUNGLE' | 'MID' | 'ADC' | 'SUPPORT';
+    roleAssignmentSource?: 'PRIMARY' | 'SECONDARY' | 'AUTOFILL';
 };
 
 export type MatchRosterResponse = {
@@ -352,6 +420,7 @@ export type _8083ApiMatchResponse = {
     acceptances?: Array<PlayerAcceptanceResponse>;
     championSelections?: Array<ChampionSelectionResponse>;
     championHovers?: Array<ChampionHoverResponse>;
+    roleAssignments?: Array<MatchRoleAssignmentResponse>;
     gameServer?: GameServerResponse;
     createdAt?: string;
     updatedAt?: string;
@@ -632,6 +701,24 @@ export type UpdateMeResponses = {
 };
 
 export type UpdateMeResponse = UpdateMeResponses[keyof UpdateMeResponses];
+
+export type UpdateRolesData = {
+    body: UpdateLobbyRolesRequest;
+    path: {
+        lobbyId: string;
+    };
+    query?: never;
+    url: '/api/lobbies/{lobbyId}/members/me/roles';
+};
+
+export type UpdateRolesResponses = {
+    /**
+     * OK
+     */
+    200: LobbyRolesResponse;
+};
+
+export type UpdateRolesResponse = UpdateRolesResponses[keyof UpdateRolesResponses];
 
 export type TransferHostData = {
     body: TransferHostRequest;
@@ -929,6 +1016,24 @@ export type FriendsResponses = {
 
 export type FriendsResponse2 = FriendsResponses[keyof FriendsResponses];
 
+export type RolesData = {
+    body?: never;
+    path: {
+        lobbyId: string;
+    };
+    query?: never;
+    url: '/api/lobbies/{lobbyId}/roles';
+};
+
+export type RolesResponses = {
+    /**
+     * OK
+     */
+    200: LobbyRolesResponse;
+};
+
+export type RolesResponse = RolesResponses[keyof RolesResponses];
+
 export type InvitationsData = {
     body?: never;
     path?: never;
@@ -1067,6 +1172,24 @@ export type LiveRevokeRequestResponses = {
 };
 
 export type LiveRevokeRequestResponse = LiveRevokeRequestResponses[keyof LiveRevokeRequestResponses];
+
+export type AssignRolesData = {
+    body: MatchRoleAssignmentsRequest;
+    path: {
+        matchId: string;
+    };
+    query?: never;
+    url: '/internal/matches/{matchId}/role-assignments';
+};
+
+export type AssignRolesResponses = {
+    /**
+     * OK
+     */
+    200: MatchRoleAssignmentsResponse;
+};
+
+export type AssignRolesResponse = AssignRolesResponses[keyof AssignRolesResponses];
 
 export type EndMatchDuplicateData = {
     body?: never;

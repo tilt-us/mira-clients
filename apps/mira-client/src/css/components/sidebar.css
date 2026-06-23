@@ -561,6 +561,11 @@
   background: #29303a;
 }
 
+.friend-tool-button:disabled {
+  cursor: default;
+  opacity: 0.44;
+}
+
 .friend-request-badge {
   position: absolute;
   top: -5px;
@@ -1067,6 +1072,10 @@
   z-index: 220;
 }
 
+.dialog-backdrop.friend-confirm-dialog-backdrop {
+  z-index: 240;
+}
+
 .friend-add-dialog {
   display: grid;
   grid-template-rows: auto auto auto minmax(0, 1fr);
@@ -1280,12 +1289,14 @@
 }
 
 .friend-add-row-actions button {
+  flex: 0 0 auto;
   width: 30px;
   height: 30px;
 }
 
 .friend-add-action-button {
-  min-width: 76px;
+  width: auto;
+  min-width: 92px;
   min-height: 30px;
   border-radius: 7px;
   padding: 0 10px;
@@ -1293,6 +1304,7 @@
   background: #20242c;
   font-size: 0.74rem;
   font-weight: 850;
+  white-space: nowrap;
   cursor: pointer;
 }
 
@@ -1300,6 +1312,41 @@
 .friend-add-row-actions button:disabled {
   cursor: default;
   opacity: 0.48;
+}
+
+.friend-confirm-dialog {
+  display: grid;
+  gap: 14px;
+  width: min(100%, 380px);
+  padding: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  color: #edf2f7;
+  background: rgba(17, 20, 27, 0.96);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.52);
+}
+
+.friend-confirm-dialog h2,
+.friend-confirm-dialog p {
+  margin: 0;
+}
+
+.friend-confirm-dialog h2 {
+  font-size: 1.05rem;
+  line-height: 1.2;
+}
+
+.friend-confirm-dialog p {
+  color: #aab6c3;
+  font-size: 0.86rem;
+  font-weight: 760;
+  line-height: 1.4;
+}
+
+.friend-confirm-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
 }
 
 .friend-add-empty {

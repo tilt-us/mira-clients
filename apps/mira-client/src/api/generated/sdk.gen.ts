@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { AbortRankedSearchData, AbortRankedSearchResponses, AbortSearchData, AbortSearchResponses, AcceptData, AcceptRequestData, AcceptRequestResponses, AcceptResponses, BootstrapData, BootstrapResponses, CancelChampionPhaseData, CancelChampionPhaseDuplicateData, CancelChampionPhaseDuplicateResponses, CancelChampionPhaseResponses, ClearChampionHoverData, ClearChampionHoverDuplicateData, ClearChampionHoverDuplicateResponses, ClearChampionHoverResponses, CreateRankedLobbyData, CreateRankedLobbyResponses, DebugData, DebugResponses, DecideData, DecideResponses, DeclineData, DeclineRequestData, DeclineRequestResponses, DeclineResponses, DeleteByEmailData, DeleteByEmailResponses, EndMatchData, EndMatchDuplicateData, EndMatchDuplicateResponses, EndMatchResponses, EventsData, EventsResponses, FriendsData, FriendsResponses, GetData, GetResponses, HealthData, HealthResponses, HoverChampionData, HoverChampionDuplicateData, HoverChampionDuplicateResponses, HoverChampionResponses, InvitationsData, InvitationsResponses, InviteData, InviteResponses, JoinLobbyData, JoinLobbyResponses, KickMemberData, KickMemberResponses, LeaveLobbyData, LeaveLobbyResponses, ListFriendsData, ListFriendsResponses, ListRequestsData, ListRequestsResponses, LiveAcceptRequestData, LiveAcceptRequestResponses, LiveDeclineRequestData, LiveDeclineRequestResponses, LiveRemoveFriendData, LiveRemoveFriendResponses, LiveRevokeRequestData, LiveRevokeRequestResponses, LiveSendRequestData, LiveSendRequestResponses, LoginOptionsData, LoginOptionsResponses, MarkChampionsReadyData, MarkChampionsReadyDuplicateData, MarkChampionsReadyDuplicateResponses, MarkChampionsReadyResponses, MeData, MeResponses, RegisterData, RegisterResponses, RemoveFriendData, RemoveFriendResponses, RevokeRequestData, RevokeRequestResponses, RosterData, RosterResponses, SearchData, SearchRankedData, SearchRankedResponses, SearchResponses, SelectChampionData, SelectChampionDuplicateData, SelectChampionDuplicateResponses, SelectChampionResponses, SendRequestData, SendRequestResponses, StartSearchData, StartSearchResponses, TemporaryMatchesData, TemporaryMatchesResponses, TransferHostData, TransferHostResponses, UpdateMeData, UpdateMeResponses, UserStatusMeData, UserStatusMeResponses } from './types.gen';
+import type { AbortRankedSearchData, AbortRankedSearchResponses, AbortSearchData, AbortSearchResponses, AcceptData, AcceptRequestData, AcceptRequestResponses, AcceptResponses, AssignRolesData, AssignRolesResponses, BootstrapData, BootstrapResponses, CancelChampionPhaseData, CancelChampionPhaseDuplicateData, CancelChampionPhaseDuplicateResponses, CancelChampionPhaseResponses, ClearChampionHoverData, ClearChampionHoverDuplicateData, ClearChampionHoverDuplicateResponses, ClearChampionHoverResponses, CreateRankedLobbyData, CreateRankedLobbyResponses, DebugData, DebugResponses, DecideData, DecideResponses, DeclineData, DeclineRequestData, DeclineRequestResponses, DeclineResponses, DeleteByEmailData, DeleteByEmailResponses, EndMatchData, EndMatchDuplicateData, EndMatchDuplicateResponses, EndMatchResponses, EventsData, EventsResponses, FriendsData, FriendsResponses, GetData, GetResponses, HealthData, HealthResponses, HoverChampionData, HoverChampionDuplicateData, HoverChampionDuplicateResponses, HoverChampionResponses, InvitationsData, InvitationsResponses, InviteData, InviteResponses, JoinLobbyData, JoinLobbyResponses, KickMemberData, KickMemberResponses, LeaveLobbyData, LeaveLobbyResponses, ListFriendsData, ListFriendsResponses, ListRequestsData, ListRequestsResponses, LiveAcceptRequestData, LiveAcceptRequestResponses, LiveDeclineRequestData, LiveDeclineRequestResponses, LiveRemoveFriendData, LiveRemoveFriendResponses, LiveRevokeRequestData, LiveRevokeRequestResponses, LiveSendRequestData, LiveSendRequestResponses, LoginOptionsData, LoginOptionsResponses, MarkChampionsReadyData, MarkChampionsReadyDuplicateData, MarkChampionsReadyDuplicateResponses, MarkChampionsReadyResponses, MeData, MeResponses, RegisterData, RegisterResponses, RemoveFriendData, RemoveFriendResponses, RevokeRequestData, RevokeRequestResponses, RolesData, RolesResponses, RosterData, RosterResponses, SearchData, SearchRankedData, SearchRankedResponses, SearchResponses, SelectChampionData, SelectChampionDuplicateData, SelectChampionDuplicateResponses, SelectChampionResponses, SendRequestData, SendRequestResponses, StartSearchData, StartSearchResponses, TemporaryMatchesData, TemporaryMatchesResponses, TransferHostData, TransferHostResponses, UpdateMeData, UpdateMeResponses, UpdateRolesData, UpdateRolesResponses, UserStatusMeData, UserStatusMeResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -71,6 +71,15 @@ export const userStatusMe = <ThrowOnError extends boolean = false>(options?: Opt
 
 export const updateMe = <ThrowOnError extends boolean = false>(options: Options<UpdateMeData, ThrowOnError>): RequestResult<UpdateMeResponses, unknown, ThrowOnError> => (options.client ?? client).put<UpdateMeResponses, unknown, ThrowOnError>({
     url: '/api/user-status/me',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+export const updateRoles = <ThrowOnError extends boolean = false>(options: Options<UpdateRolesData, ThrowOnError>): RequestResult<UpdateRolesResponses, unknown, ThrowOnError> => (options.client ?? client).put<UpdateRolesResponses, unknown, ThrowOnError>({
+    url: '/api/lobbies/{lobbyId}/members/me/roles',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -161,6 +170,8 @@ export const liveAcceptRequest = <ThrowOnError extends boolean = false>(options:
 
 export const friends = <ThrowOnError extends boolean = false>(options?: Options<FriendsData, ThrowOnError>): RequestResult<FriendsResponses, unknown, ThrowOnError> => (options?.client ?? client).get<FriendsResponses, unknown, ThrowOnError>({ url: '/api/user-status/friends', ...options });
 
+export const roles = <ThrowOnError extends boolean = false>(options: Options<RolesData, ThrowOnError>): RequestResult<RolesResponses, unknown, ThrowOnError> => (options.client ?? client).get<RolesResponses, unknown, ThrowOnError>({ url: '/api/lobbies/{lobbyId}/roles', ...options });
+
 export const invitations = <ThrowOnError extends boolean = false>(options?: Options<InvitationsData, ThrowOnError>): RequestResult<InvitationsResponses, unknown, ThrowOnError> => (options?.client ?? client).get<InvitationsResponses, unknown, ThrowOnError>({ url: '/api/lobbies/invitations', ...options });
 
 export const events = <ThrowOnError extends boolean = false>(options?: Options<EventsData, ThrowOnError>): RequestResult<EventsResponses, unknown, ThrowOnError> => (options?.client ?? client).get<EventsResponses, unknown, ThrowOnError>({ url: '/api/live/events', ...options });
@@ -176,6 +187,15 @@ export const leaveLobby = <ThrowOnError extends boolean = false>(options: Option
 export const liveRemoveFriend = <ThrowOnError extends boolean = false>(options: Options<LiveRemoveFriendData, ThrowOnError>): RequestResult<LiveRemoveFriendResponses, unknown, ThrowOnError> => (options.client ?? client).delete<LiveRemoveFriendResponses, unknown, ThrowOnError>({ url: '/api/live/friends/{friendPublicId}', ...options });
 
 export const liveRevokeRequest = <ThrowOnError extends boolean = false>(options: Options<LiveRevokeRequestData, ThrowOnError>): RequestResult<LiveRevokeRequestResponses, unknown, ThrowOnError> => (options.client ?? client).delete<LiveRevokeRequestResponses, unknown, ThrowOnError>({ url: '/api/live/friends/requests/{requestId}', ...options });
+
+export const assignRoles = <ThrowOnError extends boolean = false>(options: Options<AssignRolesData, ThrowOnError>): RequestResult<AssignRolesResponses, unknown, ThrowOnError> => (options.client ?? client).post<AssignRolesResponses, unknown, ThrowOnError>({
+    url: '/internal/matches/{matchId}/role-assignments',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
 
 export const endMatchDuplicate = <ThrowOnError extends boolean = false>(options: Options<EndMatchDuplicateData, ThrowOnError>): RequestResult<EndMatchDuplicateResponses, unknown, ThrowOnError> => (options.client ?? client).post<EndMatchDuplicateResponses, unknown, ThrowOnError>({ url: '/internal/matches/{matchId}/ended', ...options });
 

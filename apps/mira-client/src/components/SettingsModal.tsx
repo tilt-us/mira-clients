@@ -1,22 +1,30 @@
-import { useState } from "react";
-import { Gamepad2, Monitor, Users } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Gamepad2, Monitor, Search, Users } from "lucide-react";
 import type { AppLocale } from "../i18n";
-import type { AppResolution, ClientAnimation, GameScreenMode } from "../settings";
+import type {
+  AppResolution,
+  BackgroundChampion,
+  ClientAnimation,
+  FriendRequestPolicy,
+  GameScreenMode,
+} from "../settings";
 import type { SettingsVision, Translate } from "../types/ui";
 
 type SettingsModalProps = {
   accentColor: string;
-  allowFriendRequests: boolean;
+  backgroundChampion: BackgroundChampion;
   clientAnimation: ClientAnimation;
+  friendRequestPolicy: FriendRequestPolicy;
   gameScreenMode: GameScreenMode;
   locale: AppLocale;
   resolution: AppResolution;
   supportsFourKResolution: boolean;
   supportsTwoKResolution: boolean;
   onAccentColorChange: (accentColor: string) => void;
-  onAllowFriendRequestsChange: (allowFriendRequests: boolean) => void;
+  onBackgroundChampionChange: (backgroundChampion: BackgroundChampion) => void;
   onClientAnimationChange: (clientAnimation: ClientAnimation) => void;
   onClose: () => void;
+  onFriendRequestPolicyChange: (friendRequestPolicy: FriendRequestPolicy) => void;
   onGameScreenModeChange: (gameScreenMode: GameScreenMode) => void;
   onLocaleChange: (locale: AppLocale) => void;
   onResolutionChange: (resolution: AppResolution) => void;
@@ -41,37 +49,58 @@ const resolutionOptions: Array<{
 ];
 
 const clientAnimationOptions: Array<{
-  label: string;
+  labelId: string;
   value: ClientAnimation;
 }> = [
-  { label: "All", value: "all" },
-  { label: "UI Elements", value: "ui-elements" },
-  { label: "Images", value: "images" },
-  { label: "None", value: "none" },
+  { labelId: "settings-client-animation-all", value: "all" },
+  { labelId: "settings-client-animation-ui-elements", value: "ui-elements" },
+  { labelId: "settings-client-animation-images", value: "images" },
+  { labelId: "settings-client-animation-none", value: "none" },
 ];
 
 const gameScreenModeOptions: Array<{
-  label: string;
+  labelId: string;
   value: GameScreenMode;
 }> = [
-  { label: "Borderless", value: "borderless" },
-  { label: "Fullscreen", value: "full" },
-  { label: "Window", value: "window" },
+  { labelId: "settings-screen-mode-borderless", value: "borderless" },
+  { labelId: "settings-screen-mode-full", value: "full" },
+  { labelId: "settings-screen-mode-window", value: "window" },
+];
+
+const backgroundChampionOptions: Array<{
+  label: string;
+  value: BackgroundChampion;
+}> = [
+  { label: "Lira", value: "lira" },
+  { label: "Ignara", value: "ignara" },
+  { label: "Yuna", value: "yuna" },
+  { label: "Sophia", value: "sophia" },
+];
+
+const friendRequestPolicyOptions: Array<{
+  labelId: string;
+  value: FriendRequestPolicy;
+}> = [
+  { labelId: "settings-friend-request-allow", value: "allow" },
+  { labelId: "settings-friend-request-disallow", value: "disallow" },
+  { labelId: "settings-friend-request-vip", value: "vip" },
 ];
 
 function SettingsModal({
   accentColor,
-  allowFriendRequests,
+  backgroundChampion,
   clientAnimation,
+  friendRequestPolicy,
   gameScreenMode,
   locale,
   resolution,
   supportsFourKResolution,
   supportsTwoKResolution,
   onAccentColorChange,
-  onAllowFriendRequestsChange,
+  onBackgroundChampionChange,
   onClientAnimationChange,
   onClose,
+  onFriendRequestPolicyChange,
   onGameScreenModeChange,
   onLocaleChange,
   onResolutionChange,
@@ -80,7 +109,12 @@ function SettingsModal({
 }: SettingsModalProps) {
   const [activeSettingsTab, setActiveSettingsTab] =
     useState<SettingsTab>("interface");
+  const [backgroundChampionDropdownOpen, setBackgroundChampionDropdownOpen] =
+    useState(false);
+  const [backgroundChampionSearch, setBackgroundChampionSearch] = useState("");
   const [clientAnimationDropdownOpen, setClientAnimationDropdownOpen] =
+    useState(false);
+  const [friendRequestPolicyDropdownOpen, setFriendRequestPolicyDropdownOpen] =
     useState(false);
   const [gameScreenModeDropdownOpen, setGameScreenModeDropdownOpen] =
     useState(false);
@@ -89,6 +123,7 @@ function SettingsModal({
   const selectedLanguage =
     locale === "de" ? t("language-german") : t("language-english");
   const selectedFlag = locale === "de" ? "🇩🇪" : "🇬🇧";
+  const gameTabAvailable = vision === "Vision.ALL";
   const socialTabAvailable = vision === "Vision.ALL";
   const visibleResolutionOptions = resolutionOptions.filter((option) => {
     if (option.value === "1920x1080") {
@@ -105,11 +140,35 @@ function SettingsModal({
     visibleResolutionOptions.find((option) => option.value === resolution)?.label ??
     "1600 x 900";
   const selectedClientAnimation =
-    clientAnimationOptions.find((option) => option.value === clientAnimation)?.label ??
-    "All";
+    clientAnimationOptions.find((option) => option.value === clientAnimation)?.labelId ??
+    "settings-client-animation-all";
   const selectedGameScreenMode =
-    gameScreenModeOptions.find((option) => option.value === gameScreenMode)?.label ??
-    "Borderless";
+    gameScreenModeOptions.find((option) => option.value === gameScreenMode)?.labelId ??
+    "settings-screen-mode-borderless";
+  const selectedBackgroundChampion =
+    backgroundChampionOptions.find((option) => option.value === backgroundChampion)?.label ??
+    "Yuna";
+  const selectedFriendRequestPolicy =
+    friendRequestPolicyOptions.find((option) => option.value === friendRequestPolicy)
+      ?.labelId ?? "settings-friend-request-allow";
+  const filteredBackgroundChampionOptions = backgroundChampionOptions.filter((option) =>
+    option.label.toLowerCase().includes(backgroundChampionSearch.trim().toLowerCase()),
+  );
+
+  useEffect(() => {
+    if (!gameTabAvailable && activeSettingsTab === "game") {
+      setActiveSettingsTab("interface");
+    }
+  }, [activeSettingsTab, gameTabAvailable]);
+
+  function closeDropdowns() {
+    setBackgroundChampionDropdownOpen(false);
+    setClientAnimationDropdownOpen(false);
+    setFriendRequestPolicyDropdownOpen(false);
+    setGameScreenModeDropdownOpen(false);
+    setLanguageDropdownOpen(false);
+    setResolutionDropdownOpen(false);
+  }
 
   function handleLocaleSelect(nextLocale: AppLocale) {
     onLocaleChange(nextLocale);
@@ -119,6 +178,17 @@ function SettingsModal({
   function handleClientAnimationSelect(nextClientAnimation: ClientAnimation) {
     onClientAnimationChange(nextClientAnimation);
     setClientAnimationDropdownOpen(false);
+  }
+
+  function handleBackgroundChampionSelect(nextBackgroundChampion: BackgroundChampion) {
+    onBackgroundChampionChange(nextBackgroundChampion);
+    setBackgroundChampionDropdownOpen(false);
+    setBackgroundChampionSearch("");
+  }
+
+  function handleFriendRequestPolicySelect(nextFriendRequestPolicy: FriendRequestPolicy) {
+    onFriendRequestPolicyChange(nextFriendRequestPolicy);
+    setFriendRequestPolicyDropdownOpen(false);
   }
 
   function handleGameScreenModeSelect(nextGameScreenMode: GameScreenMode) {
@@ -145,7 +215,7 @@ function SettingsModal({
           <h2 id="settings-dialog-title">{t("settings-title")}</h2>
         </div>
 
-        <div className="settings-dialog-body">
+        <div className="settings-dialog-body" onMouseDown={closeDropdowns}>
           <nav className="settings-tabs" aria-label={t("settings-title")}>
             <button
               className={activeSettingsTab === "interface" ? "active" : ""}
@@ -155,14 +225,16 @@ function SettingsModal({
               <Monitor size={17} />
               <span>{t("settings-interface")}</span>
             </button>
-            <button
-              className={activeSettingsTab === "game" ? "active" : ""}
-              type="button"
-              onClick={() => setActiveSettingsTab("game")}
-            >
-              <Gamepad2 size={17} />
-              <span>{t("settings-game")}</span>
-            </button>
+            {gameTabAvailable ? (
+              <button
+                className={activeSettingsTab === "game" ? "active" : ""}
+                type="button"
+                onClick={() => setActiveSettingsTab("game")}
+              >
+                <Gamepad2 size={17} />
+                <span>{t("settings-game")}</span>
+              </button>
+            ) : null}
             {socialTabAvailable ? (
               <button
                 className={activeSettingsTab === "social" ? "active" : ""}
@@ -190,9 +262,7 @@ function SettingsModal({
                       className="settings-dropdown-trigger"
                       type="button"
                       onClick={() => {
-                        setClientAnimationDropdownOpen(false);
-                        setGameScreenModeDropdownOpen(false);
-                        setLanguageDropdownOpen(false);
+                        closeDropdowns();
                         setResolutionDropdownOpen((open) => !open);
                       }}
                     >
@@ -227,6 +297,62 @@ function SettingsModal({
                   />
                 </label>
 
+                {vision === "Vision.ALL" ? (
+                  <div className="settings-row">
+                    <span>{t("settings-background")}</span>
+                    <div
+                      className="settings-dropdown"
+                      onMouseDown={(event) => event.stopPropagation()}
+                    >
+                      <button
+                        aria-expanded={backgroundChampionDropdownOpen}
+                        aria-haspopup="listbox"
+                        className="settings-dropdown-trigger"
+                        type="button"
+                        onClick={() => {
+                          closeDropdowns();
+                          setBackgroundChampionDropdownOpen((open) => !open);
+                        }}
+                      >
+                        <span>{selectedBackgroundChampion}</span>
+                      </button>
+
+                      {backgroundChampionDropdownOpen ? (
+                        <div className="settings-dropdown-menu" role="listbox">
+                          <label className="settings-dropdown-search">
+                            <Search size={15} />
+                            <input
+                              aria-label={t("settings-background-search")}
+                              placeholder={t("settings-background-search")}
+                              value={backgroundChampionSearch}
+                              onChange={(event) =>
+                                setBackgroundChampionSearch(event.target.value)
+                              }
+                            />
+                          </label>
+                          {filteredBackgroundChampionOptions.length > 0 ? (
+                            filteredBackgroundChampionOptions.map((option) => (
+                              <button
+                                aria-selected={backgroundChampion === option.value}
+                                key={option.value}
+                                role="option"
+                                type="button"
+                                onClick={() => handleBackgroundChampionSelect(option.value)}
+                              >
+                                <span>{option.label}</span>
+                              </button>
+                            ))
+                          ) : (
+                            <span className="settings-dropdown-empty">
+                              {t("settings-background-empty")}
+                            </span>
+                          )}
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : null}
+
                 <div className="settings-row">
                   <span>{t("settings-client-animation")}</span>
                   <div
@@ -239,13 +365,11 @@ function SettingsModal({
                       className="settings-dropdown-trigger"
                       type="button"
                       onClick={() => {
-                        setGameScreenModeDropdownOpen(false);
-                        setResolutionDropdownOpen(false);
-                        setLanguageDropdownOpen(false);
+                        closeDropdowns();
                         setClientAnimationDropdownOpen((open) => !open);
                       }}
                     >
-                      <span>{selectedClientAnimation}</span>
+                      <span>{t(selectedClientAnimation)}</span>
                     </button>
 
                     {clientAnimationDropdownOpen ? (
@@ -258,7 +382,7 @@ function SettingsModal({
                             type="button"
                             onClick={() => handleClientAnimationSelect(option.value)}
                           >
-                            <span>{option.label}</span>
+                            <span>{t(option.labelId)}</span>
                           </button>
                         ))}
                       </div>
@@ -278,9 +402,7 @@ function SettingsModal({
                       className="settings-dropdown-trigger"
                       type="button"
                       onClick={() => {
-                        setClientAnimationDropdownOpen(false);
-                        setGameScreenModeDropdownOpen(false);
-                        setResolutionDropdownOpen(false);
+                        closeDropdowns();
                         setLanguageDropdownOpen((open) => !open);
                       }}
                     >
@@ -315,7 +437,7 @@ function SettingsModal({
               </>
             ) : null}
 
-            {activeSettingsTab === "game" ? (
+            {gameTabAvailable && activeSettingsTab === "game" ? (
               <div className="settings-row">
                 <span>{t("settings-game-screen-mode")}</span>
                 <div
@@ -328,13 +450,11 @@ function SettingsModal({
                     className="settings-dropdown-trigger"
                     type="button"
                     onClick={() => {
-                      setClientAnimationDropdownOpen(false);
-                      setLanguageDropdownOpen(false);
-                      setResolutionDropdownOpen(false);
+                      closeDropdowns();
                       setGameScreenModeDropdownOpen((open) => !open);
                     }}
                   >
-                    <span>{selectedGameScreenMode}</span>
+                    <span>{t(selectedGameScreenMode)}</span>
                   </button>
 
                   {gameScreenModeDropdownOpen ? (
@@ -347,7 +467,7 @@ function SettingsModal({
                           type="button"
                           onClick={() => handleGameScreenModeSelect(option.value)}
                         >
-                          <span>{option.label}</span>
+                          <span>{t(option.labelId)}</span>
                         </button>
                       ))}
                     </div>
@@ -357,16 +477,42 @@ function SettingsModal({
             ) : null}
 
             {socialTabAvailable && activeSettingsTab === "social" ? (
-              <label className="settings-checkbox-row">
+              <div className="settings-row">
                 <span>{t("settings-allow-friend-request")}</span>
-                <input
-                  checked={allowFriendRequests}
-                  type="checkbox"
-                  onChange={(event) =>
-                    onAllowFriendRequestsChange(event.target.checked)
-                  }
-                />
-              </label>
+                <div
+                  className="settings-dropdown"
+                  onMouseDown={(event) => event.stopPropagation()}
+                >
+                  <button
+                    aria-expanded={friendRequestPolicyDropdownOpen}
+                    aria-haspopup="listbox"
+                    className="settings-dropdown-trigger"
+                    type="button"
+                    onClick={() => {
+                      closeDropdowns();
+                      setFriendRequestPolicyDropdownOpen((open) => !open);
+                    }}
+                  >
+                    <span>{t(selectedFriendRequestPolicy)}</span>
+                  </button>
+
+                  {friendRequestPolicyDropdownOpen ? (
+                    <div className="settings-dropdown-menu" role="listbox">
+                      {friendRequestPolicyOptions.map((option) => (
+                        <button
+                          aria-selected={friendRequestPolicy === option.value}
+                          key={option.value}
+                          role="option"
+                          type="button"
+                          onClick={() => handleFriendRequestPolicySelect(option.value)}
+                        >
+                          <span>{t(option.labelId)}</span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              </div>
             ) : null}
           </div>
         </div>

@@ -1,5 +1,6 @@
 import {
   Bell,
+  Ban,
   Check,
   ChevronDown,
   ChevronLeft,
@@ -7,12 +8,14 @@ import {
   Folder,
   FolderOpen,
   FolderPlus,
+  Flag,
   MoreHorizontal,
   Pencil,
   Search,
   Shield,
   Trash2,
   Trophy,
+  UserMinus,
   UserPlus,
   Users,
   X,
@@ -69,6 +72,7 @@ const initialFolders: FriendFolder[] = [
 ];
 
 const friendSidebarStorageKey = "mira-client-friend-sidebar-v2";
+const blockedFriendPublicIdsStorageKey = "mira-client-blocked-public-ids-v1";
 
 type DragState = {
   active: boolean;
@@ -102,6 +106,15 @@ type FriendTooltipState = {
 type FriendRequestItem = FriendRequestResponse | FriendRequest;
 
 type FriendUserItem = FriendUserResponse | FriendUser;
+
+type FriendConfirmAction = "block" | "report" | "unfriend";
+
+type FriendConfirmState = {
+  action: FriendConfirmAction;
+  friendId?: string;
+  name: string;
+  publicId?: number;
+};
 
 type FriendUserAvatarFields = FriendUserItem & {
   avatarUrl?: string;
@@ -215,6 +228,19 @@ function getFriendApiErrorMessage(label: string, response?: Response) {
   return response ? `${label}: HTTP ${response.status}` : label;
 }
 
+function readBlockedFriendPublicIds() {
+  try {
+    const storedIds = localStorage.getItem(blockedFriendPublicIdsStorageKey);
+    const parsedIds = storedIds ? JSON.parse(storedIds) : [];
+
+    return Array.isArray(parsedIds)
+      ? parsedIds.filter((id): id is number => typeof id === "number")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
 function mapUserStatusToPresence(
   status?: UserStatusSnapshot["status"],
   mode?: string,
@@ -246,10 +272,14 @@ function mapUserStatusToPresence(
   }
 }
 
-function getFriendLobbyPresence(
+function stripLobbyRoleMode(mode?: string) {
+  return mode?.replace(/\s*\[roles=[^\]]+\]/i, "").trim();
+}
+
+function getFriendLobbyInfo(
   publicId: number | undefined,
   lobbies: LobbySnapshot[],
-): PresenceStatus | undefined {
+): { queueStartedAt?: string; status: PresenceStatus } | undefined {
   if (typeof publicId !== "number") {
     return undefined;
   }
@@ -262,7 +292,66 @@ function getFriendLobbyPresence(
     return undefined;
   }
 
-  return lobby.status === "SEARCHING" ? "inqueue" : "inlobby";
+  return {
+    queueStartedAt: lobby.status === "SEARCHING"
+      ? lobby.updatedAt ?? lobby.createdAt
+      : undefined,
+    status: lobby.status === "SEARCHING" ? "inqueue" : "inlobby",
+  };
+}
+
+function formatElapsedDuration(startedAtIso: string | undefined, now: number) {
+  if (!startedAtIso) {
+    return undefined;
+  }
+
+  const startedAt = Date.parse(startedAtIso);
+
+  if (!Number.isFinite(startedAt)) {
+    return undefined;
+  }
+
+  const elapsedSeconds = Math.max(0, Math.floor((now - startedAt) / 1000));
+  const hours = Math.floor(elapsedSeconds / 3600);
+  const minutes = Math.floor((elapsedSeconds % 3600) / 60);
+  const seconds = elapsedSeconds % 60;
+
+  if (hours > 0) {
+    return [
+      hours.toString().padStart(2, "0"),
+      minutes.toString().padStart(2, "0"),
+      seconds.toString().padStart(2, "0"),
+    ].join(":");
+  }
+
+  return [
+    minutes.toString().padStart(2, "0"),
+    seconds.toString().padStart(2, "0"),
+  ].join(":");
+}
+
+function getTimedPresenceLabel(
+  friend: FriendProfile,
+  now: number,
+  t: Translate,
+) {
+  if (friend.status === "inqueue") {
+    const queueDuration = formatElapsedDuration(friend.queueStartedAt, now);
+
+    return queueDuration
+      ? `${t(presenceMessageIds.inqueue)} (${queueDuration})`
+      : undefined;
+  }
+
+  if (friend.status === "ingame") {
+    const gameDuration = formatElapsedDuration(friend.gameStartedAt, now);
+
+    return gameDuration
+      ? `${t(presenceMessageIds.ingame)} (${gameDuration})`
+      : undefined;
+  }
+
+  return undefined;
 }
 
 function mapApiFriendsToProfiles(
@@ -272,20 +361,28 @@ function mapApiFriendsToProfiles(
   friendStatuses: UserStatusSnapshot[] = [],
   openLobbies: LobbySnapshot[] = [],
   forceOnlinePublicIds: number[] = [],
+  blockedPublicIds: number[] = [],
 ) {
   const folderIds = new Set(folders.map((folder) => folder.id));
   const forcedOnlinePublicIds = new Set(forceOnlinePublicIds);
+  const blockedPublicIdSet = new Set(blockedPublicIds);
   const statusesByPublicId = new Map(
     friendStatuses
       .filter((status) => typeof status.publicId === "number")
       .map((status) => [status.publicId, status]),
   );
 
-  return apiFriends.map((friend) => {
+  return apiFriends
+    .filter((friend) => (
+      typeof friend.publicId !== "number" ||
+      !blockedPublicIdSet.has(friend.publicId)
+    ))
+    .map((friend) => {
     const id = getFriendUserId(friend);
     const folderId = friendFolders?.[id];
     const userStatus = statusesByPublicId.get(friend.publicId);
-    const lobbyPresence = getFriendLobbyPresence(friend.publicId, openLobbies);
+    const lobbyInfo = getFriendLobbyInfo(friend.publicId, openLobbies);
+    const lobbyPresence = lobbyInfo?.status;
     const forcedOnline =
       typeof friend.publicId === "number" &&
       forcedOnlinePublicIds.has(friend.publicId);
@@ -301,7 +398,7 @@ function mapApiFriendsToProfiles(
     const gameMode =
       status === "inqueue" || status === "championselection"
         ? undefined
-        : userStatus?.mode;
+        : stripLobbyRoleMode(userStatus?.mode) || undefined;
 
     return {
       avatarUrl: getFriendUserAvatarUrl(friend),
@@ -310,6 +407,9 @@ function mapApiFriendsToProfiles(
       id,
       name: getFriendUserName(friend),
       publicId: friend.publicId,
+      gameStartedAt: apiPresence === "ingame" ? userStatus?.updatedAt : undefined,
+      queueStartedAt: lobbyInfo?.queueStartedAt ??
+        (apiPresence === "inqueue" ? userStatus?.updatedAt : undefined),
       status,
       gameMode,
       rank: {
@@ -358,6 +458,10 @@ function Sidebar({
   const [friendSearchResults, setFriendSearchResults] = useState<
     FriendUserResponse[]
   >([]);
+  const [blockedFriendPublicIds, setBlockedFriendPublicIds] = useState(
+    readBlockedFriendPublicIds,
+  );
+  const [friendConfirm, setFriendConfirm] = useState<FriendConfirmState>();
   const [friendActionBusyId, setFriendActionBusyId] = useState<number>();
   const [friendRequestBusyId, setFriendRequestBusyId] = useState<number>();
   const [, setFriendApiError] = useState<string>();
@@ -401,6 +505,8 @@ function Sidebar({
   );
   const friendRequestCount = incomingFriendRequests.length;
   const notificationCount = notifications.length;
+  const queueActionsLocked = presenceStatus === "inqueue";
+  const [queueTimeNow, setQueueTimeNow] = useState(Date.now());
 
   function notifyFriendApiError(message: string) {
     setFriendApiError(message);
@@ -535,6 +641,21 @@ function Sidebar({
   }, [folders, friendFolders]);
 
   useEffect(() => {
+    localStorage.setItem(
+      blockedFriendPublicIdsStorageKey,
+      JSON.stringify(blockedFriendPublicIds),
+    );
+  }, [blockedFriendPublicIds]);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      setQueueTimeNow(Date.now());
+    }, 1000);
+
+    return () => window.clearInterval(intervalId);
+  }, []);
+
+  useEffect(() => {
     let active = true;
     const abortController = new AbortController();
 
@@ -602,7 +723,13 @@ function Sidebar({
         notifyFriendApiError(t("friend-api-error"));
         setFriendSearchResults([]);
       } else {
-        setFriendSearchResults(result.data?.users ?? []);
+        const blockedPublicIdSet = new Set(blockedFriendPublicIds);
+        setFriendSearchResults(
+          (result.data?.users ?? []).filter((user) => (
+            typeof user.publicId !== "number" ||
+            !blockedPublicIdSet.has(user.publicId)
+          )),
+        );
         setFriendApiError(undefined);
       }
 
@@ -613,7 +740,7 @@ function Sidebar({
       active = false;
       window.clearTimeout(searchTimeout);
     };
-  }, [friendAddOpen, friendAddSearch, t]);
+  }, [blockedFriendPublicIds, friendAddOpen, friendAddSearch, t]);
 
   useEffect(() => {
     if (!renamingFolderId) {
@@ -757,6 +884,7 @@ function Sidebar({
         friendStatuses,
         openLobbies,
         forceOnlinePublicIds,
+        blockedFriendPublicIds,
       ),
     );
     setFriendRequests({
@@ -871,33 +999,109 @@ function Sidebar({
     setOpenMenuFolderId(undefined);
   }
 
-  async function handleUnfriend(friendId: string) {
-    const friend = friends.find((currentFriend) => currentFriend.id === friendId);
-
+  function requestFriendConfirmation(
+    action: FriendConfirmAction,
+    target: FriendProfile | FriendUserItem,
+    friendId?: string,
+  ) {
+    setFriendConfirm({
+      action,
+      friendId,
+      name: "name" in target ? target.name : getFriendUserName(target),
+      publicId: target.publicId,
+    });
     setOpenMenuFriendId(undefined);
+    setOpenMenuFolderId(undefined);
+  }
 
-    if (typeof friend?.publicId !== "number") {
-      return;
-    }
-
-    setFriendActionBusyId(friend.publicId);
+  async function removeFriendByPublicId(friendId: string | undefined, publicId: number) {
+    setFriendActionBusyId(publicId);
     const result = await liveRemoveFriend({
       baseUrl: LIVE_API_BASE_URL,
-      path: { friendPublicId: friend.publicId },
+      path: { friendPublicId: publicId },
     });
     setFriendActionBusyId(undefined);
 
     if (result.error) {
       notifyFriendApiError(t("friend-api-error"));
+      return false;
+    }
+
+    if (friendId) {
+      setFriendFolders((currentFriendFolders) => {
+        const nextFriendFolders = { ...currentFriendFolders };
+        delete nextFriendFolders[friendId];
+        return nextFriendFolders;
+      });
+    }
+
+    await refreshLiveData();
+    return true;
+  }
+
+  function handleUnfriend(friendId: string) {
+    const friend = friends.find((currentFriend) => currentFriend.id === friendId);
+
+    setOpenMenuFriendId(undefined);
+
+    if (!friend) {
       return;
     }
 
-    setFriendFolders((currentFriendFolders) => {
-      const nextFriendFolders = { ...currentFriendFolders };
-      delete nextFriendFolders[friendId];
-      return nextFriendFolders;
-    });
-    await refreshLiveData();
+    requestFriendConfirmation("unfriend", friend, friendId);
+  }
+
+  function handleViewProfile(friendId: string) {
+    const friend = friends.find((currentFriend) => currentFriend.id === friendId);
+
+    window.dispatchEvent(
+      new CustomEvent("mira:profile-request", {
+        detail: { publicId: friend?.publicId },
+      }),
+    );
+    setOpenMenuFriendId(undefined);
+    setOpenMenuFolderId(undefined);
+  }
+
+  async function confirmFriendAction() {
+    const confirmation = friendConfirm;
+
+    if (!confirmation) {
+      return;
+    }
+
+    setFriendConfirm(undefined);
+
+    if (confirmation.action === "report") {
+      notify({
+        type: "info",
+        message: t("friend-report-submitted"),
+      });
+      return;
+    }
+
+    if (typeof confirmation.publicId !== "number") {
+      return;
+    }
+
+    if (confirmation.action === "unfriend") {
+      await removeFriendByPublicId(confirmation.friendId, confirmation.publicId);
+      return;
+    }
+
+    setBlockedFriendPublicIds((currentBlockedPublicIds) =>
+      currentBlockedPublicIds.includes(confirmation.publicId!)
+        ? currentBlockedPublicIds
+        : [...currentBlockedPublicIds, confirmation.publicId!],
+    );
+
+    if (confirmation.friendId) {
+      await removeFriendByPublicId(confirmation.friendId, confirmation.publicId);
+    } else {
+      setFriendSearchResults((currentResults) =>
+        currentResults.filter((user) => user.publicId !== confirmation.publicId),
+      );
+    }
   }
 
   function handleChat(friendId: string) {
@@ -957,6 +1161,10 @@ function Sidebar({
     friendId: string,
     event: PointerEvent<HTMLElement>,
   ) {
+    if (queueActionsLocked) {
+      return;
+    }
+
     if (event.button !== 0) {
       return;
     }
@@ -1087,10 +1295,12 @@ function Sidebar({
 
   function renderFriendCards(folderFriends: FriendProfile[]) {
     return folderFriends.map((friend) => {
+      const timedPresenceLabel = getTimedPresenceLabel(friend, queueTimeNow, t);
       const friendIsInActiveLobby =
         typeof friend.publicId === "number" &&
         activeLobbyMemberPublicIds.includes(friend.publicId);
       const canJoinParty =
+        !queueActionsLocked &&
         typeof friend.publicId === "number" &&
         openFriendLobbies.some((lobby) => {
           const friendIsMember = lobby.members?.some((member) => {
@@ -1109,13 +1319,19 @@ function Sidebar({
 
       return (
         <FriendCard
-          canInviteParty={Boolean(partyInviteEnabled) && !friendIsInActiveLobby}
+          canInviteParty={
+            !queueActionsLocked &&
+            Boolean(partyInviteEnabled) &&
+            !friendIsInActiveLobby
+          }
           canJoinParty={canJoinParty}
           folders={folders}
           friend={friend}
           isDragging={dragState?.active && dragState.friendId === friend.id}
           key={friend.id}
           menuOpen={openMenuFriendId === friend.id}
+          queueActionsLocked={queueActionsLocked}
+          timedPresenceLabel={timedPresenceLabel}
           t={t}
           onChat={handleChat}
           onDragPointerDown={handleFriendPointerDown}
@@ -1151,6 +1367,7 @@ function Sidebar({
             });
           }}
           onUnfriend={handleUnfriend}
+          onViewProfile={handleViewProfile}
         />
       );
     });
@@ -1199,6 +1416,16 @@ function Sidebar({
           ) : null}
 
           {tooltipFriend && friendTooltip && !dragState?.active ? (
+            (() => {
+              const timedPresenceLabel = getTimedPresenceLabel(
+                tooltipFriend,
+                queueTimeNow,
+                t,
+              );
+              const tooltipPresenceLabel =
+                timedPresenceLabel ?? t(presenceMessageIds[tooltipFriend.status]);
+
+              return (
             <div
               className={`friend-tooltip rank-frame-${tooltipFriend.rank.name}`}
               role="tooltip"
@@ -1227,7 +1454,7 @@ function Sidebar({
                   <p
                     className={`friend-tooltip-status presence-text-${tooltipFriend.status}`}
                   >
-	                    {t(presenceMessageIds[tooltipFriend.status])}
+	                    {tooltipPresenceLabel}
 	                    {tooltipFriend.gameMode
 	                      ? ` · ${tooltipFriend.gameMode}`
 	                      : ""}
@@ -1249,6 +1476,8 @@ function Sidebar({
                 </div>
               </div>
             </div>
+              );
+            })()
           ) : null}
 
           {friendAddOpen ? (
@@ -1344,6 +1573,10 @@ function Sidebar({
                               typeof user.publicId === "number" &&
                               !alreadyFriend &&
                               !alreadyRequested;
+                            const matchedFriend =
+                              typeof user.publicId === "number"
+                                ? friends.find((friend) => friend.publicId === user.publicId)
+                                : undefined;
 
                             return (
                               <div
@@ -1355,23 +1588,74 @@ function Sidebar({
                                   <span>{getFriendUserName(user)}</span>
                                   <span>{getFriendUserSubtitle(user)}</span>
                                 </span>
-                                <button
-                                  className="friend-add-action-button"
-                                  disabled={
-                                    !canRequest ||
-                                    friendActionBusyId === user.publicId
-                                  }
-                                  type="button"
-                                  onClick={() =>
-                                    void handleSendFriendRequest(user.publicId)
-                                  }
-                                >
-                                  {alreadyFriend
-                                    ? t("friend-add-already-friend")
-                                    : alreadyRequested
-                                      ? t("friend-request-pending")
-                                      : t("friend-request-send")}
-                                </button>
+                                <span className="friend-add-row-actions">
+                                  {alreadyFriend && matchedFriend ? (
+                                    <button
+                                      aria-label={t("friend-unfriend")}
+                                      title={t("friend-unfriend-tooltip")}
+                                      disabled={friendActionBusyId === user.publicId}
+                                      type="button"
+                                      onClick={() =>
+                                        requestFriendConfirmation(
+                                          "unfriend",
+                                          matchedFriend,
+                                          matchedFriend.id,
+                                        )
+                                      }
+                                    >
+                                      <UserMinus size={15} />
+                                    </button>
+                                  ) : (
+                                    <button
+                                      className="friend-add-action-button"
+                                      disabled={
+                                        !canRequest ||
+                                        friendActionBusyId === user.publicId
+                                      }
+                                      type="button"
+                                      onClick={() =>
+                                        void handleSendFriendRequest(user.publicId)
+                                      }
+                                    >
+                                      {alreadyRequested
+                                        ? t("friend-request-pending")
+                                        : t("friend-request-send")}
+                                    </button>
+                                  )}
+                                  <button
+                                    aria-label={t("friend-block")}
+                                    title={t("friend-block-tooltip")}
+                                    disabled={
+                                      typeof user.publicId !== "number" ||
+                                      friendActionBusyId === user.publicId
+                                    }
+                                    type="button"
+                                    onClick={() =>
+                                      requestFriendConfirmation(
+                                        "block",
+                                        matchedFriend ?? user,
+                                        matchedFriend?.id,
+                                      )
+                                    }
+                                  >
+                                    <Ban size={15} />
+                                  </button>
+                                  <button
+                                    aria-label={t("friend-report")}
+                                    title={t("friend-report-tooltip")}
+                                    disabled={typeof user.publicId !== "number"}
+                                    type="button"
+                                    onClick={() =>
+                                      requestFriendConfirmation(
+                                        "report",
+                                        matchedFriend ?? user,
+                                        matchedFriend?.id,
+                                      )
+                                    }
+                                  >
+                                    <Flag size={15} />
+                                  </button>
+                                </span>
                               </div>
                             );
                           })
@@ -1467,6 +1751,48 @@ function Sidebar({
                       )}
                     </div>
                   ) : null}
+                </div>
+              </section>
+            </div>
+          ) : null}
+
+          {friendConfirm ? (
+            <div
+              className="dialog-backdrop friend-confirm-dialog-backdrop"
+              role="presentation"
+              onMouseDown={() => setFriendConfirm(undefined)}
+            >
+              <section
+                aria-labelledby="friend-confirm-dialog-title"
+                aria-modal="true"
+                className="friend-confirm-dialog"
+                role="dialog"
+                onMouseDown={(event) => event.stopPropagation()}
+              >
+                <h2 id="friend-confirm-dialog-title">
+                  {t(`friend-confirm-${friendConfirm.action}-title`)}
+                </h2>
+                <p>
+                  {t(`friend-confirm-${friendConfirm.action}-body`).replace(
+                    "__NAME__",
+                    friendConfirm.name,
+                  )}
+                </p>
+                <div className="friend-confirm-actions">
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    onClick={() => setFriendConfirm(undefined)}
+                  >
+                    {t("friend-confirm-cancel")}
+                  </button>
+                  <button
+                    className="quit-button"
+                    type="button"
+                    onClick={() => void confirmFriendAction()}
+                  >
+                    {t(`friend-confirm-${friendConfirm.action}-confirm`)}
+                  </button>
                 </div>
               </section>
             </div>

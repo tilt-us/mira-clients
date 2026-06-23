@@ -1,6 +1,7 @@
 :root {
   --accent-color: #f2c45b;
   --accent-foreground-color: #101216;
+  --app-background-wallpaper: url("../../../../assets/wallpapers/yuna-wallpaper.png");
   color: #edf2f7;
   background: #101216;
   font-family:
@@ -58,7 +59,7 @@ button {
   background:
     linear-gradient(90deg, rgba(8, 10, 16, 0.88), rgba(8, 10, 16, 0.42)),
     linear-gradient(180deg, rgba(8, 10, 16, 0.48), rgba(8, 10, 16, 0.82)),
-    url("../../../../assets/wallpapers/yuna-wallpaper.png") center / cover no-repeat;
+    var(--app-background-wallpaper) center / cover no-repeat;
 }
 
 .app-shell::after {

@@ -57,10 +57,11 @@ function getPublicNamePart(value?: string) {
     return undefined;
   }
 
-  const withoutEmailDomain = trimmedValue.replace(/@.*/, "");
-  const [firstPart] = withoutEmailDomain.split(/[\s._-]+/);
+  if (trimmedValue.includes("@")) {
+    return trimmedValue.replace(/@.*/, "");
+  }
 
-  return firstPart;
+  return trimmedValue;
 }
 
 function getTokenPicture(accessToken?: string) {

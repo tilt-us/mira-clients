@@ -36,6 +36,8 @@ export type FriendProfile = {
   id: string;
   name: string;
   publicId?: number;
+  gameStartedAt?: string;
+  queueStartedAt?: string;
   status: PresenceStatus;
   gameMode?: string;
   champion?: string;

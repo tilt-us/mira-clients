@@ -5,6 +5,8 @@ export const defaultAccentColor = "#f2c45b";
 export const defaultResolution = "1600x900";
 export const defaultClientAnimation = "all";
 export const defaultGameScreenMode = "borderless";
+export const defaultBackgroundChampion = "yuna";
+export const defaultFriendRequestPolicy = "allow";
 
 export type AppResolution =
   | "1270x720"
@@ -15,11 +17,15 @@ export type AppResolution =
 
 export type ClientAnimation = "all" | "ui-elements" | "images" | "none";
 export type GameScreenMode = "full" | "window" | "borderless";
+export type BackgroundChampion = "lira" | "ignara" | "yuna" | "sophia";
+export type FriendRequestPolicy = "allow" | "disallow" | "vip";
 
 export type StoredSettings = {
   accentColor?: string;
   allowFriendRequests?: boolean;
+  backgroundChampion?: BackgroundChampion;
   clientAnimation?: ClientAnimation;
+  friendRequestPolicy?: FriendRequestPolicy;
   gameScreenMode?: GameScreenMode;
   locale?: AppLocale;
   resolution?: AppResolution;
@@ -72,6 +78,14 @@ export function isClientAnimation(value: unknown): value is ClientAnimation {
 
 export function isGameScreenMode(value: unknown): value is GameScreenMode {
   return value === "full" || value === "window" || value === "borderless";
+}
+
+export function isBackgroundChampion(value: unknown): value is BackgroundChampion {
+  return value === "lira" || value === "ignara" || value === "yuna" || value === "sophia";
+}
+
+export function isFriendRequestPolicy(value: unknown): value is FriendRequestPolicy {
+  return value === "allow" || value === "disallow" || value === "vip";
 }
 
 export function getResolutionSize(resolution: AppResolution) {

@@ -5,7 +5,7 @@
   display: grid;
   grid-template-rows: auto 1fr;
   gap: 18px;
-  padding: 54px 30px 30px;
+  padding: 58px 132px 30px 30px;
   background:
     radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--accent-color) 18%, transparent), transparent 34%),
     linear-gradient(180deg, #10141d, #07090e);
@@ -102,12 +102,12 @@
   position: relative;
   z-index: 1;
   display: grid;
-  grid-template-columns: 200px minmax(0, 1fr) 200px;
+  grid-template-columns: 226px minmax(0, 1fr) 226px;
   grid-template-areas: "dark center light";
   align-items: center;
   gap: 26px;
   min-height: 0;
-  transform: translateY(-28px);
+  transform: translateY(-18px);
 }
 
 .champion-selection-team {
@@ -116,7 +116,7 @@
   position: relative;
   isolation: isolate;
   display: grid;
-  min-height: 396px;
+  min-height: 456px;
   grid-template-rows: auto auto;
   align-self: center;
   align-content: center;
@@ -146,8 +146,8 @@
   position: relative;
   z-index: 2;
   display: grid;
-  min-height: 457px;
-  grid-template-rows: repeat(5, 85px);
+  min-height: 522px;
+  grid-template-rows: repeat(5, 98px);
   align-content: center;
   gap: 8px;
 }
@@ -155,9 +155,9 @@
 .champion-selection-player {
   position: relative;
   display: grid;
-  grid-template-columns: 54px minmax(0, 1fr);
-  width: 200px;
-  height: 85px;
+  grid-template-columns: 60px minmax(0, 1fr);
+  width: 226px;
+  min-height: 98px;
   align-items: center;
   gap: 10px;
   box-sizing: border-box;
@@ -198,8 +198,8 @@
 
 .champion-selection-player-avatar {
   display: grid;
-  width: 54px;
-  height: 54px;
+  width: 60px;
+  height: 60px;
   place-items: center;
   overflow: hidden;
   border-radius: 999px;
@@ -221,9 +221,9 @@
 
 .champion-selection-player-meta {
   display: grid;
-  min-height: 54px;
+  min-height: 60px;
   align-content: center;
-  gap: 3px;
+  gap: 4px;
 }
 
 .champion-selection-player-meta span {
@@ -244,6 +244,29 @@
   text-overflow: ellipsis;
   text-transform: uppercase;
   white-space: nowrap;
+}
+
+.champion-selection-player-role {
+  display: inline-flex;
+  width: max-content;
+  max-width: 100%;
+  align-items: center;
+  gap: 5px;
+  color: color-mix(in srgb, var(--accent-color) 82%, #edf2f7);
+}
+
+.champion-selection-player-role .lobby-role-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.champion-selection-player-role span,
+.champion-selection-player-role strong {
+  min-width: 0;
+  color: inherit;
+  font-size: inherit;
+  font-weight: 950;
+  line-height: 1;
 }
 
 .champion-selection-center {
@@ -685,6 +708,18 @@
 }
 
 @media (max-width: 980px) {
+  .champion-selection-page {
+    padding-right: 30px;
+  }
+
+  .champion-selection-layout {
+    grid-template-columns: 176px minmax(0, 1fr) 176px;
+  }
+
+  .champion-selection-player {
+    width: 176px;
+  }
+
   .champion-selection-pick-indicator-dark {
     left: 225px;
   }

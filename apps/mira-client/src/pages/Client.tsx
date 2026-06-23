@@ -32,20 +32,23 @@ import {
   startSearch,
   temporaryMatches,
   transferHost,
+  getLobbyRoles,
   updateMe,
+  updateLobbyMemberRoles,
   userStatusMe,
   type _8083ApiMatchResponse,
   type FriendUserResponse,
   type LobbyInvitation,
   type LobbyMember,
+  type LobbyRolesSnapshot,
   type LobbySnapshot,
-  type MatchLobbyResponse,
   type MatchPlayerResponse,
   type MatchResponse,
   type UpdateUserStatusRequest,
   type UserStatusSnapshot,
 } from "../api/client";
 import {
+  API_BASE_URL,
   LIVE_API_BASE_URL,
   MATCHMAKING_API_BASE_URL,
 } from "../api/config";
@@ -57,25 +60,64 @@ import SettingsModal from "../components/SettingsModal";
 import Sidebar from "../components/Sidebar";
 import type { AppLocale } from "../i18n";
 import { useNotifications } from "../notifications";
-import type { AppResolution, ClientAnimation, GameScreenMode } from "../settings";
+import type {
+  AppResolution,
+  BackgroundChampion,
+  ClientAnimation,
+  FriendRequestPolicy,
+  GameScreenMode,
+} from "../settings";
 import type { FriendProfile, PresenceStatus, Translate } from "../types/ui";
 import {
   getAvatarUrl,
   getProfileInitials,
   getPublicDisplayName,
 } from "../utils/profile";
+import {
+  clearStoredGameSession,
+  createGameMatchManifest,
+  getGameClientChampionId,
+  getMatchChampionForPlayer,
+  getMatchControlBaseUrl,
+  getMatchHost,
+  getMatchPort,
+  getMatchTeamForPlayer,
+  readStoredGameSession,
+  sendCancelChampionPhaseKeepalive,
+  writeStoredGameSession,
+  type GameClientStatus,
+  type GameLaunchParameters,
+  type LaunchGameRequest,
+} from "../gameSession";
+import {
+  getLobbyPresenceMode,
+  getLobbyRoleLimitError,
+  getLobbyRolesFromPresenceMode,
+  getMemberLobbyRoles,
+  hasLobbyRoles,
+  LobbyRoleIcon,
+  lobbyRoles,
+  normalizeLobbyRoleSelection,
+  toApiLobbyRole,
+  type GameMode,
+  type LobbyMemberWithRoles,
+  type LobbyRoleId,
+  type LobbyRoleSelection,
+} from "../lobbyRoles";
 
 type ClientProps = {
   accentColor: string;
-  allowFriendRequests: boolean;
+  backgroundChampion: BackgroundChampion;
   clientAnimation: ClientAnimation;
+  friendRequestPolicy: FriendRequestPolicy;
   closeDialogOpen: boolean;
   gameScreenMode: GameScreenMode;
   locale: AppLocale;
   onAccentColorChange: (accentColor: string) => void;
-  onAllowFriendRequestsChange: (allowFriendRequests: boolean) => void;
+  onBackgroundChampionChange: (backgroundChampion: BackgroundChampion) => void;
   onClientAnimationChange: (clientAnimation: ClientAnimation) => void;
   onCloseDialogClose: () => void;
+  onFriendRequestPolicyChange: (friendRequestPolicy: FriendRequestPolicy) => void;
   onGameScreenModeChange: (gameScreenMode: GameScreenMode) => void;
   onLocaleChange: (locale: AppLocale) => void;
   onLogout: () => void;
@@ -96,52 +138,7 @@ type GameModeIconProps = {
   question?: boolean;
 };
 
-type GameMode = "normal" | "ranked";
 type ApiPresenceStatus = UpdateUserStatusRequest["status"];
-type GameTeam = "dark" | "light";
-
-type LaunchGameRequest = {
-  accessToken: string;
-  accentColor: string;
-  champion: string;
-  forceRestart?: boolean;
-  matchManifestJson: string;
-  matchId: string;
-  matchmakingApiBaseUrl: string;
-  playerPublicId: number;
-  serverHost: string;
-  serverControlBaseUrl: string;
-  port: number;
-  screen: GameScreenMode;
-  team: GameTeam;
-};
-
-type GameLaunchParameters = Omit<LaunchGameRequest, "accessToken" | "accentColor">;
-
-type GameMatchManifestPlayer = {
-  avatarUrl?: string;
-  champion: string;
-  championId: number;
-  displayName?: string;
-  playerPublicId: number;
-  team: "Dark" | "Light";
-};
-
-type GameMatchManifest = {
-  matchId: string;
-  players: GameMatchManifestPlayer[];
-};
-
-type StoredGameSession = {
-  closedByClient?: boolean;
-  parameters: GameLaunchParameters;
-  playerPublicId?: number;
-};
-
-type GameClientStatus = {
-  running: boolean;
-  pid?: number;
-};
 
 type PartyInviteCandidate = {
   avatarUrl?: string;
@@ -164,8 +161,6 @@ type MatchDecision = "accept" | "decline";
 
 const afkDelayMs = 5 * 60 * 1000;
 const matchAcceptTimeoutMs = 20_000;
-const storedGameSessionKey = "mira:last-game-session";
-
 function mapUserStatusToPresence(
   status?: UserStatusSnapshot["status"],
   mode?: string,
@@ -213,216 +208,6 @@ function sendPresenceKeepalive(status: ApiPresenceStatus, mode?: string) {
   });
 }
 
-function getMatchChampionForPlayer(match: _8083ApiMatchResponse, playerPublicId: number) {
-  return match.championSelections?.find((selection) => {
-    return selection.playerPublicId === playerPublicId;
-  })?.champion;
-}
-
-function getGameClientChampionId(champion: string) {
-  return champion.trim().toLowerCase();
-}
-
-function getGameServerChampionId(champion: string) {
-  switch (getGameClientChampionId(champion)) {
-    case "lira":
-      return 6606;
-    case "ignara":
-      return 6607;
-    case "sophia":
-      return 6608;
-    case "yuna":
-      return 6609;
-    default:
-      return 6606;
-  }
-}
-
-function createGameMatchManifest(
-  match: _8083ApiMatchResponse,
-  matchId: string,
-): GameMatchManifest {
-  const teams = getMatchTeams(match);
-  const players: GameMatchManifestPlayer[] = [];
-
-  teams.forEach((team, teamIndex) => {
-    const teamName = teamIndex === 0 ? "Dark" : "Light";
-
-    for (const player of team.players ?? []) {
-      if (typeof player.publicId !== "number") {
-        continue;
-      }
-
-      const champion = getMatchChampionForPlayer(match, player.publicId);
-
-      if (!champion) {
-        continue;
-      }
-
-      const displayName = getPublicDisplayName(player.displayName, "");
-
-      players.push({
-        ...(player.avatarUrl ? { avatarUrl: player.avatarUrl } : {}),
-        champion,
-        championId: getGameServerChampionId(champion),
-        ...(displayName ? { displayName } : {}),
-        playerPublicId: player.publicId,
-        team: teamName,
-      });
-    }
-  });
-
-  return {
-    matchId,
-    players,
-  };
-}
-
-function getMatchPort(match: _8083ApiMatchResponse) {
-  return match.gameServer?.port;
-}
-
-function getMatchHost(match: _8083ApiMatchResponse) {
-  return match.gameServer?.host;
-}
-
-function getMatchControlBaseUrl(match: _8083ApiMatchResponse) {
-  const explicitBaseUrl = match.gameServer?.controlBaseUrl;
-
-  if (explicitBaseUrl) {
-    return explicitBaseUrl;
-  }
-
-  const controlHost = match.gameServer?.controlHost;
-  const controlPort = match.gameServer?.controlPort;
-
-  if (!controlHost || typeof controlPort !== "number") {
-    return undefined;
-  }
-
-  const protocol = match.gameServer?.controlProtocol ?? "http";
-  return `${protocol}://${controlHost}:${controlPort}`;
-}
-
-function hashString(value: string) {
-  let hash = 0;
-
-  for (let index = 0; index < value.length; index += 1) {
-    hash = Math.imul(31, hash) + value.charCodeAt(index);
-    hash |= 0;
-  }
-
-  return Math.abs(hash);
-}
-
-function getMatchSeed(match: _8083ApiMatchResponse) {
-  return (
-    match.matchId ??
-    match.lobbies
-      ?.map((lobby) => {
-        const players = lobby.players
-          ?.map((player) => player.publicId ?? player.displayName ?? "")
-          .join(",");
-
-        return `${lobby.lobbyId ?? ""}:${players ?? ""}`;
-      })
-      .sort()
-      .join("|") ??
-    "match"
-  );
-}
-
-function getLobbySeed(lobby: MatchLobbyResponse) {
-  const players = lobby.players
-    ?.map((player) => player.publicId ?? player.displayName ?? "")
-    .join(",");
-
-  return `${lobby.lobbyId ?? ""}:${players ?? ""}`;
-}
-
-function getMatchTeams(match: _8083ApiMatchResponse): MatchLobbyResponse[] {
-  const backendTeams: MatchLobbyResponse[] = [{ players: [] }, { players: [] }];
-  let hasBackendTeams = false;
-
-  for (const lobby of match.lobbies ?? []) {
-    for (const player of lobby.players ?? []) {
-      const team = (player as MatchPlayerResponse & { team?: string }).team?.toLowerCase();
-      if (team !== "dark" && team !== "light") {
-        continue;
-      }
-
-      hasBackendTeams = true;
-      const teamIndex = team === "dark" ? 0 : 1;
-      backendTeams[teamIndex] = {
-        lobbyId: backendTeams[teamIndex].lobbyId ?? lobby.lobbyId,
-        players: [...(backendTeams[teamIndex].players ?? []), player],
-      };
-    }
-  }
-
-  if (hasBackendTeams) {
-    return backendTeams;
-  }
-
-  const matchSeed = getMatchSeed(match);
-  const lobbies = [...(match.lobbies ?? [])].sort((left, right) => {
-    return (
-      hashString(`${matchSeed}:${getLobbySeed(left)}`) -
-      hashString(`${matchSeed}:${getLobbySeed(right)}`)
-    );
-  });
-  const teams: MatchLobbyResponse[] = [{ players: [] }, { players: [] }];
-
-  for (const lobby of lobbies) {
-    const players = lobby.players ?? [];
-
-    if (players.length === 0) {
-      continue;
-    }
-
-    const teamIndex =
-      [0, 1]
-        .sort((left, right) => {
-          return (teams[left].players?.length ?? 0) - (teams[right].players?.length ?? 0);
-        })
-        .find((index) => {
-          return (teams[index].players?.length ?? 0) + players.length <= 5;
-        }) ?? ((teams[0].players?.length ?? 0) <= (teams[1].players?.length ?? 0) ? 0 : 1);
-
-    teams[teamIndex] = {
-      lobbyId: teams[teamIndex].lobbyId ?? lobby.lobbyId,
-      players: [...(teams[teamIndex].players ?? []), ...players],
-    };
-  }
-
-  return hashString(matchSeed) % 2 === 0 ? teams : [teams[1], teams[0]];
-}
-
-function getMatchTeamForPlayer(
-  match: _8083ApiMatchResponse,
-  playerPublicId: number,
-): GameTeam | undefined {
-  const teams = getMatchTeams(match);
-
-  if (
-    teams[0]?.players?.some((player) => {
-      return player.publicId === playerPublicId;
-    })
-  ) {
-    return "dark";
-  }
-
-  if (
-    teams[1]?.players?.some((player) => {
-      return player.publicId === playerPublicId;
-    })
-  ) {
-    return "light";
-  }
-
-  return undefined;
-}
-
 function getInvitationMainInviter(invitation: LobbyInvitation) {
   return (
     invitation.inviters?.[0] ??
@@ -435,6 +220,60 @@ function getMemberName(member?: LobbyMember) {
   return getLobbyDisplayName(
     member?.displayName ?? `User ${member?.publicId ?? ""}`.trim(),
   );
+}
+
+function normalizeLobbyIdentityName(name: string | undefined) {
+  return getLobbyDisplayName(name ?? "").trim().toLocaleLowerCase();
+}
+
+function isSameLobbyMember(
+  left: LobbyMember | undefined,
+  right: LobbyMember | undefined,
+) {
+  if (!left || !right) {
+    return false;
+  }
+
+  if (typeof left.publicId === "number" && typeof right.publicId === "number") {
+    return left.publicId === right.publicId;
+  }
+
+  const leftName = normalizeLobbyIdentityName(getMemberName(left));
+  const rightName = normalizeLobbyIdentityName(getMemberName(right));
+
+  return Boolean(leftName && rightName && leftName === rightName);
+}
+
+function getCurrentLobbyMember(
+  lobby: LobbySnapshot | undefined,
+  profilePublicId: number | undefined,
+  profileName: string,
+) {
+  const members = lobby?.members ?? [];
+
+  if (typeof profilePublicId === "number") {
+    const currentMemberByPublicId = members.find((member) => {
+      return member.publicId === profilePublicId;
+    });
+
+    if (currentMemberByPublicId) {
+      return currentMemberByPublicId;
+    }
+  }
+
+  const normalizedProfileName = normalizeLobbyIdentityName(profileName);
+
+  if (normalizedProfileName) {
+    const currentMemberByName = members.find((member) => {
+      return normalizeLobbyIdentityName(getMemberName(member)) === normalizedProfileName;
+    });
+
+    if (currentMemberByName) {
+      return currentMemberByName;
+    }
+  }
+
+  return members.length === 1 ? members[0] : undefined;
 }
 
 function getFriendUserName(user: FriendUserResponse) {
@@ -491,7 +330,7 @@ function getInviteCandidateSubtitle(candidate: PartyInviteCandidate) {
 }
 
 function getLobbyDisplayName(name: string) {
-  return name.trim().split(/\s+/)[0] || name;
+  return name.trim() || name;
 }
 
 function getInvitationModeLabel(invitation: LobbyInvitation) {
@@ -531,8 +370,29 @@ function isMatchReady(match: _8083ApiMatchResponse) {
   );
 }
 
+function normalizeRoleAssignmentSource(value: unknown): MatchPlayerResponse["roleAssignmentSource"] {
+  return value === "PRIMARY" || value === "SECONDARY" || value === "AUTOFILL"
+    ? value
+    : undefined;
+}
+
 function normalizeMatchResponse(match: MatchResponse): _8083ApiMatchResponse {
-  return match;
+  return {
+    ...match,
+    lobbies: match.lobbies?.map((lobby) => ({
+      ...lobby,
+      players: lobby.players?.map((player) => ({
+        ...player,
+        roleAssignmentSource: normalizeRoleAssignmentSource(
+          player.roleAssignmentSource,
+        ),
+      })),
+    })),
+    roleAssignments: match.roleAssignments?.map((assignment) => ({
+      ...assignment,
+      source: normalizeRoleAssignmentSource(assignment.source),
+    })),
+  };
 }
 
 function getMatchPlayerPublicIds(match: _8083ApiMatchResponse) {
@@ -636,42 +496,6 @@ function enrichMatchPlayers(
       }),
     })),
   };
-}
-
-function readStoredGameSession() {
-  try {
-    const rawSession = window.localStorage.getItem(storedGameSessionKey);
-
-    if (!rawSession) {
-      return undefined;
-    }
-
-    const session = JSON.parse(rawSession) as StoredGameSession;
-
-    return session?.parameters?.matchId ? session : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function writeStoredGameSession(session: StoredGameSession) {
-  window.localStorage.setItem(storedGameSessionKey, JSON.stringify(session));
-}
-
-function clearStoredGameSession() {
-  window.localStorage.removeItem(storedGameSessionKey);
-}
-
-function sendCancelChampionPhaseKeepalive(matchId: string) {
-  const accessToken = readTokens()?.accessToken;
-
-  void fetch(`${MATCHMAKING_API_BASE_URL}/api/matches/${matchId}/champion-phase`, {
-    headers: {
-      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-    },
-    keepalive: true,
-    method: "DELETE",
-  }).catch(() => undefined);
 }
 
 function toPublicId(value: unknown) {
@@ -936,6 +760,112 @@ function findLobbySnapshot(value: unknown, depth = 0): LobbySnapshot | undefined
   return undefined;
 }
 
+function findLobbyRolesSnapshot(value: unknown, depth = 0): LobbyRolesSnapshot | undefined {
+  if (!value || depth > 5) {
+    return undefined;
+  }
+
+  if (typeof value === "string") {
+    try {
+      return findLobbyRolesSnapshot(JSON.parse(value) as unknown, depth + 1);
+    } catch {
+      return undefined;
+    }
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const snapshot = findLobbyRolesSnapshot(item, depth + 1);
+
+      if (snapshot) {
+        return snapshot;
+      }
+    }
+
+    return undefined;
+  }
+
+  if (typeof value !== "object") {
+    return undefined;
+  }
+
+  const record = value as Record<string, unknown>;
+
+  if (
+    typeof record.lobbyId === "string" &&
+    Array.isArray(record.members) &&
+    record.members.some((member) => {
+      return (
+        member &&
+        typeof member === "object" &&
+        ("primaryRole" in member || "secondaryRole" in member)
+      );
+    })
+  ) {
+    return record as LobbyRolesSnapshot;
+  }
+
+  for (const nestedValue of Object.values(record)) {
+    const snapshot = findLobbyRolesSnapshot(nestedValue, depth + 1);
+
+    if (snapshot) {
+      return snapshot;
+    }
+  }
+
+  return undefined;
+}
+
+function findUserStatusSnapshot(value: unknown, depth = 0): UserStatusSnapshot | undefined {
+  if (!value || depth > 5) {
+    return undefined;
+  }
+
+  if (typeof value === "string") {
+    try {
+      return findUserStatusSnapshot(JSON.parse(value) as unknown, depth + 1);
+    } catch {
+      return undefined;
+    }
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const snapshot = findUserStatusSnapshot(item, depth + 1);
+
+      if (snapshot) {
+        return snapshot;
+      }
+    }
+
+    return undefined;
+  }
+
+  if (typeof value !== "object") {
+    return undefined;
+  }
+
+  const record = value as Record<string, unknown>;
+
+  if (
+    typeof record.publicId === "number" &&
+    typeof record.status === "string" &&
+    ("mode" in record || "updatedAt" in record)
+  ) {
+    return record as UserStatusSnapshot;
+  }
+
+  for (const nestedValue of Object.values(record)) {
+    const snapshot = findUserStatusSnapshot(nestedValue, depth + 1);
+
+    if (snapshot) {
+      return snapshot;
+    }
+  }
+
+  return undefined;
+}
+
 function findMatchResponse(value: unknown, depth = 0): _8083ApiMatchResponse | undefined {
   if (!value || depth > 5) {
     return undefined;
@@ -1023,15 +953,17 @@ function GameModeIcon({ question }: GameModeIconProps) {
 
 function Client({
   accentColor,
-  allowFriendRequests,
+  backgroundChampion,
   clientAnimation,
+  friendRequestPolicy,
   closeDialogOpen,
   gameScreenMode,
   locale,
   onAccentColorChange,
-  onAllowFriendRequestsChange,
+  onBackgroundChampionChange,
   onClientAnimationChange,
   onCloseDialogClose,
+  onFriendRequestPolicyChange,
   onGameScreenModeChange,
   onLocaleChange,
   onLogout,
@@ -1061,6 +993,12 @@ function Client({
   >([]);
   const [partyInviteSearching, setPartyInviteSearching] = useState(false);
   const [partyInviteBusyId, setPartyInviteBusyId] = useState<number>();
+  const [selectedLobbyRoles, setSelectedLobbyRoles] =
+    useState<LobbyRoleSelection>([undefined, undefined]);
+  const [lobbyMemberRoles, setLobbyMemberRoles] = useState<
+    Record<number, LobbyRoleSelection>
+  >({});
+  const [openLobbyRolePicker, setOpenLobbyRolePicker] = useState<0 | 1>();
   const [lobbyMemberContextMenu, setLobbyMemberContextMenu] =
     useState<LobbyMemberContextMenuState>();
   const [lobbyMemberActionBusyId, setLobbyMemberActionBusyId] = useState<number>();
@@ -1105,12 +1043,25 @@ function Client({
   );
   const playerSlots = Array.from({ length: 5 }, (_, index) => index);
   const lobbySlotMembers = activeLobby ? getLobbySlotMembers(activeLobby) : [];
+  const lobbyIsFull =
+    lobbySlotMembers.filter((member): member is LobbyMember => Boolean(member)).length >=
+    playerSlots.length;
+  const visibleLobbyRoleSlots: readonly (0 | 1)[] = lobbyIsFull ? [0] : [0, 1];
+  const activeLobbyCurrentMember = getCurrentLobbyMember(
+    activeLobby,
+    profilePublicId,
+    profileName,
+  );
   const activeLobbyHost = activeLobby ? getLobbyHost(activeLobby) : undefined;
-  const isCurrentUserLobbyHost = activeLobbyHost?.publicId === profilePublicId;
+  const isCurrentUserLobbyHost = isSameLobbyMember(
+    activeLobbyHost,
+    activeLobbyCurrentMember,
+  );
   const lobbyIsSearching =
     Boolean(lobbySearchStartedAt) ||
     (activeLobby?.status === "SEARCHING" &&
       activeLobby.id !== lobbySearchAbortedLobbyId);
+  const partyInvitesLocked = lobbyIsSearching || activeLobby?.status === "SEARCHING";
   const lobbySearchSeconds = lobbySearchStartedAt
     ? Math.max(0, Math.floor((lobbySearchNow - lobbySearchStartedAt) / 1000))
     : 0;
@@ -1145,6 +1096,103 @@ function Client({
       message,
     });
   }
+  function rememberLobbyMemberRoles(members: Array<LobbyMember | LobbyMemberWithRoles>) {
+    setLobbyMemberRoles((currentRoles) => {
+      let changed = false;
+      const nextRoles = { ...currentRoles };
+
+      for (const member of members) {
+        if (typeof member.publicId !== "number") {
+          continue;
+        }
+
+        const roles = getMemberLobbyRoles(member);
+
+        if (!hasLobbyRoles(roles)) {
+          continue;
+        }
+
+        const currentMemberRoles = nextRoles[member.publicId];
+        const mergedRoles = [
+          roles[0] ?? currentMemberRoles?.[0],
+          roles[1] ?? currentMemberRoles?.[1],
+        ] satisfies LobbyRoleSelection;
+
+        if (
+          currentMemberRoles?.[0] === mergedRoles[0] &&
+          currentMemberRoles?.[1] === mergedRoles[1]
+        ) {
+          continue;
+        }
+
+        nextRoles[member.publicId] = mergedRoles;
+        changed = true;
+      }
+
+      return changed ? nextRoles : currentRoles;
+    });
+  }
+
+  function rememberLobbyRolesFromStatuses(statuses: UserStatusSnapshot[] = []) {
+    rememberLobbyMemberRoles(
+      statuses
+        .filter((status) => typeof status.publicId === "number")
+        .map((status) => {
+          const roles = getLobbyRolesFromPresenceMode(status.mode);
+
+          return {
+            publicId: status.publicId,
+            primaryRole: roles[0] ? toApiLobbyRole(roles[0]) : undefined,
+            secondaryRole: roles[1] ? toApiLobbyRole(roles[1]) : undefined,
+          } satisfies LobbyMemberWithRoles;
+        }),
+    );
+  }
+
+  function getEffectiveLobbyMemberRoles(member?: LobbyMember) {
+    const snapshotRoles = getMemberLobbyRoles(member);
+
+    if (typeof member?.publicId === "number") {
+      const cachedRoles = lobbyMemberRoles[member.publicId];
+
+      if (cachedRoles) {
+        return [
+          snapshotRoles[0] ?? cachedRoles[0],
+          snapshotRoles[1] ?? cachedRoles[1],
+        ] satisfies LobbyRoleSelection;
+      }
+    }
+
+    return snapshotRoles;
+  }
+
+  function getActiveLobbyWithCachedRoles() {
+    if (!activeLobby?.members) {
+      return activeLobby;
+    }
+
+    return {
+      ...activeLobby,
+      members: activeLobby.members.map((member) => {
+        if (typeof member.publicId !== "number") {
+          return member;
+        }
+
+        const roles = lobbyMemberRoles[member.publicId];
+
+        if (!roles || hasLobbyRoles(getMemberLobbyRoles(member))) {
+          return member;
+        }
+
+        return {
+          ...member,
+          primaryRole: roles[0] ? toApiLobbyRole(roles[0]) : undefined,
+          secondaryRole: roles[1] ? toApiLobbyRole(roles[1]) : undefined,
+        } satisfies LobbyMemberWithRoles;
+      }),
+    };
+  }
+
   const activeLobbyMemberPublicIds = useMemo(() => {
     return new Set(
       activeLobby?.members
@@ -1193,12 +1241,177 @@ function Client({
     }
 
     return [...candidatesById.values()].filter((candidate) => {
-      return candidate.publicId !== profilePublicId;
+      if (candidate.publicId === profilePublicId) {
+        return false;
+      }
+
+      if (
+        typeof candidate.publicId === "number" &&
+        candidate.publicId === activeLobbyCurrentMember?.publicId
+      ) {
+        return false;
+      }
+
+      const currentMemberName = activeLobbyCurrentMember
+        ? normalizeLobbyIdentityName(getMemberName(activeLobbyCurrentMember))
+        : undefined;
+      const candidateName = normalizeLobbyIdentityName(candidate.name);
+
+      return !currentMemberName || currentMemberName !== candidateName;
     });
-  }, [partyInviteFriends, partyInviteSearch, partyInviteSearchResults, profilePublicId]);
+  }, [
+    activeLobbyCurrentMember,
+    partyInviteFriends,
+    partyInviteSearch,
+    partyInviteSearchResults,
+    profilePublicId,
+  ]);
   useEffect(() => {
     activeLobbyRef.current = activeLobby;
   }, [activeLobby]);
+
+  useEffect(() => {
+    rememberLobbyMemberRoles(activeLobby?.members ?? []);
+  }, [activeLobby?.members]);
+
+  useEffect(() => {
+    const currentMember = getCurrentLobbyMember(
+      activeLobby,
+      profilePublicId,
+      profileName,
+    );
+
+    if (!currentMember) {
+      return;
+    }
+
+    const currentMemberRoles = getEffectiveLobbyMemberRoles(currentMember);
+
+    if (!hasLobbyRoles(currentMemberRoles)) {
+      return;
+    }
+
+    setSelectedLobbyRoles(currentMemberRoles);
+  }, [activeLobby, lobbyMemberRoles, profileName, profilePublicId]);
+
+  useEffect(() => {
+    if (!activeLobby?.id) {
+      setLobbyMemberRoles({});
+      return;
+    }
+
+    let active = true;
+    const lobbyId = activeLobby.id;
+
+    async function refreshLobbyRoles() {
+      const result = await getLobbyRoles({
+        baseUrl: LIVE_API_BASE_URL,
+        fallbackBaseUrls: [API_BASE_URL, MATCHMAKING_API_BASE_URL],
+        path: { lobbyId },
+      });
+
+      if (!active || result.error || !result.data?.members) {
+        return;
+      }
+
+      rememberLobbyMemberRoles(result.data.members);
+    }
+
+    void refreshLobbyRoles();
+
+    return () => {
+      active = false;
+    };
+  }, [activeLobby?.id, activeLobby?.members?.length]);
+
+  useEffect(() => {
+    if (activeLobby) {
+      return;
+    }
+
+    setSelectedLobbyRoles([undefined, undefined]);
+    setOpenLobbyRolePicker(undefined);
+    setLobbyMemberRoles({});
+  }, [activeLobby]);
+
+  useEffect(() => {
+    if (!partyInvitesLocked) {
+      return;
+    }
+
+    setPartyInviteOpen(false);
+    setOpenLobbyRolePicker(undefined);
+  }, [partyInvitesLocked]);
+
+  useEffect(() => {
+    if (!lobbyIsFull) {
+      return;
+    }
+
+    setOpenLobbyRolePicker((openSlot) => (openSlot === 1 ? undefined : openSlot));
+
+    if (!selectedLobbyRoles[1]) {
+      return;
+    }
+
+    const nextSelectedRoles = [
+      selectedLobbyRoles[0],
+      undefined,
+    ] satisfies LobbyRoleSelection;
+
+    setSelectedLobbyRoles(nextSelectedRoles);
+    setActiveLobby((currentLobby) => {
+      if (!currentLobby?.members) {
+        return currentLobby;
+      }
+
+      const currentMember = getCurrentLobbyMember(
+        currentLobby,
+        profilePublicId,
+        profileName,
+      );
+
+      return {
+        ...currentLobby,
+        members: currentLobby.members.map((member) => {
+          if (!isSameLobbyMember(member, currentMember)) {
+            return member;
+          }
+
+          return {
+            ...member,
+            primaryRole: nextSelectedRoles[0]
+              ? toApiLobbyRole(nextSelectedRoles[0])
+              : undefined,
+            secondaryRole: undefined,
+          } satisfies LobbyMemberWithRoles;
+        }),
+      };
+    });
+
+    if (typeof profilePublicId === "number") {
+      setLobbyMemberRoles((currentRoles) => ({
+        ...currentRoles,
+        [profilePublicId]: nextSelectedRoles,
+      }));
+    }
+
+    if (activeLobbyRef.current) {
+      setPresenceStatus("inlobby");
+      void publishPresence(
+        "IN_LOBBY",
+        getLobbyPresenceMode(selectedGameMode, nextSelectedRoles),
+      );
+    }
+
+    void saveLobbyMemberRoles(nextSelectedRoles);
+  }, [
+    lobbyIsFull,
+    profileName,
+    profilePublicId,
+    selectedGameMode,
+    selectedLobbyRoles,
+  ]);
 
   useEffect(() => {
     championSelectionMatchRef.current = championSelectionMatch;
@@ -1227,6 +1440,8 @@ function Client({
     setGameInProgress(true);
     setGameClientRunning(false);
     setGameClientClosedByClient(Boolean(storedSession.closedByClient));
+    setPresenceStatus("ingame");
+    void publishPresence("IN_GAME");
   }, [profilePublicId]);
 
   useEffect(() => {
@@ -1647,7 +1862,12 @@ function Client({
             : currentLobby,
         );
 
-        if (getLobbyHost(lobby)?.publicId === profilePublicId) {
+        if (
+          isSameLobbyMember(
+            getLobbyHost(lobby),
+            getCurrentLobbyMember(lobby, profilePublicId, profileName),
+          )
+        ) {
           void restartMatchSearchForLobby(lobby);
         }
       } else {
@@ -1711,6 +1931,7 @@ function Client({
       (result.data?.friends?.friends ?? []).map(mapFriendUserToProfile),
     );
 
+    rememberLobbyRolesFromStatuses(result.data?.friendStatuses?.statuses ?? []);
     replaceLobbyInvitations(result.data?.lobbyInvitations ?? []);
     setLobbyError(undefined);
   }
@@ -1738,7 +1959,7 @@ function Client({
       active = false;
       window.clearInterval(intervalId);
     };
-  }, [activeLobby?.id, profilePublicId]);
+  }, [activeLobby?.id, profileName, profilePublicId]);
 
   useEffect(() => {
     if (!activeLobby) {
@@ -1746,6 +1967,37 @@ function Client({
     }
 
     void refreshLobbyFriendProfiles();
+  }, [activeLobby?.id]);
+
+  useEffect(() => {
+    if (!activeLobby?.id) {
+      return;
+    }
+
+    let active = true;
+
+    async function refreshLobbyPeerRoles() {
+      const result = await liveBootstrap({
+        baseUrl: LIVE_API_BASE_URL,
+      });
+
+      if (!active || result.error) {
+        return;
+      }
+
+      rememberLobbyRolesFromStatuses(result.data?.friendStatuses?.statuses ?? []);
+    }
+
+    void refreshLobbyPeerRoles();
+
+    const intervalId = window.setInterval(() => {
+      void refreshLobbyPeerRoles();
+    }, 1_500);
+
+    return () => {
+      active = false;
+      window.clearInterval(intervalId);
+    };
   }, [activeLobby?.id]);
 
   useEffect(() => {
@@ -1885,6 +2137,12 @@ function Client({
   }
 
   function syncPresenceWithActivity() {
+    if (gameInProgressRef.current) {
+      setPresenceStatus("ingame");
+      void publishPresence("IN_GAME");
+      return;
+    }
+
     if (championSelectionMatchRef.current) {
       setPresenceStatus("championselection");
       void publishPresence("CHAMPION_SELECTION");
@@ -1899,7 +2157,10 @@ function Client({
 
     if (activeLobbyRef.current) {
       setPresenceStatus("inlobby");
-      void publishPresence("IN_LOBBY", selectedGameMode === "ranked" ? "Ranked" : "Normal");
+      void publishPresence(
+        "IN_LOBBY",
+        getLobbyPresenceMode(selectedGameMode, selectedLobbyRoles),
+      );
       return;
     }
 
@@ -1965,6 +2226,18 @@ function Client({
         );
       }
 
+      const storedSession = readStoredGameSession();
+
+      if (
+        storedSession &&
+        (typeof storedSession.playerPublicId !== "number" ||
+          storedSession.playerPublicId === profilePublicId)
+      ) {
+        setPresenceStatus("ingame");
+        void publishPresence("IN_GAME");
+        return;
+      }
+
       lastActivityRef.current = Date.now();
       setPresenceStatus("online");
       void publishPresence("ONLINE");
@@ -1979,7 +2252,14 @@ function Client({
 
   useEffect(() => {
     syncPresenceWithActivity();
-  }, [activeLobby?.id, activeLobby?.status, championSelectionMatch?.matchId, selectedGameMode]);
+  }, [
+    activeLobby?.id,
+    activeLobby?.status,
+    championSelectionMatch?.matchId,
+    gameInProgress,
+    selectedGameMode,
+    selectedLobbyRoles,
+  ]);
 
   useEffect(() => {
     function markActivity() {
@@ -2122,6 +2402,8 @@ function Client({
         return;
       }
 
+      rememberLobbyRolesFromStatuses(result.data?.friendStatuses?.statuses ?? []);
+
       const lobby = result.data?.openFriendLobbies?.find((openLobby) => {
         return openLobby.id === activeLobbyId;
       });
@@ -2130,9 +2412,9 @@ function Client({
         return;
       }
 
-      const stillInLobby = lobby.members?.some((member) => {
-        return member.publicId === profilePublicId;
-      });
+      const stillInLobby = Boolean(
+        getCurrentLobbyMember(lobby, profilePublicId, profileName),
+      );
 
       if (stillInLobby) {
         setActiveLobby(lobby);
@@ -2156,6 +2438,8 @@ function Client({
 
           const invitation = findLobbyInvitation(_event);
           const lobbySnapshot = findLobbySnapshot(_event);
+          const lobbyRolesSnapshot = findLobbyRolesSnapshot(_event);
+          const userStatusSnapshot = findUserStatusSnapshot(_event);
           const match = findMatchResponse(_event);
 
           if (match) {
@@ -2170,10 +2454,21 @@ function Client({
             }
           }
 
+          if (
+            lobbyRolesSnapshot?.lobbyId &&
+            lobbyRolesSnapshot.lobbyId === activeLobbyRef.current?.id
+          ) {
+            rememberLobbyMemberRoles(lobbyRolesSnapshot.members ?? []);
+          }
+
+          if (userStatusSnapshot) {
+            rememberLobbyRolesFromStatuses([userStatusSnapshot]);
+          }
+
           if (lobbySnapshot && lobbySnapshot.id === activeLobbyRef.current?.id) {
-            const stillInLobby = lobbySnapshot.members?.some((member) => {
-              return member.publicId === profilePublicId;
-            });
+            const stillInLobby = Boolean(
+              getCurrentLobbyMember(lobbySnapshot, profilePublicId, profileName),
+            );
 
             if (stillInLobby) {
               setActiveLobby(lobbySnapshot);
@@ -2342,6 +2637,16 @@ function Client({
     }
 
     setLobbyError(undefined);
+
+    const roleLimitError = getLobbyRoleLimitError(
+      getActiveLobbyWithCachedRoles() ?? activeLobby,
+    );
+
+    if (roleLimitError) {
+      notifyLobbyError(t(roleLimitError));
+      return;
+    }
+
     const wasLocallyAborted = activeLobby.id === lobbySearchAbortedLobbyId;
     setLobbySearchAbortedLobbyId(undefined);
 
@@ -2500,7 +2805,7 @@ function Client({
   ]);
 
   async function handleLobbyFriendDrop(friend: FriendProfile) {
-    if (!activeLobby?.id || typeof friend.publicId !== "number") {
+    if (!activeLobby?.id || partyInvitesLocked || typeof friend.publicId !== "number") {
       return;
     }
 
@@ -2519,7 +2824,7 @@ function Client({
   }
 
   function openPartyInviteDialog() {
-    if (!activeLobby?.id) {
+    if (!activeLobby?.id || partyInvitesLocked) {
       return;
     }
 
@@ -2529,8 +2834,140 @@ function Client({
     setLobbyError(undefined);
   }
 
+  async function saveLobbyMemberRoles(
+    roles: [LobbyRoleId | undefined, LobbyRoleId | undefined],
+  ) {
+    if (!activeLobby?.id || activeLobby.status !== "OPEN") {
+      return false;
+    }
+
+    const [primaryRole, secondaryRole] = roles;
+
+    if (primaryRole && secondaryRole && primaryRole === secondaryRole) {
+      notifyLobbyError(t("lobby-role-update-error"));
+      return false;
+    }
+
+    const result = await updateLobbyMemberRoles({
+      baseUrl: LIVE_API_BASE_URL,
+      body: {
+        ...(primaryRole ? { primaryRole: toApiLobbyRole(primaryRole) } : {}),
+        secondaryRole: secondaryRole ? toApiLobbyRole(secondaryRole) : null,
+      },
+      fallbackBaseUrls: [API_BASE_URL, MATCHMAKING_API_BASE_URL],
+      path: { lobbyId: activeLobby.id },
+    });
+
+    if (result.response?.status === 404) {
+      return true;
+    }
+
+    if (result.error || !result.data) {
+      console.error("Lobby role update failed", {
+        error: result.error,
+        status: result.response?.status,
+      });
+      notifyLobbyError(
+        result.response?.status
+          ? `${t("lobby-role-update-error")} (${result.response.status})`
+          : t("lobby-role-update-error"),
+      );
+      return false;
+    }
+
+    rememberLobbyMemberRoles(result.data.members ?? []);
+    return true;
+  }
+
+  async function handleLobbyRoleSelect(slot: 0 | 1, roleId: LobbyRoleId) {
+    if (lobbyIsFull && slot === 1) {
+      return;
+    }
+
+    const duplicateSlot = slot === 0 ? 1 : 0;
+
+    if (selectedLobbyRoles[duplicateSlot] === roleId) {
+      return;
+    }
+
+    const nextSelectedRoles = normalizeLobbyRoleSelection([
+      slot === 0 ? roleId : selectedLobbyRoles[0],
+      lobbyIsFull ? undefined : slot === 1 ? roleId : selectedLobbyRoles[1],
+    ]);
+
+    const previousSelectedRoles = selectedLobbyRoles;
+    const previousCachedRoles =
+      typeof profilePublicId === "number" ? lobbyMemberRoles[profilePublicId] : undefined;
+    setSelectedLobbyRoles(nextSelectedRoles);
+    setActiveLobby((currentLobby) => {
+      if (!currentLobby?.members) {
+        return currentLobby;
+      }
+
+      const currentMember = getCurrentLobbyMember(
+        currentLobby,
+        profilePublicId,
+        profileName,
+      );
+
+      return {
+        ...currentLobby,
+        members: currentLobby.members.map((member) => {
+          if (!isSameLobbyMember(member, currentMember)) {
+            return member;
+          }
+
+          return {
+            ...member,
+            primaryRole: nextSelectedRoles[0]
+              ? toApiLobbyRole(nextSelectedRoles[0])
+              : undefined,
+            secondaryRole: nextSelectedRoles[1]
+              ? toApiLobbyRole(nextSelectedRoles[1])
+              : undefined,
+          } satisfies LobbyMemberWithRoles;
+        }),
+      };
+    });
+    if (typeof profilePublicId === "number") {
+      setLobbyMemberRoles((currentRoles) => ({
+        ...currentRoles,
+        [profilePublicId]: nextSelectedRoles,
+      }));
+    }
+    setOpenLobbyRolePicker(undefined);
+
+    if (activeLobbyRef.current) {
+      setPresenceStatus("inlobby");
+      void publishPresence(
+        "IN_LOBBY",
+        getLobbyPresenceMode(selectedGameMode, nextSelectedRoles),
+      );
+    }
+
+    const updated = await saveLobbyMemberRoles(nextSelectedRoles);
+
+    if (!updated) {
+      setSelectedLobbyRoles(previousSelectedRoles);
+      setActiveLobby(activeLobby);
+      if (typeof profilePublicId === "number") {
+        setLobbyMemberRoles((currentRoles) => {
+          const nextRoles = { ...currentRoles };
+
+          if (previousCachedRoles) {
+            nextRoles[profilePublicId] = previousCachedRoles;
+          } else {
+            delete nextRoles[profilePublicId];
+          }
+
+          return nextRoles;
+        });
+      }
+    }
+  }
+
   async function handleInviteCandidate(candidate: PartyInviteCandidate) {
-    if (!activeLobby?.id || typeof candidate.publicId !== "number") {
+    if (!activeLobby?.id || partyInvitesLocked || typeof candidate.publicId !== "number") {
       return;
     }
 
@@ -2570,7 +3007,10 @@ function Client({
   }
 
   async function handleAddLobbyMemberFriend(member: LobbyMember) {
-    if (typeof member.publicId !== "number") {
+    if (
+      typeof member.publicId !== "number" ||
+      isSameLobbyMember(member, activeLobbyCurrentMember)
+    ) {
       return;
     }
 
@@ -2593,7 +3033,11 @@ function Client({
   }
 
   async function handleMakeLobbyHost(member: LobbyMember) {
-    if (!activeLobby?.id || typeof member.publicId !== "number") {
+    if (
+      !activeLobby?.id ||
+      typeof member.publicId !== "number" ||
+      isSameLobbyMember(member, activeLobbyCurrentMember)
+    ) {
       return;
     }
 
@@ -2622,9 +3066,9 @@ function Client({
 
     if (
       !activeLobby?.id ||
-      lobbyHost?.publicId !== profilePublicId ||
+      !isSameLobbyMember(lobbyHost, activeLobbyCurrentMember) ||
       typeof member.publicId !== "number" ||
-      member.publicId === profilePublicId
+      isSameLobbyMember(member, activeLobbyCurrentMember)
     ) {
       return;
     }
@@ -2949,6 +3393,8 @@ function Client({
     setGameLaunchParameters(parameters);
     setGameClientRunning(true);
     setGameClientClosedByClient(false);
+    setPresenceStatus("ingame");
+    void publishPresence("IN_GAME");
     writeStoredGameSession({
       closedByClient: false,
       parameters,
@@ -2967,6 +3413,8 @@ function Client({
     setActiveLobby(undefined);
     setGameSelectorOpen(false);
     setGameInProgress(true);
+    setPresenceStatus("ingame");
+    void publishPresence("IN_GAME");
   }
 
   async function handleReadyPhaseComplete() {
@@ -3048,7 +3496,7 @@ function Client({
         onFriendPartyInvite={handleLobbyFriendDrop}
         onFriendPartyJoin={handleJoinFriendParty}
         onLobbyFriendDrop={handleLobbyFriendDrop}
-        partyInviteEnabled={Boolean(activeLobby)}
+        partyInviteEnabled={Boolean(activeLobby) && !partyInvitesLocked}
         presenceStatus={presenceStatus}
         profileAvatarUrl={profileAvatarUrl}
         profileName={profileName}
@@ -3219,7 +3667,11 @@ function Client({
         </div>
 
         {activeLobby ? (
-          <section className="lobby-page" aria-label={t("lobby-title")}>
+          <section
+            className="lobby-page"
+            aria-label={t("lobby-title")}
+            onMouseDown={() => setOpenLobbyRolePicker(undefined)}
+          >
             <div className="lobby-id-info">
               <button
                 aria-label={t("lobby-id")}
@@ -3255,15 +3707,22 @@ function Client({
               {playerSlots.map((slot) => {
                 const member = lobbySlotMembers[slot];
                 const lobbyHost = getLobbyHost(activeLobby);
-                const isCurrentUser = member?.publicId === profilePublicId;
-                const isHost = member?.publicId === lobbyHost?.publicId;
-                const canInviteSlot = !member;
+                const isCurrentUser = isSameLobbyMember(member, activeLobbyCurrentMember);
+                const isHost = isSameLobbyMember(member, lobbyHost);
+                const canInviteSlot = !member && !partyInvitesLocked;
                 const canOpenMemberMenu = Boolean(member);
                 const memberName = member
                   ? getMemberName(member)
                   : isCurrentUser
                     ? getLobbyDisplayName(profileName)
                     : undefined;
+                const memberLobbyRoles = isCurrentUser
+                  ? selectedLobbyRoles
+                  : getEffectiveLobbyMemberRoles(member);
+                const visibleMemberLobbyRoles = visibleLobbyRoleSlots.map((roleSlot) => {
+                  return memberLobbyRoles[roleSlot];
+                });
+                const hasVisibleMemberLobbyRoles = visibleMemberLobbyRoles.some(Boolean);
 
                 return (
                   <div
@@ -3271,6 +3730,9 @@ function Client({
                       [
                         "lobby-player-slot",
                         isCurrentUser ? "lobby-player-slot-owner" : "",
+                        isCurrentUser && openLobbyRolePicker !== undefined
+                          ? "lobby-player-slot-role-picker-open"
+                          : "",
                         isHost ? "lobby-player-slot-host" : "",
                         member ? "lobby-player-slot-filled" : "lobby-player-slot-empty",
                       ]
@@ -3321,7 +3783,7 @@ function Client({
                         {member ? (
                           member.avatarUrl ? (
                             <img alt="" src={member.avatarUrl} />
-                          ) : member.publicId === profilePublicId && profileAvatarUrl ? (
+                          ) : isCurrentUser && profileAvatarUrl ? (
                             <img alt="" src={profileAvatarUrl} />
                           ) : (
                             getMemberName(member).charAt(0).toUpperCase()
@@ -3347,14 +3809,132 @@ function Client({
                       </small>
                     </div>
                     {isCurrentUser ? (
-                        <div className="lobby-owner-actions">
-                          <button type="button" onClick={openPartyInviteDialog}>
-                            <Plus size={18} />
-                          </button>
-                          <button type="button" onClick={openPartyInviteDialog}>
-                            <Plus size={18} />
-                          </button>
+                      <>
+                        <div
+                          className={
+                            lobbyIsFull
+                              ? "lobby-owner-actions lobby-owner-actions-single"
+                              : "lobby-owner-actions"
+                          }
+                        >
+                          {visibleLobbyRoleSlots.map((roleSlot) => {
+                            const selectedRoleId = selectedLobbyRoles[roleSlot];
+                            const selectedRole = lobbyRoles.find((role) => {
+                              return role.id === selectedRoleId;
+                            });
+                            const duplicateRoleSlot = roleSlot === 0 ? 1 : 0;
+
+                            return (
+                              <div
+                                className={
+                                  openLobbyRolePicker === roleSlot
+                                    ? "lobby-role-picker lobby-role-picker-open"
+                                    : "lobby-role-picker"
+                                }
+                                key={roleSlot}
+                                onMouseDown={(event) => event.stopPropagation()}
+                              >
+                                <button
+                                  aria-expanded={openLobbyRolePicker === roleSlot}
+                                  aria-label={t("lobby-role-select")}
+                                  className={
+                                    selectedRole
+                                      ? "lobby-role-trigger lobby-role-trigger-selected"
+                                      : "lobby-role-trigger"
+                                  }
+                                  title={
+                                    selectedRole
+                                      ? t(selectedRole.labelKey)
+                                      : t("lobby-role-select")
+                                  }
+                                  type="button"
+                                  onClick={() =>
+                                    setOpenLobbyRolePicker((openSlot) =>
+                                      openSlot === roleSlot ? undefined : roleSlot,
+                                    )
+                                  }
+                                >
+                                  {selectedRole ? (
+                                    <LobbyRoleIcon role={selectedRole.id} />
+                                  ) : (
+                                    <Plus size={18} />
+                                  )}
+                                </button>
+                                {openLobbyRolePicker === roleSlot ? (
+                                  <div
+                                    className="lobby-role-wheel"
+                                    role="menu"
+                                    onMouseDown={(event) => event.stopPropagation()}
+                                  >
+                                    {lobbyRoles.map((role) => {
+                                      const roleTaken =
+                                        selectedLobbyRoles[duplicateRoleSlot] === role.id;
+                                      const roleSelected = selectedRoleId === role.id;
+
+                                      return (
+                                        <button
+                                          aria-checked={roleSelected}
+                                          className={
+                                            roleSelected
+                                              ? "lobby-role-option lobby-role-option-selected"
+                                              : "lobby-role-option"
+                                          }
+                                          disabled={roleTaken}
+                                          key={role.id}
+                                          role="menuitemradio"
+                                          type="button"
+                                          onClick={() =>
+                                            handleLobbyRoleSelect(roleSlot, role.id)
+                                          }
+                                        >
+                                          <span className="lobby-role-option-content">
+                                            <LobbyRoleIcon role={role.id} />
+                                          </span>
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                ) : null}
+                              </div>
+                            );
+                          })}
                         </div>
+                      </>
+                    ) : member && hasVisibleMemberLobbyRoles ? (
+                      <div
+                        className={
+                          lobbyIsFull
+                            ? "lobby-member-roles lobby-member-roles-single"
+                            : "lobby-member-roles"
+                        }
+                        aria-label={t("lobby-role-select")}
+                      >
+                        {visibleMemberLobbyRoles.map((roleId, roleSlot) => {
+                          if (!roleId) {
+                            return (
+                              <span
+                                aria-hidden="true"
+                                className="lobby-member-role-placeholder"
+                                key={roleSlot}
+                              />
+                            );
+                          }
+
+                          const selectedRole = lobbyRoles.find((role) => {
+                            return role.id === roleId;
+                          });
+
+                          return (
+                            <span
+                              className="lobby-member-role"
+                              key={roleSlot}
+                              title={selectedRole ? t(selectedRole.labelKey) : undefined}
+                            >
+                              <LobbyRoleIcon role={roleId} />
+                            </span>
+                          );
+                        })}
+                      </div>
                     ) : null}
                   </div>
                 );
@@ -3388,9 +3968,12 @@ function Client({
       {lobbyMemberContextMenu && activeLobby ? (() => {
         const member = lobbyMemberContextMenu.member;
         const memberPublicId = member.publicId;
-        const isSelf = memberPublicId === profilePublicId;
+        const isSelf = isSameLobbyMember(member, activeLobbyCurrentMember);
         const lobbyHost = getLobbyHost(activeLobby);
-        const isCurrentUserHost = lobbyHost?.publicId === profilePublicId;
+        const isCurrentUserHost = isSameLobbyMember(
+          lobbyHost,
+          activeLobbyCurrentMember,
+        );
         const isFriend =
           typeof memberPublicId === "number" && friendPublicIds.has(memberPublicId);
         const actionBusy = lobbyMemberActionBusyId === memberPublicId;
@@ -3448,7 +4031,7 @@ function Client({
         );
       })() : null}
 
-      {partyInviteOpen && activeLobby ? (
+      {partyInviteOpen && activeLobby && !partyInvitesLocked ? (
         <div
           className="dialog-backdrop friend-add-dialog-backdrop lobby-party-invite-dialog-backdrop"
           role="presentation"
@@ -3609,8 +4192,9 @@ function Client({
       {settingsOpen ? (
         <SettingsModal
           accentColor={accentColor}
-          allowFriendRequests={allowFriendRequests}
+          backgroundChampion={backgroundChampion}
           clientAnimation={clientAnimation}
+          friendRequestPolicy={friendRequestPolicy}
           gameScreenMode={gameScreenMode}
           locale={locale}
           resolution={resolution}
@@ -3619,9 +4203,10 @@ function Client({
           t={t}
           vision="Vision.ALL"
           onAccentColorChange={onAccentColorChange}
-          onAllowFriendRequestsChange={onAllowFriendRequestsChange}
+          onBackgroundChampionChange={onBackgroundChampionChange}
           onClientAnimationChange={onClientAnimationChange}
           onClose={onSettingsClose}
+          onFriendRequestPolicyChange={onFriendRequestPolicyChange}
           onGameScreenModeChange={onGameScreenModeChange}
           onLocaleChange={onLocaleChange}
           onResolutionChange={onResolutionChange}

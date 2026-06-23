@@ -12,6 +12,11 @@ import ignaraWallpaper from "../../../../assets/wallpapers/ignara-wallpaper.png"
 import liraWallpaper from "../../../../assets/wallpapers/lira-wallpaper.png";
 import sophiaWallpaper from "../../../../assets/wallpapers/sophia-wallpaper.png";
 import yunaWallpaper from "../../../../assets/wallpapers/yuna-wallpaper.png";
+import {
+  LobbyRoleIcon,
+  normalizeLobbyRoleId,
+  type LobbyRoleId,
+} from "../lobbyRoles";
 import type { Translate } from "../types/ui";
 import { getProfileInitials, getPublicDisplayName } from "../utils/profile";
 
@@ -40,6 +45,13 @@ const championImagesByName = new Map(
 const championWallpapersByName = new Map(
   champions.map((champion) => [champion.name.toLowerCase(), champion.wallpaper]),
 );
+const championSelectionRoleLabels: Record<LobbyRoleId, string> = {
+  adc: "Adc",
+  jungle: "Jng",
+  mid: "Mid",
+  support: "Sup",
+  top: "Top",
+};
 
 function getTeamName(index: number) {
   return index === 0 ? "Dark Team" : "Light Team";
@@ -178,6 +190,16 @@ function getPlayerName(player: MatchPlayerResponse) {
   }
 
   return playerName;
+}
+
+function getPlayerAssignedRole(match: _8083ApiMatchResponse, player: MatchPlayerResponse) {
+  const assignedRole =
+    player.assignedRole ??
+    match.roleAssignments?.find((assignment) => {
+      return assignment.publicId === player.publicId;
+    })?.assignedRole;
+
+  return normalizeLobbyRoleId(assignedRole);
 }
 
 function getPickGroups(teams: MatchLobbyResponse[]) {
@@ -606,6 +628,9 @@ function ChampionSelection({
                   const playerName = isOpponentTeam
                     ? t("champion-select-opponent")
                     : getPlayerName(player);
+                  const assignedRole = !isOpponentTeam
+                    ? getPlayerAssignedRole(match, player)
+                    : undefined;
 
                   return (
                     <article
@@ -633,6 +658,13 @@ function ChampionSelection({
                         <span>{playerName}</span>
                         {previewChampion ? (
                           <small>{previewChampion}</small>
+                        ) : null}
+                        {assignedRole ? (
+                          <small className="champion-selection-player-role">
+                            <LobbyRoleIcon role={assignedRole} />
+                            <span>-</span>
+                            <strong>{championSelectionRoleLabels[assignedRole]}</strong>
+                          </small>
                         ) : null}
                       </div>
                     </article>

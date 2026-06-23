@@ -166,6 +166,7 @@ export async function startGoogleLogin() {
     code_challenge: codeChallenge,
     code_challenge_method: "S256",
     kc_idp_hint: "google",
+    prompt: "select_account",
     redirect_uri: REDIRECT_URI,
     response_type: "code",
     scope: "openid email profile",
