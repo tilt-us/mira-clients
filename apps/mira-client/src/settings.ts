@@ -4,6 +4,7 @@ export const settingsStorageKey = "mira-client-settings";
 export const defaultAccentColor = "#f2c45b";
 export const defaultResolution = "1600x900";
 export const defaultClientAnimation = "all";
+export const defaultUiScale = 0.9;
 export const defaultGameScreenMode = "borderless";
 export const defaultBackgroundChampion = "yuna";
 export const defaultFriendRequestPolicy = "allow";
@@ -16,6 +17,7 @@ export type AppResolution =
   | "2140x1440";
 
 export type ClientAnimation = "all" | "ui-elements" | "images" | "none";
+export type UiScale = 0.5 | 0.6 | 0.7 | 0.8 | 0.9 | 1 | 1.1 | 1.25 | 1.5;
 export type GameScreenMode = "full" | "window" | "borderless";
 export type BackgroundChampion = "lira" | "ignara" | "yuna" | "sophia";
 export type FriendRequestPolicy = "allow" | "disallow" | "vip";
@@ -29,6 +31,7 @@ export type StoredSettings = {
   gameScreenMode?: GameScreenMode;
   locale?: AppLocale;
   resolution?: AppResolution;
+  uiScale?: UiScale;
 };
 
 export function readStoredSettings() {
@@ -73,6 +76,20 @@ export function isClientAnimation(value: unknown): value is ClientAnimation {
     value === "ui-elements" ||
     value === "images" ||
     value === "none"
+  );
+}
+
+export function isUiScale(value: unknown): value is UiScale {
+  return (
+    value === 0.5 ||
+    value === 0.6 ||
+    value === 0.7 ||
+    value === 0.8 ||
+    value === 0.9 ||
+    value === 1 ||
+    value === 1.1 ||
+    value === 1.25 ||
+    value === 1.5
   );
 }
 

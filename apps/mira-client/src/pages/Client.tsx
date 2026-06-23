@@ -55,6 +55,7 @@ import {
 import { getValidAccessToken } from "../auth/keycloak";
 import { readTokens } from "../auth/storage";
 import ChampionSelection from "./ChampionSelection";
+import ChatDock from "../components/ChatDock";
 import CloseDialog from "../components/CloseDialog";
 import SettingsModal from "../components/SettingsModal";
 import Sidebar from "../components/Sidebar";
@@ -66,6 +67,7 @@ import type {
   ClientAnimation,
   FriendRequestPolicy,
   GameScreenMode,
+  UiScale,
 } from "../settings";
 import type { FriendProfile, PresenceStatus, Translate } from "../types/ui";
 import {
@@ -124,6 +126,7 @@ type ClientProps = {
   onQuit: () => void;
   onResolutionChange: (resolution: AppResolution) => void;
   onSettingsClose: () => void;
+  onUiScaleChange: (uiScale: UiScale) => void;
   profileAvatarUrl?: string;
   profileName: string;
   profilePublicId?: number;
@@ -132,6 +135,7 @@ type ClientProps = {
   supportsFourKResolution: boolean;
   supportsTwoKResolution: boolean;
   t: Translate;
+  uiScale: UiScale;
 };
 
 type GameModeIconProps = {
@@ -970,6 +974,7 @@ function Client({
   onQuit,
   onResolutionChange,
   onSettingsClose,
+  onUiScaleChange,
   profileAvatarUrl,
   profileName,
   profilePublicId,
@@ -978,6 +983,7 @@ function Client({
   supportsFourKResolution,
   supportsTwoKResolution,
   t,
+  uiScale,
 }: ClientProps) {
   const [gameSelectorOpen, setGameSelectorOpen] = useState(false);
   const [selectedGameMode, setSelectedGameMode] = useState<GameMode>("ranked");
@@ -3503,6 +3509,7 @@ function Client({
         profilePublicId={profilePublicId}
         t={t}
       />
+      <ChatDock t={t} />
 
       {!gameSelectorOpen && !activeLobby && !gameInProgress ? (
         <button
@@ -4201,6 +4208,7 @@ function Client({
           supportsFourKResolution={supportsFourKResolution}
           supportsTwoKResolution={supportsTwoKResolution}
           t={t}
+          uiScale={uiScale}
           vision="Vision.ALL"
           onAccentColorChange={onAccentColorChange}
           onBackgroundChampionChange={onBackgroundChampionChange}
@@ -4210,6 +4218,7 @@ function Client({
           onGameScreenModeChange={onGameScreenModeChange}
           onLocaleChange={onLocaleChange}
           onResolutionChange={onResolutionChange}
+          onUiScaleChange={onUiScaleChange}
         />
       ) : null}
     </>

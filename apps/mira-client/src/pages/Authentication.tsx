@@ -176,6 +176,7 @@ function Authentication() {
     supportsFourKResolution,
     supportsTwoKResolution,
     t,
+    uiScale,
     setAccentColor,
     setBackgroundChampion,
     setClientAnimation,
@@ -183,6 +184,7 @@ function Authentication() {
     setGameScreenMode,
     setLocale,
     setResolution,
+    setUiScale,
   } = useClientSettings();
   const { notify } = useNotifications();
 
@@ -501,6 +503,7 @@ function Authentication() {
           supportsFourKResolution={supportsFourKResolution}
           supportsTwoKResolution={supportsTwoKResolution}
           t={t}
+          uiScale={uiScale}
           onAccentColorChange={setAccentColor}
           onBackgroundChampionChange={setBackgroundChampion}
           onClientAnimationChange={setClientAnimation}
@@ -512,6 +515,7 @@ function Authentication() {
           onQuit={handleQuit}
           onResolutionChange={setResolution}
           onSettingsClose={() => setSettingsOpen(false)}
+          onUiScaleChange={setUiScale}
         />
       ) : (
         <section className="login-window" aria-labelledby="login-title">
@@ -648,6 +652,7 @@ function Authentication() {
           supportsFourKResolution={supportsFourKResolution}
           supportsTwoKResolution={supportsTwoKResolution}
           t={t}
+          uiScale={uiScale}
           vision="Vision.Auth"
           onAccentColorChange={setAccentColor}
           onBackgroundChampionChange={setBackgroundChampion}
@@ -657,6 +662,7 @@ function Authentication() {
           onClose={() => setSettingsOpen(false)}
           onLocaleChange={setLocale}
           onResolutionChange={setResolution}
+          onUiScaleChange={setUiScale}
         />
       ) : null}
     </main>

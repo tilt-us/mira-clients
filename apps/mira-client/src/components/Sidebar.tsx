@@ -13,6 +13,7 @@ import {
   Pencil,
   Search,
   Shield,
+  SlidersHorizontal,
   Trash2,
   Trophy,
   UserMinus,
@@ -50,6 +51,7 @@ import { LIVE_API_BASE_URL } from "../api/config";
 import FriendCard from "./FriendCard";
 import type {
   FriendFolder,
+  FriendFolderMoveRule,
   FriendProfile,
   PresenceStatus,
   SidebarTab,
@@ -67,8 +69,15 @@ const initialFolders: FriendFolder[] = [
   {
     id: "duo",
     name: "Duo Queue",
+    moveRule: "none",
     open: true,
   },
+];
+
+const folderMoveRuleOptions: FriendFolderMoveRule[] = [
+  "none",
+  "new-friend",
+  "new-tagged",
 ];
 
 const friendSidebarStorageKey = "mira-client-friend-sidebar-v2";
@@ -78,6 +87,19 @@ type DragState = {
   active: boolean;
   friendId: string;
   overFolderId?: string;
+  startX: number;
+  startY: number;
+  x: number;
+  y: number;
+};
+
+type FolderDropPosition = "after" | "before";
+
+type FolderDragState = {
+  active: boolean;
+  folderId: string;
+  overFolderId?: string;
+  overPosition?: FolderDropPosition;
   startX: number;
   startY: number;
   x: number;
@@ -148,7 +170,11 @@ function isStoredFolder(value: unknown): value is FriendFolder {
   return (
     typeof folder.id === "string" &&
     typeof folder.name === "string" &&
-    typeof folder.open === "boolean"
+    typeof folder.open === "boolean" &&
+    (
+      folder.moveRule === undefined ||
+      folderMoveRuleOptions.includes(folder.moveRule)
+    )
   );
 }
 
@@ -471,13 +497,21 @@ function Sidebar({
   const [folderCreateInput, setFolderCreateInput] = useState("");
   const [renamingFolderId, setRenamingFolderId] = useState<string>();
   const [folderRenameInput, setFolderRenameInput] = useState("");
+  const [editingFolderRulesId, setEditingFolderRulesId] = useState<string>();
+  const [folderRuleDraft, setFolderRuleDraft] =
+    useState<FriendFolderMoveRule>("none");
+  const [folderRuleDropdownOpen, setFolderRuleDropdownOpen] = useState(false);
   const [friendTooltip, setFriendTooltip] = useState<FriendTooltipState>();
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [dragState, setDragState] = useState<DragState>();
+  const [folderDragState, setFolderDragState] = useState<FolderDragState>();
   const dragStateRef = useRef<DragState | undefined>(undefined);
+  const folderDragStateRef = useRef<FolderDragState | undefined>(undefined);
   const foldersRef = useRef(folders);
   const friendFoldersRef = useRef(friendFolders);
+  const knownFriendIdsRef = useRef<Set<string> | undefined>(undefined);
+  const suppressNextFolderClickRef = useRef<string | undefined>(undefined);
   const createFolderInputRef = useRef<HTMLInputElement | null>(null);
   const friendAddSearchInputRef = useRef<HTMLInputElement | null>(null);
   const renameInputRef = useRef<HTMLInputElement | null>(null);
@@ -530,6 +564,7 @@ function Sidebar({
     ? friends.find((friend) => friend.id === dragState.friendId)
     : undefined;
   const dragInProgress = Boolean(dragState);
+  const folderDragInProgress = Boolean(folderDragState);
   const tooltipFriend = friendTooltip
     ? friends.find((friend) => friend.id === friendTooltip.friendId)
     : undefined;
@@ -595,6 +630,10 @@ function Sidebar({
   useEffect(() => {
     dragStateRef.current = dragState;
   }, [dragState]);
+
+  useEffect(() => {
+    folderDragStateRef.current = folderDragState;
+  }, [folderDragInProgress]);
 
   useEffect(() => {
     foldersRef.current = folders;
@@ -852,6 +891,89 @@ function Sidebar({
     };
   }, [dragInProgress, friends, onLobbyFriendDrop]);
 
+  useEffect(() => {
+    if (!folderDragState) {
+      return;
+    }
+
+    function handlePointerMove(event: globalThis.PointerEvent) {
+      const currentFolderDragState = folderDragStateRef.current;
+
+      if (!currentFolderDragState) {
+        return;
+      }
+
+      const deltaX = event.clientX - currentFolderDragState.startX;
+      const deltaY = event.clientY - currentFolderDragState.startY;
+      const isActive =
+        currentFolderDragState.active || Math.hypot(deltaX, deltaY) > 4;
+      const dropTarget = document
+        .elementFromPoint(event.clientX, event.clientY)
+        ?.closest<HTMLElement>("[data-folder-sort-id]");
+      const targetRect = dropTarget?.getBoundingClientRect();
+      const overPosition: FolderDropPosition =
+        targetRect && event.clientY > targetRect.top + targetRect.height / 2
+          ? "after"
+          : "before";
+
+      if (isActive) {
+        event.preventDefault();
+      }
+
+      const nextFolderDragState = {
+        ...currentFolderDragState,
+        active: isActive,
+        overFolderId: dropTarget?.dataset.folderSortId,
+        overPosition: dropTarget ? overPosition : undefined,
+        x: event.clientX,
+        y: event.clientY,
+      };
+
+      folderDragStateRef.current = nextFolderDragState;
+      setFolderDragState(nextFolderDragState);
+    }
+
+    function handlePointerUp(event: globalThis.PointerEvent) {
+      const currentFolderDragState = folderDragStateRef.current;
+
+      if (!currentFolderDragState) {
+        setFolderDragState(undefined);
+        return;
+      }
+
+      if (currentFolderDragState.active) {
+        event.preventDefault();
+        suppressNextFolderClickRef.current = currentFolderDragState.folderId;
+        window.setTimeout(() => {
+          if (suppressNextFolderClickRef.current === currentFolderDragState.folderId) {
+            suppressNextFolderClickRef.current = undefined;
+          }
+        }, 0);
+
+        if (
+          currentFolderDragState.overFolderId &&
+          currentFolderDragState.overPosition
+        ) {
+          moveFolder(
+            currentFolderDragState.folderId,
+            currentFolderDragState.overFolderId,
+            currentFolderDragState.overPosition,
+          );
+        }
+      }
+
+      setFolderDragState(undefined);
+    }
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp, { once: true });
+
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+    };
+  }, [folderDragInProgress]);
+
   async function refreshLiveData(
     nextFolders = foldersRef.current,
     nextFriendFolders = friendFoldersRef.current,
@@ -873,14 +995,20 @@ function Sidebar({
     }
 
     const openLobbies = result.data?.openFriendLobbies ?? [];
+    const apiFriends = result.data?.friends?.friends ?? [];
     const friendStatuses =
       statusesResult.data?.statuses ?? result.data?.friendStatuses?.statuses ?? [];
+    const resolvedFriendFolders = applyFolderRulesToFriendFolders(
+      apiFriends,
+      nextFolders,
+      nextFriendFolders,
+    );
 
     setFriends(
       mapApiFriendsToProfiles(
-        result.data?.friends?.friends ?? [],
+        apiFriends,
         nextFolders,
-        nextFriendFolders,
+        resolvedFriendFolders,
         friendStatuses,
         openLobbies,
         forceOnlinePublicIds,
@@ -893,6 +1021,50 @@ function Sidebar({
     });
     setOpenFriendLobbies(openLobbies);
     setFriendApiError(undefined);
+  }
+
+  function applyFolderRulesToFriendFolders(
+    apiFriends: FriendUserItem[],
+    nextFolders: FriendFolder[],
+    nextFriendFolders: Record<string, string | undefined>,
+  ) {
+    const currentFriendIds = new Set(apiFriends.map(getFriendUserId));
+    const knownFriendIds = knownFriendIdsRef.current;
+
+    knownFriendIdsRef.current = currentFriendIds;
+
+    if (!knownFriendIds) {
+      return nextFriendFolders;
+    }
+
+    const newFriendFolder = nextFolders.find(
+      (folder) => folder.moveRule === "new-friend",
+    );
+
+    if (!newFriendFolder) {
+      return nextFriendFolders;
+    }
+
+    let nextRuleFriendFolders = nextFriendFolders;
+
+    for (const friendId of currentFriendIds) {
+      if (knownFriendIds.has(friendId) || nextRuleFriendFolders[friendId]) {
+        continue;
+      }
+
+      if (nextRuleFriendFolders === nextFriendFolders) {
+        nextRuleFriendFolders = { ...nextFriendFolders };
+      }
+
+      nextRuleFriendFolders[friendId] = newFriendFolder.id;
+    }
+
+    if (nextRuleFriendFolders !== nextFriendFolders) {
+      friendFoldersRef.current = nextRuleFriendFolders;
+      setFriendFolders(nextRuleFriendFolders);
+    }
+
+    return nextRuleFriendFolders;
   }
 
   function handleCreateFolder() {
@@ -911,6 +1083,7 @@ function Sidebar({
       {
         id: `folder-${Date.now()}`,
         name: folderName,
+        moveRule: "none",
         open: true,
       },
     ]);
@@ -927,6 +1100,35 @@ function Sidebar({
     setFolderRenameInput(folder.name);
     setOpenMenuFolderId(undefined);
     setRenamingFolderId(folderId);
+  }
+
+  function openFolderRules(folderId: string) {
+    const folder = folders.find((currentFolder) => currentFolder.id === folderId);
+
+    if (!folder) {
+      return;
+    }
+
+    setFolderRuleDraft(folder.moveRule ?? "none");
+    setFolderRuleDropdownOpen(false);
+    setEditingFolderRulesId(folderId);
+    setOpenMenuFolderId(undefined);
+  }
+
+  function commitFolderRules() {
+    if (!editingFolderRulesId) {
+      return;
+    }
+
+    setFolders((currentFolders) =>
+      currentFolders.map((currentFolder) =>
+        currentFolder.id === editingFolderRulesId
+          ? { ...currentFolder, moveRule: folderRuleDraft }
+          : currentFolder,
+      ),
+    );
+    setFolderRuleDropdownOpen(false);
+    setEditingFolderRulesId(undefined);
   }
 
   function commitRenameFolder() {
@@ -978,6 +1180,9 @@ function Sidebar({
       ),
     );
     setOpenMenuFolderId(undefined);
+    setEditingFolderRulesId((currentFolderId) =>
+      currentFolderId === folderId ? undefined : currentFolderId,
+    );
   }
 
   function moveFriendToFolder(friendId: string, folderId: string) {
@@ -1105,9 +1310,15 @@ function Sidebar({
   }
 
   function handleChat(friendId: string) {
+    const friend = friends.find((currentFriend) => currentFriend.id === friendId);
+
     window.dispatchEvent(
       new CustomEvent("mira:chat-request", {
-        detail: { friendId },
+        detail: {
+          avatarUrl: friend?.avatarUrl,
+          friendId,
+          name: friend?.name,
+        },
       }),
     );
     setOpenMenuFriendId(undefined);
@@ -1182,7 +1393,73 @@ function Sidebar({
     });
   }
 
+  function handleFolderPointerDown(
+    folderId: string,
+    event: PointerEvent<HTMLElement>,
+  ) {
+    if (event.button !== 0 || renamingFolderId === folderId) {
+      return;
+    }
+
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setOpenMenuFriendId(undefined);
+    setOpenMenuFolderId(undefined);
+    setFolderDragState({
+      active: false,
+      folderId,
+      startX: event.clientX,
+      startY: event.clientY,
+      x: event.clientX,
+      y: event.clientY,
+    });
+  }
+
+  function moveFolder(
+    sourceFolderId: string,
+    targetFolderId: string,
+    position: FolderDropPosition,
+  ) {
+    if (sourceFolderId === targetFolderId) {
+      return;
+    }
+
+    setFolders((currentFolders) => {
+      const sourceFolder = currentFolders.find(
+        (folder) => folder.id === sourceFolderId,
+      );
+
+      if (!sourceFolder) {
+        return currentFolders;
+      }
+
+      const foldersWithoutSource = currentFolders.filter(
+        (folder) => folder.id !== sourceFolderId,
+      );
+      const targetIndex = foldersWithoutSource.findIndex(
+        (folder) => folder.id === targetFolderId,
+      );
+
+      if (targetIndex === -1) {
+        return currentFolders;
+      }
+
+      const nextFolders = [...foldersWithoutSource];
+      nextFolders.splice(
+        position === "after" ? targetIndex + 1 : targetIndex,
+        0,
+        sourceFolder,
+      );
+
+      return nextFolders;
+    });
+  }
+
   function toggleFolder(folderId: string) {
+    if (suppressNextFolderClickRef.current === folderId) {
+      suppressNextFolderClickRef.current = undefined;
+      return;
+    }
+
     setFolders((currentFolders) =>
       currentFolders.map((folder) =>
         folder.id === folderId ? { ...folder, open: !folder.open } : folder,
@@ -1839,6 +2116,86 @@ function Sidebar({
               </form>
             </div>
           ) : null}
+
+          {editingFolderRulesId ? (
+            <div
+              className="dialog-backdrop folder-dialog-backdrop"
+              role="presentation"
+              onMouseDown={() => {
+                setFolderRuleDropdownOpen(false);
+                setEditingFolderRulesId(undefined);
+              }}
+            >
+              <form
+                aria-labelledby="folder-rules-dialog-title"
+                aria-modal="true"
+                className="folder-dialog"
+                role="dialog"
+                onMouseDown={(event) => event.stopPropagation()}
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  commitFolderRules();
+                }}
+              >
+                <h2 id="folder-rules-dialog-title">
+                  {t("friend-folder-rules-title")}
+                </h2>
+                <div className="folder-dialog-field">
+                  <span>{t("friend-folder-rule-move-here-when")}</span>
+                  <div
+                    className="settings-dropdown folder-rules-dropdown"
+                    onMouseDown={(event) => event.stopPropagation()}
+                  >
+                    <button
+                      aria-expanded={folderRuleDropdownOpen}
+                      aria-haspopup="listbox"
+                      className="settings-dropdown-trigger"
+                      type="button"
+                      onClick={() =>
+                        setFolderRuleDropdownOpen((open) => !open)
+                      }
+                    >
+                      <span>{t(`friend-folder-rule-${folderRuleDraft}`)}</span>
+                    </button>
+
+                    {folderRuleDropdownOpen ? (
+                      <div className="settings-dropdown-menu" role="listbox">
+                        {folderMoveRuleOptions.map((moveRule) => (
+                          <button
+                            aria-selected={folderRuleDraft === moveRule}
+                            key={moveRule}
+                            role="option"
+                            type="button"
+                            onClick={() => {
+                              setFolderRuleDraft(moveRule);
+                              setFolderRuleDropdownOpen(false);
+                            }}
+                          >
+                            <span>{t(`friend-folder-rule-${moveRule}`)}</span>
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+                <div className="folder-dialog-actions">
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    onClick={() => {
+                      setFolderRuleDropdownOpen(false);
+                      setEditingFolderRulesId(undefined);
+                    }}
+                  >
+                    {t("friend-folder-cancel")}
+                  </button>
+                  <button className="login-button" type="submit">
+                    {t("friend-folder-rules-save")}
+                  </button>
+                </div>
+              </form>
+            </div>
+          ) : null}
         </>,
         overlayRoot,
       )
@@ -2046,6 +2403,21 @@ function Sidebar({
                 (friend) => friend.folderId === folder.id,
               );
               const folderIsDropTarget = dragState?.overFolderId === folder.id;
+              const folderDropPosition =
+                folderDragState?.active &&
+                folderDragState.overFolderId === folder.id &&
+                folderDragState.folderId !== folder.id
+                  ? folderDragState.overPosition
+                  : undefined;
+              const folderRowClassName = [
+                "friend-folder-row",
+                folderIsDropTarget ? "drag-over" : "",
+                folderDragState?.active && folderDragState.folderId === folder.id
+                  ? "folder-dragging"
+                  : "",
+                folderDropPosition === "before" ? "folder-drop-before" : "",
+                folderDropPosition === "after" ? "folder-drop-after" : "",
+              ].filter(Boolean).join(" ");
 
               return (
                 <section
@@ -2054,11 +2426,8 @@ function Sidebar({
                   key={folder.id}
                 >
                   <div
-                    className={
-                      folderIsDropTarget
-                        ? "friend-folder-row drag-over"
-                        : "friend-folder-row"
-                    }
+                    className={folderRowClassName}
+                    data-folder-sort-id={folder.id}
                   >
                     {renamingFolderId === folder.id ? (
                       <div className="friend-folder-toggle friend-folder-rename-row">
@@ -2090,6 +2459,9 @@ function Sidebar({
                       <button
                         className="friend-folder-toggle"
                         type="button"
+                        onPointerDown={(event) =>
+                          handleFolderPointerDown(folder.id, event)
+                        }
                         onClick={() => toggleFolder(folder.id)}
                         onDoubleClick={(event) => {
                           event.stopPropagation();
@@ -2141,6 +2513,14 @@ function Sidebar({
                         >
                           <Pencil size={15} />
                           <span>{t("friend-folder-rename")}</span>
+                        </button>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => openFolderRules(folder.id)}
+                        >
+                          <SlidersHorizontal size={15} />
+                          <span>{t("friend-folder-rules")}</span>
                         </button>
                         <button
                           className="danger"

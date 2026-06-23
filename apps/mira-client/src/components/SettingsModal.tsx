@@ -7,6 +7,7 @@ import type {
   ClientAnimation,
   FriendRequestPolicy,
   GameScreenMode,
+  UiScale,
 } from "../settings";
 import type { SettingsVision, Translate } from "../types/ui";
 
@@ -20,6 +21,7 @@ type SettingsModalProps = {
   resolution: AppResolution;
   supportsFourKResolution: boolean;
   supportsTwoKResolution: boolean;
+  uiScale: UiScale;
   onAccentColorChange: (accentColor: string) => void;
   onBackgroundChampionChange: (backgroundChampion: BackgroundChampion) => void;
   onClientAnimationChange: (clientAnimation: ClientAnimation) => void;
@@ -28,6 +30,7 @@ type SettingsModalProps = {
   onGameScreenModeChange: (gameScreenMode: GameScreenMode) => void;
   onLocaleChange: (locale: AppLocale) => void;
   onResolutionChange: (resolution: AppResolution) => void;
+  onUiScaleChange: (uiScale: UiScale) => void;
   t: Translate;
   vision: SettingsVision;
 };
@@ -47,6 +50,29 @@ const resolutionOptions: Array<{
   },
   { label: "2140 x 1440", value: "2140x1440" },
 ];
+
+const uiScaleOptions: Array<{
+  label: string;
+  value: UiScale;
+}> = [
+  { label: "150%", value: 1.5 },
+  { label: "125%", value: 1.25 },
+  { label: "110%", value: 1.1 },
+  { label: "100%", value: 1 },
+  { label: "90%", value: 0.9 },
+  { label: "80%", value: 0.8 },
+  { label: "70%", value: 0.7 },
+  { label: "60%", value: 0.6 },
+  { label: "50%", value: 0.5 },
+];
+
+const maxUiScaleByResolution: Record<AppResolution, UiScale> = {
+  "1270x720": 1,
+  "1400x800": 1.1,
+  "1600x900": 1.25,
+  "1920x1080": 1.5,
+  "2140x1440": 1.5,
+};
 
 const clientAnimationOptions: Array<{
   labelId: string;
@@ -96,6 +122,7 @@ function SettingsModal({
   resolution,
   supportsFourKResolution,
   supportsTwoKResolution,
+  uiScale,
   onAccentColorChange,
   onBackgroundChampionChange,
   onClientAnimationChange,
@@ -104,6 +131,7 @@ function SettingsModal({
   onGameScreenModeChange,
   onLocaleChange,
   onResolutionChange,
+  onUiScaleChange,
   t,
   vision,
 }: SettingsModalProps) {
@@ -120,6 +148,7 @@ function SettingsModal({
     useState(false);
   const [languageDropdownOpen, setLanguageDropdownOpen] = useState(false);
   const [resolutionDropdownOpen, setResolutionDropdownOpen] = useState(false);
+  const [uiScaleDropdownOpen, setUiScaleDropdownOpen] = useState(false);
   const selectedLanguage =
     locale === "de" ? t("language-german") : t("language-english");
   const selectedFlag = locale === "de" ? "🇩🇪" : "🇬🇧";
@@ -139,6 +168,11 @@ function SettingsModal({
   const selectedResolution =
     visibleResolutionOptions.find((option) => option.value === resolution)?.label ??
     "1600 x 900";
+  const visibleUiScaleOptions = uiScaleOptions.filter((option) => {
+    return option.value <= maxUiScaleByResolution[resolution];
+  });
+  const selectedUiScale =
+    visibleUiScaleOptions.find((option) => option.value === uiScale)?.label ?? "90%";
   const selectedClientAnimation =
     clientAnimationOptions.find((option) => option.value === clientAnimation)?.labelId ??
     "settings-client-animation-all";
@@ -168,6 +202,7 @@ function SettingsModal({
     setGameScreenModeDropdownOpen(false);
     setLanguageDropdownOpen(false);
     setResolutionDropdownOpen(false);
+    setUiScaleDropdownOpen(false);
   }
 
   function handleLocaleSelect(nextLocale: AppLocale) {
@@ -199,6 +234,11 @@ function SettingsModal({
   function handleResolutionSelect(nextResolution: AppResolution) {
     onResolutionChange(nextResolution);
     setResolutionDropdownOpen(false);
+  }
+
+  function handleUiScaleSelect(nextUiScale: UiScale) {
+    onUiScaleChange(nextUiScale);
+    setUiScaleDropdownOpen(false);
   }
 
   return (
@@ -278,6 +318,46 @@ function SettingsModal({
                             role="option"
                             type="button"
                             onClick={() => handleResolutionSelect(option.value)}
+                          >
+                            <span>{option.label}</span>
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+
+                <div className="settings-row">
+                  <span>{t("settings-ui-scale")}</span>
+                  <div
+                    className="settings-dropdown"
+                    onMouseDown={(event) => event.stopPropagation()}
+                  >
+                    <button
+                      aria-expanded={uiScaleDropdownOpen}
+                      aria-haspopup="listbox"
+                      className="settings-dropdown-trigger"
+                      type="button"
+                      onClick={() => {
+                        closeDropdowns();
+                        setUiScaleDropdownOpen((open) => !open);
+                      }}
+                    >
+                      <span>{selectedUiScale}</span>
+                    </button>
+
+                    {uiScaleDropdownOpen ? (
+                      <div
+                        className="settings-dropdown-menu settings-dropdown-menu-scroll"
+                        role="listbox"
+                      >
+                        {visibleUiScaleOptions.map((option) => (
+                          <button
+                            aria-selected={uiScale === option.value}
+                            key={option.value}
+                            role="option"
+                            type="button"
+                            onClick={() => handleUiScaleSelect(option.value)}
                           >
                             <span>{option.label}</span>
                           </button>

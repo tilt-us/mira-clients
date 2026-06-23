@@ -145,6 +145,12 @@
   box-shadow: 0 14px 34px rgba(0, 0, 0, 0.45);
 }
 
+.settings-dropdown-menu-scroll {
+  max-height: 218px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 .settings-dropdown-menu button {
   justify-content: flex-start;
   border-color: transparent;

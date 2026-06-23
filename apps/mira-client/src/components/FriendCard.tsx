@@ -1,4 +1,5 @@
 import {
+  ChevronRight,
   Folder,
   Eye,
   LogIn,
@@ -7,7 +8,14 @@ import {
   Send,
   UserMinus,
 } from "lucide-react";
-import type { PointerEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type PointerEvent,
+} from "react";
+import { createPortal } from "react-dom";
 import type { FriendFolder, FriendProfile, Translate } from "../types/ui";
 import { presenceMessageIds } from "../types/ui";
 import { getProfileInitials } from "../utils/profile";
@@ -37,6 +45,12 @@ type FriendCardProps = {
   t: Translate;
 };
 
+type MoveSubmenuPosition = {
+  left: number;
+  maxHeight: number;
+  top: number;
+};
+
 function FriendCard({
   folders,
   canInviteParty,
@@ -60,6 +74,106 @@ function FriendCard({
 }: FriendCardProps) {
   const initials = getProfileInitials(friend.name);
   const presenceLabel = t(presenceMessageIds[friend.status]);
+  const closeMoveSubmenuTimeoutRef = useRef<number | undefined>(undefined);
+  const [moveSubmenuPosition, setMoveSubmenuPosition] =
+    useState<MoveSubmenuPosition>();
+  const moveSubmenuStyle: CSSProperties | undefined = moveSubmenuPosition
+    ? {
+        left: moveSubmenuPosition.left,
+        maxHeight: moveSubmenuPosition.maxHeight,
+        top: moveSubmenuPosition.top,
+      }
+    : undefined;
+
+  function clearMoveSubmenuCloseTimeout() {
+    if (closeMoveSubmenuTimeoutRef.current === undefined) {
+      return;
+    }
+
+    window.clearTimeout(closeMoveSubmenuTimeoutRef.current);
+    closeMoveSubmenuTimeoutRef.current = undefined;
+  }
+
+  function openMoveSubmenu(element: HTMLElement) {
+    clearMoveSubmenuCloseTimeout();
+
+    const rect = element.getBoundingClientRect();
+    const panelWidth = 190;
+    const panelHeight = folders.length > 5 ? 184 : Math.max(44, folders.length * 35 + 12);
+    const viewportPadding = 8;
+    const rightSideLeft = rect.right - 1;
+    const leftSideLeft = rect.left - panelWidth + 1;
+    const left =
+      rightSideLeft + panelWidth > window.innerWidth - viewportPadding
+        ? Math.max(viewportPadding, leftSideLeft)
+        : rightSideLeft;
+    const top = Math.min(
+      Math.max(viewportPadding, rect.top - 6),
+      Math.max(viewportPadding, window.innerHeight - panelHeight - viewportPadding),
+    );
+
+    setMoveSubmenuPosition({
+      left,
+      maxHeight: Math.min(184, window.innerHeight - top - viewportPadding),
+      top,
+    });
+  }
+
+  function closeMoveSubmenuSoon() {
+    clearMoveSubmenuCloseTimeout();
+    closeMoveSubmenuTimeoutRef.current = window.setTimeout(() => {
+      setMoveSubmenuPosition(undefined);
+    }, 120);
+  }
+
+  useEffect(() => {
+    if (!menuOpen) {
+      setMoveSubmenuPosition(undefined);
+    }
+  }, [menuOpen]);
+
+  useEffect(() => {
+    return () => clearMoveSubmenuCloseTimeout();
+  }, []);
+
+  function renderMoveSubmenuPanel() {
+    if (!moveSubmenuPosition || typeof document === "undefined") {
+      return null;
+    }
+
+    return createPortal(
+      <div
+        aria-label={t("friend-move-to")}
+        className={`friend-context-submenu-panel fixed${
+          folders.length > 5 ? " scrollable" : ""
+        }`}
+        role="menu"
+        style={moveSubmenuStyle}
+        onClick={(event) => event.stopPropagation()}
+        onMouseEnter={clearMoveSubmenuCloseTimeout}
+        onMouseLeave={closeMoveSubmenuSoon}
+        onPointerDown={(event) => event.stopPropagation()}
+      >
+        {folders.length > 0 ? (
+          folders.map((folder) => (
+            <button
+              disabled={friend.folderId === folder.id}
+              key={folder.id}
+              type="button"
+              role="menuitem"
+              onClick={() => onMoveToFolder(friend.id, folder.id)}
+            >
+              <Folder size={15} />
+              <span>{folder.name}</span>
+            </button>
+          ))
+        ) : (
+          <p className="friend-context-empty">{t("friend-no-folders")}</p>
+        )}
+      </div>,
+      document.body,
+    );
+  }
 
   return (
     <article
@@ -130,7 +244,12 @@ function FriendCard({
 
           {queueActionsLocked ? null : (
             <>
-              <button type="button" role="menuitem" onClick={() => onChat(friend.id)}>
+              <button
+                className="friend-context-field"
+                type="button"
+                role="menuitem"
+                onClick={() => onChat(friend.id)}
+              >
                 <MessageCircle size={15} />
                 <span>{t("friend-chat")}</span>
               </button>
@@ -165,32 +284,27 @@ function FriendCard({
               </button>
 
               <div className="friend-context-divider" />
-              <p className="friend-context-label">
-                <Folder size={14} />
-                <span>{t("friend-move-to")}</span>
-              </p>
-
-              {folders.length > 0 ? (
-                folders.map((folder) => (
-                  <button
-                    disabled={friend.folderId === folder.id}
-                    key={folder.id}
-                    type="button"
-                    role="menuitem"
-                    onClick={() => onMoveToFolder(friend.id, folder.id)}
-                  >
-                    <Folder size={15} />
-                    <span>{folder.name}</span>
-                  </button>
-                ))
-              ) : (
-                <p className="friend-context-empty">{t("friend-no-folders")}</p>
-              )}
+              <div className="friend-context-submenu">
+                <button
+                  aria-haspopup="menu"
+                  className="friend-context-submenu-trigger"
+                  type="button"
+                  role="menuitem"
+                  onFocus={(event) => openMoveSubmenu(event.currentTarget)}
+                  onMouseEnter={(event) => openMoveSubmenu(event.currentTarget)}
+                  onMouseLeave={closeMoveSubmenuSoon}
+                >
+                  <Folder size={15} />
+                  <span>{t("friend-move-to")}</span>
+                  <ChevronRight size={14} />
+                </button>
+              </div>
             </>
           )}
         </div>
       ) : null}
 
+      {renderMoveSubmenuPanel()}
     </article>
   );
 }

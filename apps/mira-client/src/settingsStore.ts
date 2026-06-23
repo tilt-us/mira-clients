@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import {
   currentMonitor,
   getCurrentWindow,
@@ -19,6 +20,7 @@ import {
   defaultFriendRequestPolicy,
   defaultGameScreenMode,
   defaultResolution,
+  defaultUiScale,
   getResolutionFromSize,
   getResolutionSize,
   isAppResolution,
@@ -28,18 +30,20 @@ import {
   isGameScreenMode,
   isHexColor,
   isLocale,
+  isUiScale,
   readStoredSettings,
   type AppResolution,
   type BackgroundChampion,
   type ClientAnimation,
   type FriendRequestPolicy,
   type GameScreenMode,
+  type UiScale,
   writeStoredSettings,
 } from "./settings";
 
 const twoKResolutionMinimum = {
-  height: 1440,
-  width: 2560,
+  height: 1080,
+  width: 1920,
 };
 
 const fourKResolutionMinimum = {
@@ -88,6 +92,12 @@ export function useClientSettings() {
       ? storedSettings.clientAnimation
       : defaultClientAnimation;
   });
+  const [uiScale, setUiScale] = useState<UiScale>(() => {
+    const storedSettings = readStoredSettings();
+    return isUiScale(storedSettings.uiScale)
+      ? storedSettings.uiScale
+      : defaultUiScale;
+  });
   const [gameScreenMode, setGameScreenMode] = useState<GameScreenMode>(() => {
     const storedSettings = readStoredSettings();
     return isGameScreenMode(storedSettings.gameScreenMode)
@@ -105,6 +115,10 @@ export function useClientSettings() {
     let cancelled = false;
 
     async function detectMonitor() {
+      if (runsInTauriLikeShell()) {
+        void getCurrentWindow().setResizable(false);
+      }
+
       const resolutionSupport = runsInTauriLikeShell()
         ? await detectTauriMonitorResolutionSupport()
         : detectBrowserMonitorResolutionSupport();
@@ -135,6 +149,14 @@ export function useClientSettings() {
   }, [monitorResolutionSupport, resolution]);
 
   useEffect(() => {
+    const maxUiScale = getMaxUiScaleForResolution(resolution);
+
+    if (uiScale > maxUiScale) {
+      setUiScale(maxUiScale);
+    }
+  }, [resolution, uiScale]);
+
+  useEffect(() => {
     document.documentElement.style.setProperty("--accent-color", accentColor);
     document.documentElement.style.setProperty(
       "--accent-foreground-color",
@@ -153,6 +175,7 @@ export function useClientSettings() {
       gameScreenMode,
       locale,
       resolution,
+      uiScale,
     });
   }, [
     accentColor,
@@ -162,7 +185,12 @@ export function useClientSettings() {
     gameScreenMode,
     locale,
     resolution,
+    uiScale,
   ]);
+
+  useEffect(() => {
+    void applyUiScale(uiScale);
+  }, [uiScale]);
 
   useEffect(() => {
     if (!runsInTauriLikeShell()) {
@@ -226,6 +254,7 @@ export function useClientSettings() {
     supportsFourKResolution: monitorResolutionSupport?.fourK === true,
     supportsTwoKResolution: monitorResolutionSupport?.twoK === true,
     t,
+    uiScale,
     setAccentColor,
     setBackgroundChampion,
     setClientAnimation,
@@ -233,12 +262,13 @@ export function useClientSettings() {
     setGameScreenMode,
     setLocale,
     setResolution,
+    setUiScale,
   };
 }
 
 async function applyWindowResolution(
   resolution: AppResolution,
-  setResolution: (resolution: AppResolution) => void,
+  _setResolution: (resolution: AppResolution) => void,
 ) {
   const appWindow = getCurrentWindow();
   const { height, width } = getResolutionSize(resolution);
@@ -248,17 +278,20 @@ async function applyWindowResolution(
   }
 
   await appWindow.setSize(new LogicalSize(width, height));
+}
 
-  const scaleFactor = await appWindow.scaleFactor();
-  const currentSize = await appWindow.innerSize();
-  const currentResolution = getResolutionFromSize(
-    currentSize.width / scaleFactor,
-    currentSize.height / scaleFactor,
-  );
-
-  if (currentResolution && currentResolution !== resolution) {
-    setResolution(currentResolution);
+async function applyUiScale(uiScale: UiScale) {
+  if (runsInTauriLikeShell()) {
+    try {
+      await getCurrentWebview().setZoom(uiScale);
+      document.documentElement.style.removeProperty("zoom");
+      return;
+    } catch (caughtError) {
+      console.error("Webview zoom could not be applied.", caughtError);
+    }
   }
+
+  document.documentElement.style.setProperty("zoom", String(uiScale));
 }
 
 type MonitorResolutionSupport = {
@@ -317,6 +350,20 @@ function getMonitorResolutionSupport(
       longSide >= twoKResolutionMinimum.width &&
       shortSide >= twoKResolutionMinimum.height,
   };
+}
+
+function getMaxUiScaleForResolution(resolution: AppResolution): UiScale {
+  switch (resolution) {
+    case "1270x720":
+      return 1;
+    case "1400x800":
+      return 1.1;
+    case "1600x900":
+      return 1.25;
+    case "1920x1080":
+    case "2140x1440":
+      return 1.5;
+  }
 }
 
 function getAccentForegroundColor(hexColor: string) {

@@ -9,9 +9,11 @@
     "core:window:allow-is-maximized",
     "core:window:allow-minimize",
     "core:window:allow-set-size",
+    "core:window:allow-set-resizable",
     "core:window:allow-start-dragging",
     "core:window:allow-toggle-maximize",
     "core:window:allow-unmaximize",
+    "core:webview:allow-set-webview-zoom",
     "opener:default",
     {
       "identifier": "http:default",

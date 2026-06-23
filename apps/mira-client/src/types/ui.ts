@@ -27,7 +27,10 @@ export type FriendFolder = {
   id: string;
   name: string;
   open: boolean;
+  moveRule?: FriendFolderMoveRule;
 };
+
+export type FriendFolderMoveRule = "new-friend" | "new-tagged" | "none";
 
 export type FriendProfile = {
   avatarUrl?: string;
