@@ -182,6 +182,7 @@ champion-select-close-warning = Jetzt zu verlassen kann zu einer Strafe führen.
 champion-select-ready = Bereit
 champion-select-game-starting = Spiel-Client startet...
 champion-select-opponent = Gegner
+champion-select-self = Du
 champion-select-own-champion = Dein Champion
 champion-select-confirm = Bestätigen
 

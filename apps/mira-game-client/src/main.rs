@@ -4,7 +4,7 @@ mod network;
 use app::settings::{ClientLaunchSettings, ClientScreenMode};
 use network::ClientNetworkSettings;
 use std::env;
-use std::net::ToSocketAddrs;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
 use std::process::ExitCode;
 
 /// Description:
@@ -90,6 +90,8 @@ where
     if let Some(key) = pending_key {
         return Err(format!("Missing value for {key}"));
     }
+
+    normalize_client_bind_addr(&mut network_settings);
 
     Ok(Some((launch_settings, network_settings)))
 }
@@ -183,6 +185,21 @@ fn resolve_server_addr(host: &str, port: u16) -> Result<std::net::SocketAddr, St
         .map_err(|error| format!("Could not resolve server host {host}: {error}"))?
         .next()
         .ok_or_else(|| format!("Could not resolve server host {host}"))
+}
+
+fn normalize_client_bind_addr(network_settings: &mut ClientNetworkSettings) {
+    if !network_settings.local_addr.ip().is_loopback()
+        || network_settings.server_addr.ip().is_loopback()
+    {
+        return;
+    }
+
+    let local_port = network_settings.local_addr.port();
+    network_settings.local_addr = if network_settings.server_addr.is_ipv4() {
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), local_port)
+    } else {
+        SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), local_port)
+    };
 }
 
 /// Description:
@@ -348,6 +365,22 @@ mod tests {
 
         assert_eq!(network_settings.server_addr.ip().to_string(), "127.0.0.1");
         assert_eq!(network_settings.server_addr.port(), 7780);
+        assert_eq!(network_settings.local_addr.ip().to_string(), "127.0.0.1");
+    }
+
+    #[test]
+    fn binds_unspecified_local_addr_for_remote_server_host() {
+        let (_, network_settings) =
+            client_settings_from_args(["--server-host", "85.215.116.15", "--port", "7780"])
+                .unwrap()
+                .unwrap();
+
+        assert_eq!(
+            network_settings.server_addr.ip().to_string(),
+            "85.215.116.15"
+        );
+        assert_eq!(network_settings.server_addr.port(), 7780);
+        assert_eq!(network_settings.local_addr.ip().to_string(), "0.0.0.0");
     }
 
     #[test]

@@ -212,6 +212,51 @@ function sendPresenceKeepalive(status: ApiPresenceStatus, mode?: string) {
   });
 }
 
+function getErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string" && error.trim()) {
+    return error;
+  }
+
+  if (error && typeof error === "object") {
+    const errorObject = error as {
+      error?: unknown;
+      message?: unknown;
+      status?: unknown;
+    };
+
+    for (const value of [errorObject.message, errorObject.error, errorObject.status]) {
+      if (typeof value === "string" && value.trim()) {
+        return value;
+      }
+
+      if (typeof value === "number") {
+        return value.toString();
+      }
+    }
+
+    try {
+      const serializedError = JSON.stringify(errorObject);
+
+      if (serializedError && serializedError !== "{}") {
+        return serializedError;
+      }
+    } catch {
+      // Fall through to the generic object string below.
+    }
+
+    const objectText = String(error);
+    if (objectText && objectText !== "[object Object]") {
+      return objectText;
+    }
+  }
+
+  return fallback;
+}
+
 function getInvitationMainInviter(invitation: LobbyInvitation) {
   return (
     invitation.inviters?.[0] ??
@@ -1102,6 +1147,14 @@ function Client({
       message,
     });
   }
+
+  function notifyGameStartError(error: unknown) {
+    const fallback = t("client-game-start-error");
+    const detail = getErrorMessage(error, fallback);
+
+    notifyLobbyError(detail === fallback ? fallback : `${fallback} ${detail}`);
+  }
+
   function rememberLobbyMemberRoles(members: Array<LobbyMember | LobbyMemberWithRoles>) {
     setLobbyMemberRoles((currentRoles) => {
       let changed = false;
@@ -1777,7 +1830,16 @@ function Client({
       });
     }
 
-    return enrichMatchPlayers(match, knownPlayers);
+    return enrichMatchPlayers(
+      {
+        ...match,
+        gameServer:
+          match.gameServer ??
+          championSelectionMatchRef.current?.gameServer ??
+          pendingMatch?.gameServer,
+      },
+      knownPlayers,
+    );
   }
 
   async function restartMatchSearchForLobby(lobby: LobbySnapshot) {
@@ -2175,6 +2237,33 @@ function Client({
     void publishPresence(nextStatus);
   }
 
+  function sendCurrentPresenceKeepalive() {
+    if (gameInProgressRef.current) {
+      sendPresenceKeepalive("IN_GAME");
+      return;
+    }
+
+    if (championSelectionMatchRef.current) {
+      sendPresenceKeepalive("CHAMPION_SELECTION");
+      return;
+    }
+
+    if (activeLobbyRef.current?.status === "SEARCHING") {
+      sendPresenceKeepalive("IN_QUEUE");
+      return;
+    }
+
+    if (activeLobbyRef.current) {
+      sendPresenceKeepalive(
+        "IN_LOBBY",
+        getLobbyPresenceMode(selectedGameMode, selectedLobbyRoles),
+      );
+      return;
+    }
+
+    sendPresenceKeepalive("OFFLINE");
+  }
+
   function suppressMatchLobbyInvitations(match?: _8083ApiMatchResponse) {
     for (const lobby of match?.lobbies ?? []) {
       if (lobby.lobbyId) {
@@ -2319,26 +2408,7 @@ function Client({
   }, []);
 
   useEffect(() => {
-    function leaveActiveLobby() {
-      const championSelectionMatch = championSelectionMatchRef.current;
-      if (championSelectionMatch?.matchId) {
-        sendCancelChampionPhaseKeepalive(championSelectionMatch.matchId);
-        return;
-      }
-
-      const lobby = activeLobbyRef.current;
-
-      if (!lobby?.id) {
-        return;
-      }
-
-      void leaveLobby({
-        baseUrl: LIVE_API_BASE_URL,
-        path: { lobbyId: lobby.id },
-      });
-    }
-
-    function publishOffline() {
+    function persistUnloadState() {
       const gameLaunchParameters = gameLaunchParametersRef.current;
       if (gameInProgressRef.current && gameLaunchParameters) {
         writeStoredGameSession({
@@ -2352,22 +2422,17 @@ function Client({
         }
       }
 
-      sendPresenceKeepalive("OFFLINE");
-      void publishPresence("OFFLINE");
+      sendCurrentPresenceKeepalive();
     }
 
-    window.addEventListener("pagehide", leaveActiveLobby);
-    window.addEventListener("pagehide", publishOffline);
-    window.addEventListener("beforeunload", leaveActiveLobby);
-    window.addEventListener("beforeunload", publishOffline);
+    window.addEventListener("pagehide", persistUnloadState);
+    window.addEventListener("beforeunload", persistUnloadState);
 
     return () => {
-      window.removeEventListener("pagehide", leaveActiveLobby);
-      window.removeEventListener("pagehide", publishOffline);
-      window.removeEventListener("beforeunload", leaveActiveLobby);
-      window.removeEventListener("beforeunload", publishOffline);
+      window.removeEventListener("pagehide", persistUnloadState);
+      window.removeEventListener("beforeunload", persistUnloadState);
     };
-  }, []);
+  }, [selectedGameMode, selectedLobbyRoles]);
 
   async function leaveCurrentLobby() {
     const lobby = activeLobbyRef.current;
@@ -2632,6 +2697,11 @@ function Client({
       setMatchFoundStartedAt(undefined);
       setLobbySearchStartedAt(undefined);
       setLobbySearchAbortedLobbyId(activeLobby.id);
+      setPresenceStatus("inlobby");
+      void publishPresence(
+        "IN_LOBBY",
+        getLobbyPresenceMode(selectedGameMode, selectedLobbyRoles),
+      );
       setActiveLobby(rankedResult.error || !rankedResult.data
         ? {
             ...activeLobby,
@@ -2661,6 +2731,8 @@ function Client({
 
       setLobbySearchStartedAt(Number.isFinite(startedAt) ? startedAt : Date.now());
       setLobbySearchNow(Date.now());
+      setPresenceStatus("inqueue");
+      void publishPresence("IN_QUEUE");
 
       const result = await startSearch({
         baseUrl: MATCHMAKING_API_BASE_URL,
@@ -2678,6 +2750,9 @@ function Client({
       return;
     }
 
+    setPresenceStatus("inqueue");
+    void publishPresence("IN_QUEUE");
+
     const [result, matchSearchResult] = await Promise.all([
       searchRanked({
         baseUrl: LIVE_API_BASE_URL,
@@ -2694,6 +2769,11 @@ function Client({
     ]);
 
     if (result.error && matchSearchResult.error) {
+      setPresenceStatus("inlobby");
+      void publishPresence(
+        "IN_LOBBY",
+        getLobbyPresenceMode(selectedGameMode, selectedLobbyRoles),
+      );
       notifyLobbyError(t("lobby-search-error"));
       return;
     }
@@ -3376,6 +3456,42 @@ function Client({
     };
   }
 
+  function hasGameServerLaunchInfo(match: _8083ApiMatchResponse) {
+    return (
+      typeof getMatchPort(match) === "number" &&
+      Boolean(getMatchHost(match)) &&
+      Boolean(getMatchControlBaseUrl(match))
+    );
+  }
+
+  async function getLaunchableMatch(match: _8083ApiMatchResponse) {
+    let latestMatch = hydrateMatch(match);
+
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      if (hasGameServerLaunchInfo(latestMatch)) {
+        return latestMatch;
+      }
+
+      if (!latestMatch.matchId) {
+        return latestMatch;
+      }
+
+      await new Promise((resolve) => window.setTimeout(resolve, attempt === 0 ? 250 : 1_000));
+
+      const result = await getMatch({
+        baseUrl: MATCHMAKING_API_BASE_URL,
+        path: { matchId: latestMatch.matchId },
+      });
+
+      if (!result.error && result.data) {
+        latestMatch = hydrateMatch(result.data);
+        setChampionSelectionMatch(latestMatch);
+      }
+    }
+
+    return latestMatch;
+  }
+
   async function launchGameClient(parameters: GameLaunchParameters, forceRestart = false) {
     if (!isTauri()) {
       throw new Error("Game Client kann nur in der Desktop-App gestartet werden.");
@@ -3431,13 +3547,14 @@ function Client({
     }
 
     try {
-      const launchParameters = createGameLaunchParameters(match);
+      const launchableMatch = await getLaunchableMatch(match);
+      const launchParameters = createGameLaunchParameters(launchableMatch);
 
       await launchGameClient(launchParameters, true);
       finishGameStart();
     } catch (caughtError) {
       console.error(caughtError);
-      notifyLobbyError(t("client-game-start-error"));
+      notifyGameStartError(caughtError);
     }
   }
 
@@ -3457,12 +3574,12 @@ function Client({
       const launchParameters =
         latestMatch.error || !latestMatch.data
           ? gameLaunchParameters
-          : createGameLaunchParameters(latestMatch.data);
+          : createGameLaunchParameters(await getLaunchableMatch(latestMatch.data));
 
       await launchGameClient(launchParameters, true);
     } catch (caughtError) {
       console.error(caughtError);
-      notifyLobbyError(t("client-game-start-error"));
+      notifyGameStartError(caughtError);
     } finally {
       setGameReconnectBusy(false);
     }

@@ -182,6 +182,7 @@ champion-select-close-warning = Leaving now may result in a penalty.
 champion-select-ready = Ready
 champion-select-game-starting = Game client starting...
 champion-select-opponent = Opponent
+champion-select-self = You
 champion-select-own-champion = Your Champion
 champion-select-confirm = Choose
 

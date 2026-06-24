@@ -42,6 +42,16 @@ type GameMatchManifest = {
   players: GameMatchManifestPlayer[];
 };
 
+type GameServerAddressOverrides = {
+  publicControlBaseUrl?: string;
+  publicControlHost?: string;
+  publicHost?: string;
+  publicPort?: number;
+  gamePort?: number;
+  serverPort?: number;
+  udpPort?: number;
+};
+
 export type StoredGameSession = {
   closedByClient?: boolean;
   parameters: GameLaunchParameters;
@@ -124,29 +134,107 @@ export function createGameMatchManifest(
 }
 
 export function getMatchPort(match: _8083ApiMatchResponse) {
-  return match.gameServer?.port;
+  const gameServer = match.gameServer as
+    | (NonNullable<_8083ApiMatchResponse["gameServer"]> & GameServerAddressOverrides)
+    | undefined;
+  const explicitPort =
+    gameServer?.publicPort ??
+    gameServer?.gamePort ??
+    gameServer?.serverPort ??
+    gameServer?.udpPort ??
+    gameServer?.port;
+
+  if (typeof explicitPort === "number") {
+    return explicitPort;
+  }
+
+  if (typeof gameServer?.controlPort === "number" && gameServer.controlPort > 1000) {
+    return gameServer.controlPort - 1000;
+  }
+
+  return undefined;
 }
 
 export function getMatchHost(match: _8083ApiMatchResponse) {
-  return match.gameServer?.host;
+  const gameServer = match.gameServer as
+    | (NonNullable<_8083ApiMatchResponse["gameServer"]> & GameServerAddressOverrides)
+    | undefined;
+
+  return resolvePublishedGameServerHost(gameServer?.publicHost ?? gameServer?.host);
 }
 
 export function getMatchControlBaseUrl(match: _8083ApiMatchResponse) {
-  const explicitBaseUrl = match.gameServer?.controlBaseUrl;
+  const gameServer = match.gameServer as
+    | (NonNullable<_8083ApiMatchResponse["gameServer"]> & GameServerAddressOverrides)
+    | undefined;
+  const explicitBaseUrl = gameServer?.publicControlBaseUrl ?? gameServer?.controlBaseUrl;
 
   if (explicitBaseUrl) {
-    return explicitBaseUrl;
+    return resolvePublishedGameServerBaseUrl(explicitBaseUrl);
   }
 
-  const controlHost = match.gameServer?.controlHost;
-  const controlPort = match.gameServer?.controlPort;
+  const controlHost = gameServer?.publicControlHost ?? gameServer?.controlHost;
+  const controlPort = gameServer?.controlPort;
 
   if (!controlHost || typeof controlPort !== "number") {
     return undefined;
   }
 
-  const protocol = match.gameServer?.controlProtocol ?? "http";
-  return `${protocol}://${controlHost}:${controlPort}`;
+  const protocol = gameServer?.controlProtocol ?? "http";
+  const publishedControlHost = resolvePublishedGameServerHost(controlHost);
+
+  return publishedControlHost ? `${protocol}://${publishedControlHost}:${controlPort}` : undefined;
+}
+
+function resolvePublishedGameServerHost(host?: string) {
+  if (!host) {
+    return undefined;
+  }
+
+  const fallbackHost = getRemoteMatchmakingHost();
+
+  if (!fallbackHost || !isPrivatePublishedHost(host)) {
+    return host;
+  }
+
+  return fallbackHost;
+}
+
+function resolvePublishedGameServerBaseUrl(baseUrl: string) {
+  try {
+    const parsedUrl = new URL(baseUrl);
+    const fallbackHost = getRemoteMatchmakingHost();
+
+    if (fallbackHost && isPrivatePublishedHost(parsedUrl.hostname)) {
+      parsedUrl.hostname = fallbackHost;
+    }
+
+    return parsedUrl.toString().replace(/\/$/, "");
+  } catch {
+    return baseUrl;
+  }
+}
+
+function getRemoteMatchmakingHost() {
+  try {
+    const host = new URL(MATCHMAKING_API_BASE_URL).hostname;
+    return isPrivatePublishedHost(host) ? undefined : host;
+  } catch {
+    return undefined;
+  }
+}
+
+function isPrivatePublishedHost(host: string) {
+  const normalizedHost = host.trim().toLowerCase().replace(/^\[|\]$/g, "");
+
+  return (
+    normalizedHost === "localhost" ||
+    normalizedHost === "0.0.0.0" ||
+    normalizedHost === "::" ||
+    normalizedHost === "::1" ||
+    normalizedHost === "0:0:0:0:0:0:0:1" ||
+    normalizedHost.startsWith("127.")
+  );
 }
 
 function hashString(value: string) {

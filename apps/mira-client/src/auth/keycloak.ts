@@ -174,7 +174,13 @@ export async function startGoogleLogin() {
   });
 
   saveOAuthRequest(state, codeVerifier);
-  window.location.assign(`${KEYCLOAK_AUTH_URL}?${searchParams.toString()}`);
+  const authUrl = `${KEYCLOAK_AUTH_URL}?${searchParams.toString()}`;
+  console.info("[mira-client] Starting Google login", {
+    authUrl,
+    keycloakClientRedirectUri: REDIRECT_URI,
+    expectedGoogleRedirectUri: `${KEYCLOAK_ISSUER_URL}/broker/google/endpoint`,
+  });
+  window.location.assign(authUrl);
 }
 
 export async function completeRedirectLogin() {

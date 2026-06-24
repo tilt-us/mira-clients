@@ -1,6 +1,6 @@
 {
   "build": {
-    "beforeDevCommand": "npm run build",
+    "beforeDevCommand": "npm run build:game-client && npm run build",
     "devUrl": null
   }
 }

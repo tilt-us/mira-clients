@@ -393,7 +393,7 @@ function ChampionSelection({
       ? activePickCardIndexes.reduce((sum, playerIndex) => sum + playerIndex, 0) /
         activePickCardIndexes.length
       : 2;
-  const pickIndicatorOffset = `${(activePickCardIndex - 2) * 93}px`;
+  const pickIndicatorOffset = `calc(${(activePickCardIndex - 2) * 106}px + var(--pick-indicator-list-offset, 0px))`;
   const pickIndicatorSide = currentPickTeamIndex === 1 ? "light" : "dark";
   const phaseDurationSeconds =
     activePhase === "warmup"
@@ -625,9 +625,12 @@ function ChampionSelection({
                     playerSelection?.champion ?? visiblePlayerHoveredChampion;
                   const playerChampionImage = getChampionImage(previewChampion);
                   const isCurrentPick = activePickPublicIds.has(player.publicId ?? -1);
+                  const isCurrentPlayer = player.publicId === currentPlayerPublicId;
                   const playerName = isOpponentTeam
                     ? t("champion-select-opponent")
-                    : getPlayerName(player);
+                    : isCurrentPlayer
+                      ? t("champion-select-self")
+                      : getPlayerName(player);
                   const assignedRole = !isOpponentTeam
                     ? getPlayerAssignedRole(match, player)
                     : undefined;
@@ -662,7 +665,7 @@ function ChampionSelection({
                         {assignedRole ? (
                           <small className="champion-selection-player-role">
                             <LobbyRoleIcon role={assignedRole} />
-                            <span>-</span>
+                            <span aria-hidden="true">&bull;</span>
                             <strong>{championSelectionRoleLabels[assignedRole]}</strong>
                           </small>
                         ) : null}

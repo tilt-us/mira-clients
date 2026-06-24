@@ -138,29 +138,29 @@ fn launch_game(
         .current_dir(game_dir)
         .env("MIRA_GAME_ASSET_ROOT", &asset_root)
         .arg("--access-token")
-        .arg(request.access_token)
+        .arg(&request.access_token)
         .arg("--accent-color")
-        .arg(request.accent_color)
+        .arg(&request.accent_color)
         .arg("--champion")
-        .arg(request.champion)
+        .arg(&request.champion)
         .arg("--match-id")
-        .arg(request.match_id)
+        .arg(&request.match_id)
         .arg("--matchmaking-api-base-url")
-        .arg(request.matchmaking_api_base_url)
+        .arg(&request.matchmaking_api_base_url)
         .arg("--player-public-id")
         .arg(request.player_public_id.to_string())
         .arg("--server-host")
-        .arg(request.server_host)
+        .arg(&request.server_host)
         .arg("--port")
         .arg(request.port.to_string())
         .arg("--server-control-base-url")
-        .arg(request.server_control_base_url);
+        .arg(&request.server_control_base_url);
 
     if !request.screen.trim().is_empty() {
-        command.arg("--screen").arg(request.screen);
+        command.arg("--screen").arg(&request.screen);
     }
 
-    command.arg("--team").arg(request.team);
+    command.arg("--team").arg(&request.team);
 
     if !request.match_manifest_json.trim().is_empty() {
         command.env("MIRA_MATCH_MANIFEST_JSON", &request.match_manifest_json);
@@ -202,10 +202,42 @@ fn launch_game(
         thread::sleep(FORCE_RESTART_RECONNECT_DELAY);
     }
 
-    let child = command
-        .spawn()
-        .map_err(|error| format!("Game-Client konnte nicht gestartet werden: {error}"))?;
+    println!(
+        "[mira-client] Starting game client: binary={} cwd={} assets={} match={} player={} champion={} server={}:{} control={} screen={} team={}",
+        game_binary.to_string_lossy(),
+        game_dir.to_string_lossy(),
+        asset_root.to_string_lossy(),
+        request.match_id,
+        request.player_public_id,
+        request.champion,
+        request.server_host,
+        request.port,
+        request.server_control_base_url,
+        empty_as_default(&request.screen, "default"),
+        request.team,
+    );
+
+    let mut child = command.spawn().map_err(|error| {
+        eprintln!(
+            "[mira-client] Game client spawn failed: binary={} error={error}",
+            game_binary.to_string_lossy(),
+        );
+        format!("Game-Client konnte nicht gestartet werden: {error}")
+    })?;
     let pid = child.id();
+    println!("[mira-client] Game client started: pid={pid}");
+
+    thread::sleep(Duration::from_millis(800));
+
+    if let Some(status) = child
+        .try_wait()
+        .map_err(|error| format!("Game-Client-Startstatus konnte nicht geprüft werden: {error}"))?
+    {
+        return Err(format!(
+            "Game-Client wurde direkt nach dem Start beendet: pid={pid} status={status}"
+        ));
+    }
+
     *active_child = Some(child);
 
     Ok(LaunchGameResponse {
@@ -225,7 +257,11 @@ fn game_client_status(
 
     if let Some(child) = active_child.as_mut() {
         match child.try_wait() {
-            Ok(Some(_)) => {
+            Ok(Some(status)) => {
+                println!(
+                    "[mira-client] Game client exited before status check: pid={} status={status}",
+                    child.id(),
+                );
                 *active_child = None;
             }
             Ok(None) => {
@@ -257,7 +293,11 @@ fn stop_game_client(process_state: tauri::State<'_, GameProcessState>) -> Result
 
     if let Some(child) = active_child.as_mut() {
         match child.try_wait() {
-            Ok(Some(_)) => {
+            Ok(Some(status)) => {
+                println!(
+                    "[mira-client] Game client already exited before stop: pid={} status={status}",
+                    child.id(),
+                );
                 *active_child = None;
                 return Ok(());
             }
@@ -296,6 +336,22 @@ fn resolve_game_binary(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 
     let mut candidates = Vec::new();
 
+    if let Some(binary_path) = std::env::var_os("MIRA_GAME_CLIENT_BINARY") {
+        candidates.push(PathBuf::from(binary_path));
+    }
+
+    if cfg!(debug_assertions) {
+        candidates.push(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("..")
+                .join("..")
+                .join("..")
+                .join("target")
+                .join("debug")
+                .join(binary_name),
+        );
+    }
+
     if let Ok(resource_dir) = app.path().resource_dir() {
         candidates.push(resource_dir.join("files").join(binary_name));
         candidates.push(resource_dir.join(binary_name));
@@ -321,19 +377,49 @@ fn resolve_game_binary(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     }
 
     candidates
-        .into_iter()
+        .iter()
         .find(|candidate| candidate.is_file())
-        .ok_or_else(|| "files/mira-game-client wurde nicht gefunden.".to_string())
+        .cloned()
+        .ok_or_else(|| {
+            format!(
+                "mira-game-client wurde nicht gefunden. Geprüfte Pfade: {}. Baue den Game-Client mit `cargo build -p mira-game-client` oder setze MIRA_GAME_CLIENT_BINARY.",
+                format_path_candidates(&candidates),
+            )
+        })
+}
+
+fn empty_as_default<'a>(value: &'a str, default_value: &'a str) -> &'a str {
+    if value.trim().is_empty() {
+        default_value
+    } else {
+        value
+    }
 }
 
 fn resolve_game_asset_root(
     app: &tauri::AppHandle,
     game_dir: &std::path::Path,
 ) -> Result<PathBuf, String> {
-    game_asset_root_candidates(app, game_dir)
-        .into_iter()
+    let candidates = game_asset_root_candidates(app, game_dir);
+
+    candidates
+        .iter()
         .find(|candidate| candidate.join("index.html").is_file())
-        .ok_or_else(|| "Game-Assets wurden nicht gefunden: assets/index.html fehlt.".to_string())
+        .cloned()
+        .ok_or_else(|| {
+            format!(
+                "Game-Assets wurden nicht gefunden: assets/index.html fehlt. Geprüfte Pfade: {}.",
+                format_path_candidates(&candidates),
+            )
+        })
+}
+
+fn format_path_candidates(candidates: &[PathBuf]) -> String {
+    candidates
+        .iter()
+        .map(|candidate| candidate.to_string_lossy())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn game_asset_root_candidates(app: &tauri::AppHandle, game_dir: &std::path::Path) -> Vec<PathBuf> {
@@ -374,6 +460,10 @@ fn load_client_config(app: &tauri::AppHandle) -> Result<ClientConfig, String> {
     let config_file = find_config_file(app);
     let parsed_config = match config_file {
         Some(path) => {
+            println!(
+                "[mira-client] Loading client config: {}",
+                path.to_string_lossy()
+            );
             let contents = std::fs::read_to_string(&path).map_err(|error| {
                 format!(
                     "{} konnte nicht gelesen werden: {error}",
