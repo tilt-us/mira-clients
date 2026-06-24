@@ -5,7 +5,7 @@ use std::{
     thread,
     time::Duration,
 };
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 const CONFIG_FILE_NAME: &str = "mira-client.toml";
 #[cfg(debug_assertions)]
@@ -28,6 +28,8 @@ const DEFAULT_KEYCLOAK_REALM: &str = "mira";
 const DEFAULT_KEYCLOAK_CLIENT_ID: &str = "mira-bevy";
 const DEFAULT_KEYCLOAK_PASSWORD_CLIENT_ID: &str = "mira-e2e";
 const FORCE_RESTART_RECONNECT_DELAY: Duration = Duration::from_millis(8_500);
+const OAUTH_MODAL_WIDTH: f64 = 540.0;
+const OAUTH_MODAL_HEIGHT: f64 = 680.0;
 
 #[derive(serde::Serialize)]
 struct LauncherStatus {
@@ -106,6 +108,19 @@ struct LaunchGameResponse {
 struct GameClientStatus {
     running: bool,
     pid: Option<u32>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OAuthWindowRequest {
+    auth_url: String,
+    redirect_uri: String,
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OAuthCallbackPayload {
+    url: String,
 }
 
 #[tauri::command]
@@ -315,6 +330,272 @@ fn stop_game_client(process_state: tauri::State<'_, GameProcessState>) -> Result
     }
 
     Ok(())
+}
+
+#[tauri::command]
+fn start_oauth_window(app: tauri::AppHandle, request: OAuthWindowRequest) -> Result<(), String> {
+    let auth_url = request
+        .auth_url
+        .parse()
+        .map_err(|error| format!("OAuth-URL ist ungueltig: {error}"))?;
+    let redirect_uri = request.redirect_uri.trim().to_string();
+
+    if redirect_uri.is_empty() {
+        return Err("OAuth-Redirect-URI fehlt.".to_string());
+    }
+
+    if let Some(existing_window) = app.get_webview_window("mira-oauth") {
+        existing_window
+            .close()
+            .map_err(|error| format!("OAuth-Fenster konnte nicht ersetzt werden: {error}"))?;
+    }
+
+    let app_for_navigation = app.clone();
+    let redirect_uri_for_navigation = redirect_uri.clone();
+    let back_button_script = oauth_back_button_init_script(&redirect_uri)
+        .map_err(|error| format!("OAuth-Button konnte nicht vorbereitet werden: {error}"))?;
+
+    let mut oauth_window_builder =
+        tauri::WebviewWindowBuilder::new(&app, "mira-oauth", tauri::WebviewUrl::External(auth_url))
+            .title("Mira Login")
+            .inner_size(OAUTH_MODAL_WIDTH, OAUTH_MODAL_HEIGHT)
+            .min_inner_size(420.0, 560.0)
+            .resizable(false)
+            .decorations(false)
+            .skip_taskbar(true)
+            .always_on_top(true)
+            .initialization_script(back_button_script)
+            .on_navigation(move |url| {
+                let target_url = url.as_str();
+
+                if is_oauth_redirect_url(target_url, &redirect_uri_for_navigation) {
+                    let _ = app_for_navigation.emit(
+                        "mira-oauth-callback",
+                        OAuthCallbackPayload {
+                            url: target_url.to_string(),
+                        },
+                    );
+
+                    if let Some(oauth_window) = app_for_navigation.get_webview_window("mira-oauth")
+                    {
+                        let _ = oauth_window.close();
+                    }
+
+                    return false;
+                }
+
+                true
+            });
+
+    if let Some(main_window) = app.get_webview_window("main") {
+        let (x, y) = oauth_modal_position(&main_window, OAUTH_MODAL_WIDTH, OAUTH_MODAL_HEIGHT)?;
+        oauth_window_builder = oauth_window_builder
+            .parent(&main_window)
+            .map_err(|error| {
+                format!("OAuth-Modal konnte nicht an das Main-Window gebunden werden: {error}")
+            })?
+            .position(x, y);
+    } else {
+        oauth_window_builder = oauth_window_builder.center();
+    }
+
+    let oauth_window = oauth_window_builder
+        .build()
+        .map_err(|error| format!("OAuth-Fenster konnte nicht geoeffnet werden: {error}"))?;
+
+    let app_for_close = app.clone();
+    oauth_window.on_window_event(move |event| {
+        if matches!(event, tauri::WindowEvent::Destroyed) {
+            let _ = app_for_close.emit("mira-oauth-closed", ());
+        }
+    });
+
+    Ok(())
+}
+
+fn oauth_modal_position(
+    main_window: &tauri::WebviewWindow,
+    modal_width: f64,
+    modal_height: f64,
+) -> Result<(f64, f64), String> {
+    let scale_factor = main_window
+        .scale_factor()
+        .map_err(|error| format!("Main-Window-Skalierung konnte nicht gelesen werden: {error}"))?;
+    let main_position = main_window
+        .outer_position()
+        .map_err(|error| format!("Main-Window-Position konnte nicht gelesen werden: {error}"))?;
+    let main_size = main_window
+        .inner_size()
+        .map_err(|error| format!("Main-Window-Groesse konnte nicht gelesen werden: {error}"))?;
+
+    let main_x = f64::from(main_position.x) / scale_factor;
+    let main_y = f64::from(main_position.y) / scale_factor;
+    let main_width = f64::from(main_size.width) / scale_factor;
+    let main_height = f64::from(main_size.height) / scale_factor;
+
+    let x = main_x + ((main_width - modal_width) / 2.0).max(24.0);
+    let y = main_y + ((main_height - modal_height) / 2.0).max(24.0);
+
+    Ok((x, y))
+}
+
+fn is_oauth_redirect_url(target_url: &str, redirect_uri: &str) -> bool {
+    target_url == redirect_uri
+        || target_url
+            .strip_prefix(redirect_uri)
+            .is_some_and(|rest| rest.starts_with('?') || rest.starts_with('#'))
+}
+
+fn oauth_back_button_init_script(redirect_uri: &str) -> Result<String, serde_json::Error> {
+    let redirect_uri = serde_json::to_string(redirect_uri)?;
+
+    Ok(format!(
+        r###"
+(function () {{
+  var redirectUri = {redirect_uri};
+  var backButtonId = "mira-oauth-back-button";
+  var closeButtonId = "mira-oauth-close-button";
+  var svgNamespace = "http://www.w3.org/2000/svg";
+
+  function closeModal() {{
+    window.location.href = redirectUri;
+  }}
+
+  function isKeycloakPage() {{
+    return /\/realms\/[^/]+\/(protocol\/openid-connect\/auth|login-actions|broker)(\/|$)/.test(
+      window.location.pathname
+    );
+  }}
+
+  function applyButtonStyle(button, side, compact) {{
+    var style = button.style;
+    style.position = "fixed";
+    style.top = compact ? "10px" : "35px";
+    style[side] = compact ? "10px" : "35px";
+    style.zIndex = "2147483647";
+    style.width = compact ? "34px" : "42px";
+    style.height = compact ? "34px" : "42px";
+    style.display = "grid";
+    style.placeItems = "center";
+    style.border = "1px solid rgba(237, 242, 247, 0.18)";
+    style.borderRadius = compact ? "999px" : "8px";
+    style.background = "rgba(23, 26, 32, 0.82)";
+    style.color = "rgba(255, 255, 255, 0.92)";
+    style.boxShadow = "0 12px 28px rgba(0, 0, 0, 0.22)";
+    style.cursor = "pointer";
+    style.padding = "0";
+    style.font = "inherit";
+    style.pointerEvents = "auto";
+  }}
+
+  function attachHover(button) {{
+    button.addEventListener("mouseenter", function () {{
+      button.style.background = "rgba(32, 36, 44, 0.94)";
+      button.style.borderColor = "rgba(237, 242, 247, 0.3)";
+    }});
+    button.addEventListener("mouseleave", function () {{
+      button.style.background = "rgba(23, 26, 32, 0.82)";
+      button.style.borderColor = "rgba(237, 242, 247, 0.18)";
+    }});
+  }}
+
+  function createSvg(paths) {{
+    var svg = document.createElementNS(svgNamespace, "svg");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("aria-hidden", "true");
+    svg.style.width = "22px";
+    svg.style.height = "22px";
+    svg.style.fill = "none";
+    svg.style.stroke = "currentColor";
+    svg.style.strokeWidth = "2.4";
+    svg.style.strokeLinecap = "round";
+    svg.style.strokeLinejoin = "round";
+
+    paths.forEach(function (pathValue) {{
+      var path = document.createElementNS(svgNamespace, "path");
+      path.setAttribute("d", pathValue);
+      svg.appendChild(path);
+    }});
+
+    return svg;
+  }}
+
+  function createButton(id, label, side, paths, compact, onClick) {{
+    var button = document.createElement("button");
+    button.id = id;
+    button.type = "button";
+    button.setAttribute("aria-label", label);
+    applyButtonStyle(button, side, compact);
+    attachHover(button);
+    button.appendChild(createSvg(paths));
+    button.addEventListener("click", function (event) {{
+      event.preventDefault();
+      event.stopPropagation();
+      onClick();
+    }});
+    return button;
+  }}
+
+  function getMountTarget() {{
+    return document.body || document.documentElement;
+  }}
+
+  function ensureAuthControls() {{
+    if (!document.documentElement) {{
+      return;
+    }}
+
+    var mountTarget = getMountTarget();
+    var hasThemeBackButton = Boolean(document.querySelector(".mira-auth-back, .mira-auth-nav"));
+    var shouldShowBackButton = isKeycloakPage();
+
+    if (!shouldShowBackButton || hasThemeBackButton) {{
+      var existingBackButton = document.getElementById(backButtonId);
+      if (existingBackButton) {{
+        existingBackButton.remove();
+      }}
+    }} else if (!document.getElementById(backButtonId)) {{
+      mountTarget.appendChild(createButton(
+        backButtonId,
+        "Zurueck",
+        "left",
+        ["M15 18l-6-6 6-6"],
+        false,
+        function () {{
+          if (window.history.length > 1) {{
+            window.history.back();
+            return;
+          }}
+
+          closeModal();
+        }}
+      ));
+    }}
+
+    if (!document.getElementById(closeButtonId)) {{
+      mountTarget.appendChild(createButton(
+        closeButtonId,
+        "Schliessen",
+        "right",
+        ["M18 6 6 18", "m6 6 12 12"],
+        true,
+        closeModal
+      ));
+    }}
+  }}
+
+  if (document.readyState === "loading") {{
+    document.addEventListener("DOMContentLoaded", ensureAuthControls, {{ once: true }});
+  }} else {{
+    ensureAuthControls();
+  }}
+
+  window.addEventListener("pageshow", ensureAuthControls);
+  window.setTimeout(ensureAuthControls, 50);
+  window.setTimeout(ensureAuthControls, 250);
+}})();
+"###
+    ))
 }
 
 fn stop_game_child(child: &mut Child) -> Result<(), String> {
@@ -585,6 +866,7 @@ pub fn run() {
             game_client_status,
             launcher_status,
             launch_game,
+            start_oauth_window,
             stop_game_client
         ])
         .run(tauri::generate_context!())

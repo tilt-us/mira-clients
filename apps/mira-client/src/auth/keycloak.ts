@@ -1,3 +1,4 @@
+import { invoke, isTauri } from "@tauri-apps/api/core";
 import {
   KEYCLOAK_AUTH_URL,
   KEYCLOAK_CLIENT_ID,
@@ -180,18 +181,31 @@ export async function startGoogleLogin() {
     keycloakClientRedirectUri: REDIRECT_URI,
     expectedGoogleRedirectUri: `${KEYCLOAK_ISSUER_URL}/broker/google/endpoint`,
   });
+
+  if (isTauri()) {
+    await invoke("start_oauth_window", {
+      request: {
+        authUrl,
+        redirectUri: REDIRECT_URI,
+      },
+    });
+    return;
+  }
+
   window.location.assign(authUrl);
 }
 
-export async function completeRedirectLogin() {
-  const url = new URL(window.location.href);
+export async function completeRedirectLogin(callbackUrl?: string) {
+  const url = new URL(callbackUrl ?? window.location.href);
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
   const error = url.searchParams.get("error_description") ?? url.searchParams.get("error");
 
   if (error) {
     clearOAuthRequest();
-    window.history.replaceState({}, document.title, REDIRECT_URI);
+    if (!callbackUrl) {
+      window.history.replaceState({}, document.title, REDIRECT_URI);
+    }
     throw new Error(error);
   }
 
@@ -203,7 +217,9 @@ export async function completeRedirectLogin() {
 
   if (state !== savedRequest.state || !savedRequest.codeVerifier) {
     clearOAuthRequest();
-    window.history.replaceState({}, document.title, REDIRECT_URI);
+    if (!callbackUrl) {
+      window.history.replaceState({}, document.title, REDIRECT_URI);
+    }
     throw new Error("OAuth-Antwort konnte nicht validiert werden.");
   }
 
@@ -219,7 +235,9 @@ export async function completeRedirectLogin() {
   );
 
   clearOAuthRequest();
-  window.history.replaceState({}, document.title, REDIRECT_URI);
+  if (!callbackUrl) {
+    window.history.replaceState({}, document.title, REDIRECT_URI);
+  }
   return tokens;
 }
 

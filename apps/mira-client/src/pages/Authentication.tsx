@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { isTauri } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { LogIn, UserPlus } from "lucide-react";
 import {
@@ -35,6 +36,10 @@ type AuthMode = "login" | "register";
  * Lightweight loading state used by auth actions.
  */
 type LoadState = "idle" | "loading";
+
+type OAuthCallbackPayload = {
+  url: string;
+};
 
 /**
  * Description
@@ -163,6 +168,7 @@ function Authentication() {
   const [registerDisplayName, setRegisterDisplayName] = useState("");
   const [registerPassword, setRegisterPassword] = useState("");
   const [loadState, setLoadState] = useState<LoadState>("idle");
+  const [oauthModalOpen, setOauthModalOpen] = useState(false);
   const [closeDialogOpen, setCloseDialogOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const {
@@ -286,6 +292,82 @@ function Authentication() {
 
     return () => {
       cancelled = true;
+    };
+  }, [notify, t]);
+
+  useEffect(() => {
+    if (!isTauri()) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    const unlisteners: UnlistenFn[] = [];
+
+    async function completeOAuthWindowLogin(callbackUrl: string) {
+      setLoadState("loading");
+
+      try {
+        const tokens = await completeRedirectLogin(callbackUrl);
+
+        if (cancelled || !tokens) {
+          return;
+        }
+
+        saveTokens(tokens);
+        await loadProfile(tokens.accessToken);
+
+        if (!cancelled) {
+          notify({
+            type: "info",
+            message: t("auth-google-success"),
+          });
+        }
+      } catch (caughtError) {
+        if (!cancelled) {
+          clearTokens();
+          setApiAccessToken(undefined);
+          notify({
+            type: "error",
+            message: getErrorMessage(caughtError, t("auth-action-failed")),
+          });
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadState("idle");
+          setOauthModalOpen(false);
+        }
+      }
+    }
+
+    async function subscribeOAuthWindowEvents() {
+      unlisteners.push(
+        await listen<OAuthCallbackPayload>("mira-oauth-callback", (event) => {
+          if (!event.payload.url) {
+            setLoadState("idle");
+            setOauthModalOpen(false);
+            return;
+          }
+
+          void completeOAuthWindowLogin(event.payload.url);
+        }),
+      );
+
+      unlisteners.push(
+        await listen("mira-oauth-closed", () => {
+          setLoadState("idle");
+          setOauthModalOpen(false);
+        }),
+      );
+    }
+
+    void subscribeOAuthWindowEvents();
+
+    return () => {
+      cancelled = true;
+
+      for (const unlisten of unlisteners) {
+        unlisten();
+      }
     };
   }, [notify, t]);
 
@@ -442,8 +524,13 @@ function Authentication() {
 
     try {
       await startGoogleLogin();
+
+      if (isTauri()) {
+        setOauthModalOpen(true);
+      }
     } catch (caughtError) {
       setLoadState("idle");
+      setOauthModalOpen(false);
       notify({
         type: "error",
         message: getErrorMessage(caughtError, t("auth-action-failed")),
@@ -486,6 +573,8 @@ function Authentication() {
 
   return (
     <main className={profile ? "app-shell app-shell-authenticated" : "app-shell"}>
+      {oauthModalOpen ? <div className="oauth-modal-backdrop" aria-hidden="true" /> : null}
+
       {profile && profileName ? (
         <Client
           accentColor={accentColor}

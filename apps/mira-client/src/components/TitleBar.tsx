@@ -1,6 +1,7 @@
 import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Minus, Settings, Square, X } from "lucide-react";
+import { useEffect } from "react";
 
 function runWindowCommand(command: () => Promise<void>) {
   if (!isTauri()) {
@@ -11,6 +12,10 @@ function runWindowCommand(command: () => Promise<void>) {
 }
 
 function TitleBar() {
+  useEffect(() => {
+    runWindowCommand(() => getCurrentWindow().setDecorations(false));
+  }, []);
+
   function handleSettings() {
     window.dispatchEvent(new Event("mira:settings-request"));
   }
