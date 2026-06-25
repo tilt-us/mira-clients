@@ -1,0 +1,130 @@
+name: CI/CD
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - dev
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mira-client:
+    name: mira-client tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/mira-client
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/mira-client/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Unit tests with coverage
+        run: npm run test:unit:coverage
+
+      - name: Playwright dev tests
+        run: npm run test:e2e
+
+      - name: Upload mira-client coverage
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: tests-results/mira-client/coverage/lcov.info,tests-results/mira-client/coverage/cobertura-coverage.xml
+          flags: mira-client
+          name: mira-client
+          fail_ci_if_error: true
+
+      - name: Upload Playwright results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mira-client-playwright-results
+          path: tests-results/mira-client/e2e
+          if-no-files-found: ignore
+
+      - name: Upload mira-client unit results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mira-client-unit-results
+          path: tests-results/mira-client/unit
+          if-no-files-found: ignore
+
+  mira-game-client:
+    name: mira-game-client tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Unit tests
+        run: cargo test -p mira-game-client
+
+      - name: Coverage lcov
+        run: |
+          mkdir -p tests-results/mira-game-client/coverage
+          cargo llvm-cov -p mira-game-client \
+            --ignore-filename-regex 'apps/mira-game-client/src/(app|main\.rs|network/plugin\.rs)' \
+            --fail-under-lines 90 \
+            --lcov \
+            --output-path tests-results/mira-game-client/coverage/lcov.info
+
+      - name: Coverage cobertura
+        run: |
+          cargo llvm-cov -p mira-game-client \
+            --ignore-filename-regex 'apps/mira-game-client/src/(app|main\.rs|network/plugin\.rs)' \
+            --fail-under-lines 90 \
+            --cobertura \
+            --output-path tests-results/mira-game-client/coverage/cobertura.xml
+
+      - name: Upload mira-game-client coverage
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: tests-results/mira-game-client/coverage/lcov.info,tests-results/mira-game-client/coverage/cobertura.xml
+          flags: mira-game-client
+          name: mira-game-client
+          fail_ci_if_error: true
+
+      - name: Upload mira-game-client coverage artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mira-game-client-coverage
+          path: tests-results/mira-game-client/coverage
+          if-no-files-found: ignore
