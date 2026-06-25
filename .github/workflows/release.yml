@@ -52,14 +52,26 @@ jobs:
             | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
             | sort -V \
             | tail -n 1 || true)"
+          head_tag="$(git tag --points-at "${head_sha}" \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+            | sort -V \
+            | tail -n 1 || true)"
 
-          if git tag --points-at "${head_sha}" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "should_release=false" >> "${GITHUB_OUTPUT}"
-            echo "head_sha=${head_sha}" >> "${GITHUB_OUTPUT}"
-            exit 0
-          fi
-
-          if [[ -n "${latest_tag}" ]]; then
+          if [[ -n "${head_tag}" ]]; then
+            previous_tag="$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' \
+              | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+              | grep -v -x "${head_tag}" \
+              | sort -V \
+              | tail -n 1 || true)"
+            base_version="${head_tag#v}"
+            if [[ -n "${previous_tag}" ]]; then
+              log_range="${previous_tag}..${head_sha}"
+              changes_title="Änderungen seit ${previous_tag}"
+            else
+              log_range="${head_sha}"
+              changes_title="Änderungen"
+            fi
+          elif [[ -n "${latest_tag}" ]]; then
             base_version="${latest_tag#v}"
             log_range="${latest_tag}..${head_sha}"
             changes_title="Änderungen seit ${latest_tag}"
@@ -81,7 +93,9 @@ jobs:
             pr_title="$(git log -1 --format=%s "${head_sha}")"
           fi
 
-          if [[ -z "${latest_tag}" ]]; then
+          if [[ -n "${head_tag}" ]]; then
+            version="${head_tag#v}"
+          elif [[ -z "${latest_tag}" ]]; then
             version="1.0.0"
           else
             IFS=. read -r major minor patch <<< "${base_version}"
@@ -96,12 +110,15 @@ jobs:
           tag="v${version}"
 
           if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
-            echo "Tag ${tag} exists already."
-            echo "should_release=false" >> "${GITHUB_OUTPUT}"
-            echo "version=${version}" >> "${GITHUB_OUTPUT}"
-            echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
-            echo "head_sha=${head_sha}" >> "${GITHUB_OUTPUT}"
-            exit 0
+            tag_sha="$(git rev-list -n 1 "${tag}")"
+            if [[ "${tag_sha}" != "${head_sha}" ]]; then
+              echo "Tag ${tag} exists on ${tag_sha}, not ${head_sha}."
+              echo "should_release=false" >> "${GITHUB_OUTPUT}"
+              echo "version=${version}" >> "${GITHUB_OUTPUT}"
+              echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+              echo "head_sha=${head_sha}" >> "${GITHUB_OUTPUT}"
+              exit 0
+            fi
           fi
 
           notes_file="$(mktemp)"
@@ -306,11 +323,36 @@ jobs:
           BUNDLES: ${{ matrix.bundles }}
         run: npm run tauri -- build --bundles "${BUNDLES}" --ci
 
+      - name: Stage artifact
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          LABEL: ${{ matrix.label }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          mkdir -p dist
+          while IFS= read -r -d '' asset; do
+            name="$(basename "${asset}" | tr ' ' '-')"
+            cp "${asset}" "dist/mira-client-${VERSION}-${LABEL}-${name}"
+          done < <(find src-tauri/target/release/bundle -type f \
+            \( -name '*.deb' \
+            -o -name '*.AppImage' \
+            -o -name '*.msi' \
+            -o -name '*.exe' \
+            -o -name '*.dmg' \) \
+            -print0)
+
+          if [[ -z "$(find dist -type f -print -quit)" ]]; then
+            echo "No mira-client release bundles found."
+            exit 1
+          fi
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: mira-client-${{ matrix.label }}
-          path: apps/mira-client/src-tauri/target/release/bundle/**/*
+          path: apps/mira-client/dist/*
           if-no-files-found: error
 
   publish:
@@ -354,8 +396,207 @@ jobs:
             exit 1
           fi
 
-          gh release create "${TAG}" "${files[@]}" \
+          if gh release view "${TAG}" --repo "${REPOSITORY}" >/dev/null 2>&1; then
+            gh release edit "${TAG}" \
+              --repo "${REPOSITORY}" \
+              --target "${HEAD_SHA}" \
+              --title "${TAG}" \
+              --notes-file release-notes.md
+          else
+            gh release create "${TAG}" \
+              --repo "${REPOSITORY}" \
+              --target "${HEAD_SHA}" \
+              --title "${TAG}" \
+              --notes-file release-notes.md
+          fi
+
+          release_id="$(gh api "/repos/${REPOSITORY}/releases/tags/${TAG}" --jq '.id')"
+          for asset_id in $(gh api --paginate "/repos/${REPOSITORY}/releases/${release_id}/assets" --jq '.[].id'); do
+            gh api -X DELETE "/repos/${REPOSITORY}/releases/assets/${asset_id}" >/dev/null
+          done
+
+          gh release upload "${TAG}" "${files[@]}" \
             --repo "${REPOSITORY}" \
-            --target "${HEAD_SHA}" \
-            --title "${TAG}" \
-            --notes-file release-notes.md
+            --clobber
+
+  deploy-download-host:
+    name: Deploy download host files
+    needs:
+      - prepare
+      - publish
+    if: needs.prepare.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    env:
+      DEPLOY_HOST: ${{ secrets.DOWNLOAD_DEPLOY_HOST || secrets.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ secrets.DOWNLOAD_DEPLOY_USER || secrets.DEPLOY_USER }}
+      DEPLOY_PORT: ${{ secrets.DOWNLOAD_DEPLOY_PORT || secrets.DEPLOY_PORT || '22' }}
+      DOWNLOAD_DEPLOY_PATH: ${{ secrets.DOWNLOAD_DEPLOY_PATH || '/srv/mira/downloads/mira/game-sources' }}
+      PUBLIC_DOWNLOAD_BASE_URL: ${{ secrets.PUBLIC_DOWNLOAD_BASE_URL || 'https://api.tilt-us.com/downloads/mira/game-sources' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.head_sha }}
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+
+      - name: Install upload tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y openssh-client rsync zip
+
+      - name: Prepare download packages
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          HEAD_SHA: ${{ needs.prepare.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+
+          release_dir="download-host/releases/${TAG}"
+          rm -rf download-host
+          mkdir -p "${release_dir}/mira-client" "${release_dir}/mira-game-client" "${release_dir}/assets"
+
+          while IFS= read -r -d '' asset; do
+            artifact_group="${asset#release-artifacts/}"
+            artifact_group="${artifact_group%%/*}"
+            case "${artifact_group}" in
+              mira-client-*)
+                cp "${asset}" "${release_dir}/mira-client/"
+                ;;
+              mira-game-client-*)
+                cp "${asset}" "${release_dir}/mira-game-client/"
+                ;;
+            esac
+          done < <(find release-artifacts -type f -print0)
+
+          rsync -a assets/ "${release_dir}/assets/"
+
+          for required_dir in mira-client mira-game-client assets; do
+            if [[ -z "$(find "${release_dir}/${required_dir}" -type f -print -quit)" ]]; then
+              echo "${required_dir} has no files."
+              exit 1
+            fi
+          done
+
+          (
+            cd "${release_dir}/mira-client"
+            zip -qr "../mira-client-${TAG}.zip" .
+          )
+          (
+            cd "${release_dir}/mira-game-client"
+            zip -qr "../mira-game-client-${TAG}.zip" .
+          )
+          (
+            cd "${release_dir}/assets"
+            zip -qr "../assets-${TAG}.zip" .
+          )
+          (
+            cd "${release_dir}"
+            zip -qr "mira-${TAG}.zip" mira-client mira-game-client assets
+          )
+
+          node - <<'NODE'
+          const crypto = require('node:crypto');
+          const fs = require('node:fs');
+          const path = require('node:path');
+
+          const tag = process.env.TAG;
+          const version = process.env.VERSION;
+          const commit = process.env.HEAD_SHA;
+          const baseUrl = process.env.PUBLIC_DOWNLOAD_BASE_URL.replace(/\/$/, '');
+          const deployRoot = 'download-host';
+          const releaseRoot = path.join(deployRoot, 'releases', tag);
+
+          function walk(dir) {
+            return fs.readdirSync(dir, { withFileTypes: true }).flatMap(entry => {
+              const entryPath = path.join(dir, entry.name);
+              return entry.isDirectory() ? walk(entryPath) : [entryPath];
+            });
+          }
+
+          function sha256(file) {
+            return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+          }
+
+          const files = walk(releaseRoot)
+            .filter(file => !file.endsWith('manifest.json'))
+            .map(file => {
+              const relativePath = path.relative(deployRoot, file).split(path.sep).join('/');
+              const releasePath = path.relative(releaseRoot, file).split(path.sep).join('/');
+              const stats = fs.statSync(file);
+              return {
+                path: releasePath,
+                url: `${baseUrl}/${relativePath}`,
+                size: stats.size,
+                sha256: sha256(file),
+              };
+            })
+            .sort((left, right) => left.path.localeCompare(right.path));
+
+          const manifest = {
+            version,
+            tag,
+            commit,
+            publishedAt: new Date().toISOString(),
+            baseUrl: `${baseUrl}/releases/${tag}`,
+            files,
+          };
+
+          fs.writeFileSync(
+            path.join(releaseRoot, 'manifest.json'),
+            `${JSON.stringify(manifest, null, 2)}\n`,
+          );
+
+          fs.writeFileSync(
+            path.join(deployRoot, 'latest.json'),
+            `${JSON.stringify({
+              version,
+              tag,
+              commit,
+              manifestUrl: `${baseUrl}/releases/${tag}/manifest.json`,
+            }, null, 2)}\n`,
+          );
+          NODE
+
+      - name: Prepare SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DOWNLOAD_DEPLOY_SSH_KEY || secrets.DEPLOY_SSH_KEY }}
+
+      - name: Ensure deploy host key is known
+        run: |
+          set -euo pipefail
+          if [[ -z "${DEPLOY_HOST}" || -z "${DEPLOY_USER}" ]]; then
+            echo "DEPLOY_HOST and DEPLOY_USER are required."
+            exit 1
+          fi
+
+          mkdir -p ~/.ssh
+          ssh-keyscan -p "${DEPLOY_PORT}" -H "${DEPLOY_HOST}" >> ~/.ssh/known_hosts
+
+      - name: Upload download files
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          ssh -p "${DEPLOY_PORT}" "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "mkdir -p '${DOWNLOAD_DEPLOY_PATH}/releases/${TAG}'"
+
+          rsync -az --delete \
+            -e "ssh -p ${DEPLOY_PORT} -o StrictHostKeyChecking=yes" \
+            "download-host/releases/${TAG}/" \
+            "${DEPLOY_USER}@${DEPLOY_HOST}:${DOWNLOAD_DEPLOY_PATH}/releases/${TAG}/"
+
+          rsync -az \
+            -e "ssh -p ${DEPLOY_PORT} -o StrictHostKeyChecking=yes" \
+            "download-host/latest.json" \
+            "${DEPLOY_USER}@${DEPLOY_HOST}:${DOWNLOAD_DEPLOY_PATH}/latest.json.tmp"
+
+          ssh -p "${DEPLOY_PORT}" "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "mv '${DOWNLOAD_DEPLOY_PATH}/latest.json.tmp' '${DOWNLOAD_DEPLOY_PATH}/latest.json' && chmod -R a+rX '${DOWNLOAD_DEPLOY_PATH}'"
