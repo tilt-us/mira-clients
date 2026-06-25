@@ -5,7 +5,7 @@ use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use tauri::Emitter;
+use tauri::{Emitter, LogicalSize, Manager, Size};
 use zip::ZipArchive;
 
 #[cfg(unix)]
@@ -14,6 +14,24 @@ use std::os::unix::fs::PermissionsExt;
 const LATEST_MANIFEST_URL: &str = "https://api.tilt-us.com/downloads/mira/game-sources/latest.json";
 const ERROR_CODE_GAME_DATA: &str = "465";
 const ERROR_CODE_SERVER_NO_RESPONSE: &str = "19145";
+const FHD_INSTALLER_SIZE: InstallerWindowSize = InstallerWindowSize {
+    width: 450.0,
+    height: 575.0,
+};
+const WQHD_INSTALLER_SIZE: InstallerWindowSize = InstallerWindowSize {
+    width: 600.0,
+    height: 750.0,
+};
+const FOUR_K_INSTALLER_SIZE: InstallerWindowSize = InstallerWindowSize {
+    width: 675.0,
+    height: 825.0,
+};
+
+#[derive(Clone, Copy)]
+struct InstallerWindowSize {
+    width: f64,
+    height: f64,
+}
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -111,6 +129,10 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .setup(|app| {
+            configure_main_window_size(app);
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             detect_platform,
             install_game,
@@ -119,6 +141,44 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running Mira Installer");
+}
+
+fn configure_main_window_size(app: &mut tauri::App) {
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+
+    let monitor_size = window
+        .current_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| window.primary_monitor().ok().flatten())
+        .map(|monitor| monitor.size().to_owned());
+    let installer_size = monitor_size
+        .map(|size| installer_window_size_for_monitor(size.width, size.height))
+        .unwrap_or(FHD_INSTALLER_SIZE);
+    let logical_size = Size::Logical(LogicalSize {
+        width: installer_size.width,
+        height: installer_size.height,
+    });
+
+    let _ = window.set_max_size(Some(logical_size));
+    let _ = window.set_min_size(Some(logical_size));
+    let _ = window.set_size(logical_size);
+    let _ = window.center();
+}
+
+fn installer_window_size_for_monitor(width: u32, height: u32) -> InstallerWindowSize {
+    let long_side = width.max(height);
+    let short_side = width.min(height);
+
+    if long_side >= 3840 && short_side >= 2160 {
+        FOUR_K_INSTALLER_SIZE
+    } else if long_side >= 2560 && short_side >= 1440 {
+        WQHD_INSTALLER_SIZE
+    } else {
+        FHD_INSTALLER_SIZE
+    }
 }
 
 fn install_game_blocking(

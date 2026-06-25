@@ -13,12 +13,12 @@
     "windows": [
       {
         "title": "Mira Installer",
-        "width": 385,
-        "height": 550,
-        "minWidth": 385,
-        "minHeight": 550,
-        "maxWidth": 385,
-        "maxHeight": 550,
+        "width": 450,
+        "height": 575,
+        "minWidth": 450,
+        "minHeight": 575,
+        "maxWidth": 450,
+        "maxHeight": 575,
         "decorations": false,
         "maximizable": false,
         "resizable": false
