@@ -233,7 +233,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-22.04
             label: linux
             bundles: deb,appimage,rpm
           - os: windows-latest
@@ -329,6 +329,7 @@ jobs:
       - name: Build
         env:
           BUNDLES: ${{ matrix.bundles }}
+          TAURI_BUNDLER_NEW_APPIMAGE_FORMAT: ${{ runner.os == 'Linux' && 'true' || 'false' }}
         run: npm run tauri -- build --bundles "${BUNDLES}" --ci
 
       - name: Patch Linux AppImage environment
@@ -376,7 +377,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-22.04
             label: linux
             bundles: deb,appimage,rpm
           - os: windows-latest
@@ -469,6 +470,7 @@ jobs:
       - name: Build
         env:
           BUNDLES: ${{ matrix.bundles }}
+          TAURI_BUNDLER_NEW_APPIMAGE_FORMAT: ${{ runner.os == 'Linux' && 'true' || 'false' }}
         run: npm run tauri -- build --bundles "${BUNDLES}" --ci
 
       - name: Patch Linux AppImage environment
