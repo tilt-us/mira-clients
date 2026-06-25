@@ -1,0 +1,357 @@
+name: Release
+
+on:
+  workflow_run:
+    workflows:
+      - CI/CD
+    types:
+      - completed
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Prepare release
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    outputs:
+      should_release: ${{ steps.release.outputs.should_release }}
+      version: ${{ steps.release.outputs.version }}
+      tag: ${{ steps.release.outputs.tag }}
+      head_sha: ${{ steps.release.outputs.head_sha }}
+      notes: ${{ steps.release.outputs.notes }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+
+      - name: Calculate version and notes
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          git fetch --tags --force
+
+          head_sha="${HEAD_SHA}"
+          latest_tag="$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+            | sort -V \
+            | tail -n 1 || true)"
+
+          if git tag --points-at "${head_sha}" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "should_release=false" >> "${GITHUB_OUTPUT}"
+            echo "head_sha=${head_sha}" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          if [[ -n "${latest_tag}" ]]; then
+            base_version="${latest_tag#v}"
+            log_range="${latest_tag}..${head_sha}"
+            changes_title="Änderungen seit ${latest_tag}"
+          else
+            base_version="$(node -p "require('./apps/mira-client/package.json').version")"
+            log_range="${head_sha}"
+            changes_title="Änderungen"
+          fi
+
+          if ! pr_title="$(gh api \
+            -H 'Accept: application/vnd.github+json' \
+            "/repos/${REPOSITORY}/commits/${head_sha}/pulls" \
+            --jq 'sort_by(.merged_at // .updated_at) | reverse | .[0].title // ""' \
+            2>/dev/null)"; then
+            pr_title=""
+          fi
+
+          if [[ -z "${pr_title}" ]]; then
+            pr_title="$(git log -1 --format=%s "${head_sha}")"
+          fi
+
+          IFS=. read -r major minor patch <<< "${base_version}"
+          case "${pr_title,,}" in
+            feat*) minor=$((minor + 1)); patch=0 ;;
+            fix*|chore*|doc*|ci*|ref*) patch=$((patch + 1)) ;;
+            *) patch=$((patch + 1)) ;;
+          esac
+
+          version="${major}.${minor}.${patch}"
+          tag="v${version}"
+
+          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+            echo "Tag ${tag} exists already."
+            echo "should_release=false" >> "${GITHUB_OUTPUT}"
+            echo "version=${version}" >> "${GITHUB_OUTPUT}"
+            echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+            echo "head_sha=${head_sha}" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          notes_file="$(mktemp)"
+          {
+            echo "## ${changes_title}"
+            echo
+            echo "Basisversion: ${base_version}"
+            echo "PR-Titel: ${pr_title}"
+            echo
+            echo "## Commits"
+            git log --reverse --format='- `%h` %s - gepusht von %an' "${log_range}"
+          } > "${notes_file}"
+
+          {
+            echo "should_release=true"
+            echo "version=${version}"
+            echo "tag=${tag}"
+            echo "head_sha=${head_sha}"
+            echo "notes<<EOF"
+            cat "${notes_file}"
+            echo "EOF"
+          } >> "${GITHUB_OUTPUT}"
+
+  build-mira-game-client:
+    name: Build mira-game-client (${{ matrix.label }})
+    needs: prepare
+    if: needs.prepare.outputs.should_release == 'true'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            label: linux
+          - os: windows-latest
+            label: windows
+          - os: macos-latest
+            label: macos
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.head_sha }}
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev \
+            libgl1-mesa-dev \
+            libudev-dev \
+            libwayland-dev \
+            libx11-dev \
+            libx11-xcb-dev \
+            libxcb1-dev \
+            libxcursor-dev \
+            libxinerama-dev \
+            libxkbcommon-dev \
+            libxi-dev \
+            libxrandr-dev \
+            pkg-config
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+
+      - name: Build
+        run: cargo build --release --locked -p mira-game-client
+
+      - name: Stage artifact
+        shell: bash
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          LABEL: ${{ matrix.label }}
+        run: |
+          set -euo pipefail
+          ext=""
+          if [[ "${RUNNER_OS}" == "Windows" ]]; then
+            ext=".exe"
+          fi
+
+          mkdir -p dist
+          cp "target/release/mira-game-client${ext}" "dist/mira-game-client-${VERSION}-${LABEL}${ext}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mira-game-client-${{ matrix.label }}
+          path: dist/*
+          if-no-files-found: error
+
+  build-mira-client:
+    name: Build mira-client (${{ matrix.label }})
+    needs: prepare
+    if: needs.prepare.outputs.should_release == 'true'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            label: linux
+            bundles: deb,appimage
+          - os: windows-latest
+            label: windows
+            bundles: msi,nsis
+          - os: macos-latest
+            label: macos
+            bundles: dmg
+
+    defaults:
+      run:
+        working-directory: apps/mira-client
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.head_sha }}
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libasound2-dev \
+            libgl1-mesa-dev \
+            libudev-dev \
+            pkg-config
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/mira-client/package-lock.json
+
+      - name: Setup npm
+        run: npm install -g npm@11
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            apps/mira-client/src-tauri -> apps/mira-client/src-tauri/target
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Apply release version
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const version = process.env.VERSION;
+
+          function writeJson(path, update) {
+            const data = JSON.parse(fs.readFileSync(path, 'utf8'));
+            update(data);
+            fs.writeFileSync(path, `${JSON.stringify(data, null, 2)}\n`);
+          }
+
+          writeJson('package.json', data => {
+            data.version = version;
+          });
+
+          writeJson('package-lock.json', data => {
+            data.version = version;
+            if (data.packages?.['']) {
+              data.packages[''].version = version;
+            }
+          });
+
+          writeJson('src-tauri/tauri.conf.json', data => {
+            data.version = version;
+          });
+
+          const cargoPath = 'src-tauri/Cargo.toml';
+          const cargo = fs.readFileSync(cargoPath, 'utf8')
+            .replace(/^version = ".*"$/m, `version = "${version}"`);
+          fs.writeFileSync(cargoPath, cargo);
+          NODE
+
+      - name: Build
+        env:
+          BUNDLES: ${{ matrix.bundles }}
+        run: npm run tauri -- build --bundles "${BUNDLES}" --ci
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mira-client-${{ matrix.label }}
+          path: apps/mira-client/src-tauri/target/release/bundle/**/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub release
+    needs:
+      - prepare
+      - build-mira-game-client
+      - build-mira-client
+    if: needs.prepare.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          HEAD_SHA: ${{ needs.prepare.outputs.head_sha }}
+          NOTES: ${{ needs.prepare.outputs.notes }}
+        run: |
+          set -euo pipefail
+          shopt -s globstar nullglob
+
+          printf '%s\n' "${NOTES}" > release-notes.md
+
+          assets=(release-artifacts/**/*)
+          files=()
+          for asset in "${assets[@]}"; do
+            if [[ -f "${asset}" ]]; then
+              files+=("${asset}")
+            fi
+          done
+
+          if [[ "${#files[@]}" -eq 0 ]]; then
+            echo "No release assets found."
+            exit 1
+          fi
+
+          gh release create "${TAG}" "${files[@]}" \
+            --repo "${REPOSITORY}" \
+            --target "${HEAD_SHA}" \
+            --title "${TAG}" \
+            --notes-file release-notes.md
