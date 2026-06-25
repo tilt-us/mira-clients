@@ -228,10 +228,10 @@ jobs:
         include:
           - os: ubuntu-latest
             label: linux
-            bundles: deb,appimage
+            bundles: deb,appimage,rpm
           - os: windows-latest
             label: windows
-            bundles: msi,nsis
+            bundles: nsis
           - os: macos-latest
             label: macos
             bundles: dmg
@@ -256,6 +256,7 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev \
             patchelf \
+            rpm \
             libasound2-dev \
             libgl1-mesa-dev \
             libudev-dev \
@@ -338,7 +339,7 @@ jobs:
           done < <(find src-tauri/target/release/bundle -type f \
             \( -name '*.deb' \
             -o -name '*.AppImage' \
-            -o -name '*.msi' \
+            -o -name '*.rpm' \
             -o -name '*.exe' \
             -o -name '*.dmg' \) \
             -print0)
@@ -383,13 +384,45 @@ jobs:
 
           printf '%s\n' "${NOTES}" > release-notes.md
 
-          assets=(release-artifacts/**/*)
-          files=()
-          for asset in "${assets[@]}"; do
-            if [[ -f "${asset}" ]]; then
-              files+=("${asset}")
+          mkdir -p publish-assets
+          while IFS= read -r -d '' asset; do
+            artifact_group="${asset#release-artifacts/}"
+            artifact_group="${artifact_group%%/*}"
+            name="$(basename "${asset}" | tr ' ' '-')"
+
+            case "${artifact_group}" in
+              mira-client-*)
+                case "${name}" in
+                  *.deb|*.AppImage|*.exe|*.dmg|*.rpm) ;;
+                  *) continue ;;
+                esac
+                ;;
+              mira-game-client-*)
+                case "${name}" in
+                  mira-game-client*) ;;
+                  *) continue ;;
+                esac
+                ;;
+              *)
+                continue
+                ;;
+            esac
+
+            target="publish-assets/${name}"
+            if [[ -e "${target}" ]]; then
+              target="publish-assets/${artifact_group}-${name}"
             fi
-          done
+
+            counter=1
+            while [[ -e "${target}" ]]; do
+              target="publish-assets/${counter}-${artifact_group}-${name}"
+              counter=$((counter + 1))
+            done
+
+            cp "${asset}" "${target}"
+          done < <(find release-artifacts -type f -print0)
+
+          mapfile -d '' files < <(find publish-assets -type f -print0 | sort -z)
 
           if [[ "${#files[@]}" -eq 0 ]]; then
             echo "No release assets found."
@@ -464,12 +497,21 @@ jobs:
           while IFS= read -r -d '' asset; do
             artifact_group="${asset#release-artifacts/}"
             artifact_group="${artifact_group%%/*}"
+            name="$(basename "${asset}" | tr ' ' '-')"
             case "${artifact_group}" in
               mira-client-*)
-                cp "${asset}" "${release_dir}/mira-client/"
+                case "${name}" in
+                  *.deb|*.AppImage|*.exe|*.dmg|*.rpm) ;;
+                  *) continue ;;
+                esac
+                cp "${asset}" "${release_dir}/mira-client/${name}"
                 ;;
               mira-game-client-*)
-                cp "${asset}" "${release_dir}/mira-game-client/"
+                case "${name}" in
+                  mira-game-client*) ;;
+                  *) continue ;;
+                esac
+                cp "${asset}" "${release_dir}/mira-game-client/${name}"
                 ;;
             esac
           done < <(find release-artifacts -type f -print0)
