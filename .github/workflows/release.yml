@@ -93,6 +93,13 @@ jobs:
             pr_title="$(git log -1 --format=%s "${head_sha}")"
           fi
 
+          if [[ "${pr_title}" == *NO_RELEASE* ]]; then
+            echo "NO_RELEASE found in PR title. Skipping release."
+            echo "should_release=false" >> "${GITHUB_OUTPUT}"
+            echo "head_sha=${head_sha}" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
           if [[ -n "${head_tag}" ]]; then
             version="${head_tag#v}"
           elif [[ -z "${latest_tag}" ]]; then
@@ -356,12 +363,149 @@ jobs:
           path: apps/mira-client/dist/*
           if-no-files-found: error
 
+  build-mira-installer:
+    name: Build mira-installer (${{ matrix.label }})
+    needs: prepare
+    if: needs.prepare.outputs.should_release == 'true'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            label: linux
+            bundles: deb,appimage,rpm
+          - os: windows-latest
+            label: windows
+            bundles: nsis
+          - os: macos-latest
+            label: macos
+            bundles: dmg
+
+    defaults:
+      run:
+        working-directory: apps/mira-installer
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.head_sha }}
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            rpm \
+            pkg-config
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/mira-installer/package-lock.json
+
+      - name: Setup npm
+        run: npm install -g npm@11
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            apps/mira-installer/src-tauri -> apps/mira-installer/src-tauri/target
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Apply release version
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const version = process.env.VERSION;
+
+          function writeJson(path, update) {
+            const data = JSON.parse(fs.readFileSync(path, 'utf8'));
+            update(data);
+            fs.writeFileSync(path, `${JSON.stringify(data, null, 2)}\n`);
+          }
+
+          writeJson('package.json', data => {
+            data.version = version;
+          });
+
+          writeJson('package-lock.json', data => {
+            data.version = version;
+            if (data.packages?.['']) {
+              data.packages[''].version = version;
+            }
+          });
+
+          writeJson('src-tauri/tauri.conf.json', data => {
+            data.version = version;
+          });
+
+          const cargoPath = 'src-tauri/Cargo.toml';
+          const cargo = fs.readFileSync(cargoPath, 'utf8')
+            .replace(/^version = ".*"$/m, `version = "${version}"`);
+          fs.writeFileSync(cargoPath, cargo);
+          NODE
+
+      - name: Build
+        env:
+          BUNDLES: ${{ matrix.bundles }}
+        run: npm run tauri -- build --bundles "${BUNDLES}" --ci
+
+      - name: Stage artifact
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          LABEL: ${{ matrix.label }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          mkdir -p dist
+          while IFS= read -r -d '' asset; do
+            name="$(basename "${asset}" | tr ' ' '-')"
+            cp "${asset}" "dist/mira-installer-${VERSION}-${LABEL}-${name}"
+          done < <(find src-tauri/target/release/bundle -type f \
+            \( -name '*.deb' \
+            -o -name '*.AppImage' \
+            -o -name '*.rpm' \
+            -o -name '*.exe' \
+            -o -name '*.dmg' \) \
+            -print0)
+
+          if [[ -z "$(find dist -type f -print -quit)" ]]; then
+            echo "No mira-installer release bundles found."
+            exit 1
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mira-installer-${{ matrix.label }}
+          path: apps/mira-installer/dist/*
+          if-no-files-found: error
+
   publish:
     name: Publish GitHub release
     needs:
       - prepare
       - build-mira-game-client
       - build-mira-client
+      - build-mira-installer
     if: needs.prepare.outputs.should_release == 'true'
     runs-on: ubuntu-latest
 
@@ -400,6 +544,12 @@ jobs:
               mira-game-client-*)
                 case "${name}" in
                   mira-game-client*) ;;
+                  *) continue ;;
+                esac
+                ;;
+              mira-installer-*)
+                case "${name}" in
+                  *.deb|*.AppImage|*.exe|*.dmg|*.rpm) ;;
                   *) continue ;;
                 esac
                 ;;
@@ -491,8 +641,10 @@ jobs:
           set -euo pipefail
 
           release_dir="download-host/releases/${TAG}"
+          installer_dir="download-host/installer/releases/${TAG}"
           rm -rf download-host
           mkdir -p "${release_dir}/mira-client" "${release_dir}/mira-game-client" "${release_dir}/assets"
+          mkdir -p "${installer_dir}"
 
           while IFS= read -r -d '' asset; do
             artifact_group="${asset#release-artifacts/}"
@@ -513,6 +665,13 @@ jobs:
                 esac
                 cp "${asset}" "${release_dir}/mira-game-client/${name}"
                 ;;
+              mira-installer-*)
+                case "${name}" in
+                  *.deb|*.AppImage|*.exe|*.dmg|*.rpm) ;;
+                  *) continue ;;
+                esac
+                cp "${asset}" "${installer_dir}/${name}"
+                ;;
             esac
           done < <(find release-artifacts -type f -print0)
 
@@ -524,6 +683,11 @@ jobs:
               exit 1
             fi
           done
+
+          if [[ -z "$(find "${installer_dir}" -type f -print -quit)" ]]; then
+            echo "installer has no files."
+            exit 1
+          fi
 
           (
             cd "${release_dir}/mira-client"
@@ -541,6 +705,10 @@ jobs:
             cd "${release_dir}"
             zip -qr "mira-${TAG}.zip" mira-client mira-game-client assets
           )
+          (
+            cd "${installer_dir}"
+            zip -qr "../mira-installer-${TAG}.zip" .
+          )
 
           node - <<'NODE'
           const crypto = require('node:crypto');
@@ -553,6 +721,7 @@ jobs:
           const baseUrl = process.env.PUBLIC_DOWNLOAD_BASE_URL.replace(/\/$/, '');
           const deployRoot = 'download-host';
           const releaseRoot = path.join(deployRoot, 'releases', tag);
+          const installerRoot = path.join(deployRoot, 'installer', 'releases', tag);
 
           function walk(dir) {
             return fs.readdirSync(dir, { withFileTypes: true }).flatMap(entry => {
@@ -565,29 +734,34 @@ jobs:
             return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
           }
 
-          const files = walk(releaseRoot)
-            .filter(file => !file.endsWith('manifest.json'))
-            .map(file => {
-              const relativePath = path.relative(deployRoot, file).split(path.sep).join('/');
-              const releasePath = path.relative(releaseRoot, file).split(path.sep).join('/');
-              const stats = fs.statSync(file);
-              return {
-                path: releasePath,
-                url: `${baseUrl}/${relativePath}`,
-                size: stats.size,
-                sha256: sha256(file),
-              };
-            })
-            .sort((left, right) => left.path.localeCompare(right.path));
+          function createManifest(root, publicBaseUrl) {
+            const files = walk(root)
+              .filter(file => !file.endsWith('manifest.json'))
+              .map(file => {
+                const relativePath = path.relative(deployRoot, file).split(path.sep).join('/');
+                const releasePath = path.relative(root, file).split(path.sep).join('/');
+                const stats = fs.statSync(file);
+                return {
+                  path: releasePath,
+                  url: `${publicBaseUrl}/${relativePath}`,
+                  size: stats.size,
+                  sha256: sha256(file),
+                };
+              })
+              .sort((left, right) => left.path.localeCompare(right.path));
 
-          const manifest = {
-            version,
-            tag,
-            commit,
-            publishedAt: new Date().toISOString(),
-            baseUrl: `${baseUrl}/releases/${tag}`,
-            files,
-          };
+            return {
+              version,
+              tag,
+              commit,
+              publishedAt: new Date().toISOString(),
+              baseUrl: `${publicBaseUrl}/${path.relative(deployRoot, root).split(path.sep).join('/')}`,
+              files,
+            };
+          }
+
+          const manifest = createManifest(releaseRoot, baseUrl);
+          const installerManifest = createManifest(installerRoot, baseUrl);
 
           fs.writeFileSync(
             path.join(releaseRoot, 'manifest.json'),
@@ -601,6 +775,21 @@ jobs:
               tag,
               commit,
               manifestUrl: `${baseUrl}/releases/${tag}/manifest.json`,
+            }, null, 2)}\n`,
+          );
+
+          fs.writeFileSync(
+            path.join(installerRoot, 'manifest.json'),
+            `${JSON.stringify(installerManifest, null, 2)}\n`,
+          );
+
+          fs.writeFileSync(
+            path.join(deployRoot, 'installer', 'latest.json'),
+            `${JSON.stringify({
+              version,
+              tag,
+              commit,
+              manifestUrl: `${baseUrl}/installer/releases/${tag}/manifest.json`,
             }, null, 2)}\n`,
           );
           NODE
@@ -628,17 +817,49 @@ jobs:
           set -euo pipefail
 
           ssh -p "${DEPLOY_PORT}" "${DEPLOY_USER}@${DEPLOY_HOST}" \
-            "mkdir -p '${DOWNLOAD_DEPLOY_PATH}/releases/${TAG}'"
+            "DOWNLOAD_DEPLOY_PATH='${DOWNLOAD_DEPLOY_PATH}' DEPLOY_USER='${DEPLOY_USER}' TAG='${TAG}' bash -se" <<'REMOTE'
+          set -euo pipefail
+
+          release_path="${DOWNLOAD_DEPLOY_PATH}/releases/${TAG}"
+          installer_path="${DOWNLOAD_DEPLOY_PATH}/installer/releases/${TAG}"
+          if mkdir -p "${release_path}" "${installer_path}" 2>/dev/null; then
+            exit 0
+          fi
+
+          if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+            sudo install -d -o "${DEPLOY_USER}" -g "${DEPLOY_USER}" \
+              "${DOWNLOAD_DEPLOY_PATH}" \
+              "${release_path}" \
+              "${installer_path}"
+            exit 0
+          fi
+
+          echo "Cannot create ${release_path} as ${DEPLOY_USER}."
+          echo "Run once on the server:"
+          echo "  sudo mkdir -p '${DOWNLOAD_DEPLOY_PATH}'"
+          echo "  sudo chown -R '${DEPLOY_USER}:${DEPLOY_USER}' '${DOWNLOAD_DEPLOY_PATH}'"
+          exit 1
+          REMOTE
 
           rsync -az --delete \
             -e "ssh -p ${DEPLOY_PORT} -o StrictHostKeyChecking=yes" \
             "download-host/releases/${TAG}/" \
             "${DEPLOY_USER}@${DEPLOY_HOST}:${DOWNLOAD_DEPLOY_PATH}/releases/${TAG}/"
 
+          rsync -az --delete \
+            -e "ssh -p ${DEPLOY_PORT} -o StrictHostKeyChecking=yes" \
+            "download-host/installer/releases/${TAG}/" \
+            "${DEPLOY_USER}@${DEPLOY_HOST}:${DOWNLOAD_DEPLOY_PATH}/installer/releases/${TAG}/"
+
           rsync -az \
             -e "ssh -p ${DEPLOY_PORT} -o StrictHostKeyChecking=yes" \
             "download-host/latest.json" \
             "${DEPLOY_USER}@${DEPLOY_HOST}:${DOWNLOAD_DEPLOY_PATH}/latest.json.tmp"
 
+          rsync -az \
+            -e "ssh -p ${DEPLOY_PORT} -o StrictHostKeyChecking=yes" \
+            "download-host/installer/latest.json" \
+            "${DEPLOY_USER}@${DEPLOY_HOST}:${DOWNLOAD_DEPLOY_PATH}/installer/latest.json.tmp"
+
           ssh -p "${DEPLOY_PORT}" "${DEPLOY_USER}@${DEPLOY_HOST}" \
-            "mv '${DOWNLOAD_DEPLOY_PATH}/latest.json.tmp' '${DOWNLOAD_DEPLOY_PATH}/latest.json' && chmod -R a+rX '${DOWNLOAD_DEPLOY_PATH}'"
+            "mv '${DOWNLOAD_DEPLOY_PATH}/latest.json.tmp' '${DOWNLOAD_DEPLOY_PATH}/latest.json' && mv '${DOWNLOAD_DEPLOY_PATH}/installer/latest.json.tmp' '${DOWNLOAD_DEPLOY_PATH}/installer/latest.json' && chmod -R a+rX '${DOWNLOAD_DEPLOY_PATH}'"

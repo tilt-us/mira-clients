@@ -49,6 +49,7 @@ const resolutionOptions: Array<{
     value: "1920x1080",
   },
   { label: "2140 x 1440", value: "2140x1440" },
+  { label: "2600 x 1600", value: "2600x1600" },
 ];
 
 const uiScaleOptions: Array<{
@@ -71,6 +72,7 @@ const maxUiScaleByResolution: Record<AppResolution, UiScale> = {
   "1400x800": 1.1,
   "1600x900": 1.25,
   "1920x1080": 1.5,
+  "2600x1600": 1.5,
   "2140x1440": 1.5,
 };
 
@@ -159,7 +161,7 @@ function SettingsModal({
       return supportsTwoKResolution || supportsFourKResolution;
     }
 
-    if (option.value === "2140x1440") {
+    if (option.value === "2600x1600" || option.value === "2140x1440") {
       return supportsFourKResolution;
     }
 

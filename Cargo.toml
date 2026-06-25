@@ -9,6 +9,7 @@ members = [
 ]
 exclude = [
   "apps/mira-client/src-tauri",
+  "apps/mira-installer/src-tauri",
 ]
 
 [workspace.package]

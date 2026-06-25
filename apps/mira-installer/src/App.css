@@ -1,0 +1,4 @@
+@import "./css/base.css";
+@import "./css/components/titlebar.css";
+@import "./css/components/language-dropdown.css";
+@import "./css/pages/installer.css";

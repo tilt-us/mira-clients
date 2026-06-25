@@ -1,0 +1,8 @@
+{
+  "name": "mira-clients",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "mira:installer": "npm --prefix apps/mira-installer run mira:installer"
+  }
+}

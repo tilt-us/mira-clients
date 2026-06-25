@@ -633,29 +633,35 @@ fn resolve_game_binary(app: &tauri::AppHandle) -> Result<PathBuf, String> {
         );
     }
 
-    if let Ok(resource_dir) = app.path().resource_dir() {
-        candidates.push(resource_dir.join("files").join(binary_name));
-        candidates.push(resource_dir.join(binary_name));
+    if let Some(appimage_path) = std::env::var_os("APPIMAGE") {
+        if let Some(appimage_dir) = PathBuf::from(appimage_path).parent() {
+            candidates.push(appimage_dir.join(binary_name));
+        }
     }
 
     if let Ok(current_dir) = std::env::current_dir() {
-        candidates.push(current_dir.join("files").join(binary_name));
-        candidates.push(current_dir.join("..").join("files").join(binary_name));
+        candidates.push(current_dir.join(binary_name));
+        candidates.push(current_dir.join("..").join(binary_name));
+    }
+
+    if let Ok(current_exe) = std::env::current_exe() {
+        if let Some(exe_dir) = current_exe.parent() {
+            candidates.push(exe_dir.join(binary_name));
+            candidates.push(exe_dir.join("..").join(binary_name));
+        }
+    }
+
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        candidates.push(resource_dir.join(binary_name));
     }
 
     candidates.push(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("..")
-            .join("files")
+            .join("..")
+            .join("..")
             .join(binary_name),
     );
-
-    if let Ok(current_exe) = std::env::current_exe() {
-        if let Some(exe_dir) = current_exe.parent() {
-            candidates.push(exe_dir.join("files").join(binary_name));
-            candidates.push(exe_dir.join(binary_name));
-        }
-    }
 
     candidates
         .iter()

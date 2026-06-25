@@ -1,23 +1,26 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Mira Client",
+  "productName": "Mira Installer",
   "version": "0.1.0",
-  "identifier": "dev.mira.client",
+  "identifier": "dev.mira.installer",
   "build": {
     "beforeDevCommand": "npm run dev",
-    "devUrl": "http://localhost:1420",
+    "devUrl": "http://localhost:1430",
     "beforeBuildCommand": "npm run build",
     "frontendDist": "../dist"
   },
   "app": {
     "windows": [
       {
-        "title": "Mira Client",
-        "width": 1600,
-        "height": 900,
-        "minWidth": 1270,
-        "minHeight": 720,
+        "title": "Mira Installer",
+        "width": 385,
+        "height": 550,
+        "minWidth": 385,
+        "minHeight": 550,
+        "maxWidth": 385,
+        "maxHeight": 550,
         "decorations": false,
+        "maximizable": false,
         "resizable": false
       }
     ],
@@ -28,9 +31,6 @@
   "bundle": {
     "active": true,
     "targets": ["deb"],
-    "resources": {
-      "../mira-client.prod.toml": "mira-client.toml"
-    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

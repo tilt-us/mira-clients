@@ -142,6 +142,7 @@ export function useClientSettings() {
 
     if (
       (resolution === "1920x1080" && !monitorResolutionSupport.twoK) ||
+      (resolution === "2600x1600" && !monitorResolutionSupport.fourK) ||
       (resolution === "2140x1440" && !monitorResolutionSupport.fourK)
     ) {
       setResolution(defaultResolution);
@@ -203,6 +204,7 @@ export function useClientSettings() {
 
     if (
       (resolution === "1920x1080" && !monitorResolutionSupport.twoK) ||
+      (resolution === "2600x1600" && !monitorResolutionSupport.fourK) ||
       (resolution === "2140x1440" && !monitorResolutionSupport.fourK)
     ) {
       return;
@@ -361,6 +363,7 @@ function getMaxUiScaleForResolution(resolution: AppResolution): UiScale {
     case "1600x900":
       return 1.25;
     case "1920x1080":
+    case "2600x1600":
     case "2140x1440":
       return 1.5;
   }
