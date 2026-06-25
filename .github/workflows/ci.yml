@@ -120,9 +120,12 @@ jobs:
         run: cargo test -p mira-game-client
 
       - name: Coverage lcov
+        env:
+          CARGO_BUILD_JOBS: 1
         run: |
           mkdir -p tests-results/mira-game-client/coverage
           cargo llvm-cov -p mira-game-client \
+            --jobs 1 \
             --ignore-filename-regex 'apps/mira-game-client/src/(app|main\.rs|network/plugin\.rs)' \
             --fail-under-lines 90 \
             --lcov \
@@ -130,9 +133,8 @@ jobs:
 
       - name: Coverage cobertura
         run: |
-          cargo llvm-cov -p mira-game-client \
+          cargo llvm-cov report -p mira-game-client \
             --ignore-filename-regex 'apps/mira-game-client/src/(app|main\.rs|network/plugin\.rs)' \
-            --fail-under-lines 90 \
             --cobertura \
             --output-path tests-results/mira-game-client/coverage/cobertura.xml
 
