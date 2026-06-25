@@ -333,7 +333,7 @@ jobs:
 
       - name: Patch Linux AppImage environment
         if: runner.os == 'Linux'
-        run: ../../scripts/patch-tauri-appimage-env.sh src-tauri/target/release/bundle/appimage
+        run: bash ../../scripts/patch-tauri-appimage-env.sh src-tauri/target/release/bundle/appimage
 
       - name: Stage artifact
         env:
@@ -473,7 +473,7 @@ jobs:
 
       - name: Patch Linux AppImage environment
         if: runner.os == 'Linux'
-        run: ../../scripts/patch-tauri-appimage-env.sh src-tauri/target/release/bundle/appimage
+        run: bash ../../scripts/patch-tauri-appimage-env.sh src-tauri/target/release/bundle/appimage
 
       - name: Stage artifact
         env:
