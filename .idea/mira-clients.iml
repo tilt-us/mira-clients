@@ -8,6 +8,7 @@
       <sourceFolder url="file://$MODULE_DIR$/crates/game-logic/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/crates/game-shared/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/crates/game-world/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/apps/mira-game-client/tests" isTestSource="true" />
       <excludeFolder url="file://$MODULE_DIR$/apps/mira-client/src-tauri/target" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
     </content>

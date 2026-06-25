@@ -13,6 +13,8 @@ dist
 dist-ssr
 *.local
 .openapi/
+test-results/
+playwright-report/
 
 # Local game client binaries are too large for GitHub.
 files/mira-moba-client

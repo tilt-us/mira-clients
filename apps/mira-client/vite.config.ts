@@ -3,7 +3,6 @@ import react from "@vitejs/plugin-react";
 import { fileURLToPath, URL } from "node:url";
 import packageJson from "./package.json" with { type: "json" };
 
-// @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 

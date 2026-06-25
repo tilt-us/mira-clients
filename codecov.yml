@@ -1,0 +1,17 @@
+coverage:
+  status:
+    project:
+      mira-client:
+        target: 90%
+        threshold: 0%
+        paths:
+          - apps/mira-client/
+      mira-game-client:
+        target: 90%
+        threshold: 0%
+        paths:
+          - apps/mira-game-client/
+    patch:
+      default:
+        target: 90%
+        threshold: 0%

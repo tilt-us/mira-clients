@@ -12,6 +12,11 @@
     "generate:api": "node scripts/merge-openapi.mjs && openapi-ts",
     "build": "tsc && vite build",
     "preview": "vite preview",
+    "test:unit": "vitest run --config vitest.config.ts",
+    "test:unit:coverage": "vitest run --config vitest.config.ts --coverage",
+    "test:e2e": "E2E_TARGET=dev VITE_API_BASE_URL=https://api.tilt-us.com/auth VITE_LIVE_API_BASE_URL=https://api.tilt-us.com/live VITE_MATCHMAKING_API_BASE_URL=https://api.tilt-us.com/match VITE_KEYCLOAK_BASE_URL=https://api.tilt-us.com/keycloak playwright test",
+    "test:e2e-local": "E2E_TARGET=local playwright test",
+    "test:e2e:ui": "E2E_TARGET=dev VITE_API_BASE_URL=https://api.tilt-us.com/auth VITE_LIVE_API_BASE_URL=https://api.tilt-us.com/live VITE_MATCHMAKING_API_BASE_URL=https://api.tilt-us.com/match VITE_KEYCLOAK_BASE_URL=https://api.tilt-us.com/keycloak playwright test --ui",
     "tauri": "tauri"
   },
   "dependencies": {
@@ -25,11 +30,16 @@
   },
   "devDependencies": {
     "@hey-api/openapi-ts": "^0.98.2",
+    "@playwright/test": "^1.61.1",
     "@tauri-apps/cli": "^2.11.2",
+    "@types/node": "^26.0.1",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.2",
+    "@vitest/coverage-v8": "^4.1.9",
+    "jsdom": "^29.1.1",
     "typescript": "~6.0.3",
-    "vite": "^8.0.16"
+    "vite": "^8.0.16",
+    "vitest": "^4.1.9"
   }
 }
