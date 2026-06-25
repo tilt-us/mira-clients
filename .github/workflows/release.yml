@@ -21,7 +21,7 @@ jobs:
   prepare:
     name: Prepare release
     runs-on: ubuntu-latest
-    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    if: github.event.workflow_run.conclusion == 'success'
     outputs:
       should_release: ${{ steps.release.outputs.should_release }}
       version: ${{ steps.release.outputs.version }}
@@ -64,7 +64,7 @@ jobs:
             log_range="${latest_tag}..${head_sha}"
             changes_title="Änderungen seit ${latest_tag}"
           else
-            base_version="$(node -p "require('./apps/mira-client/package.json').version")"
+            base_version="kein vorheriger Release"
             log_range="${head_sha}"
             changes_title="Änderungen"
           fi
@@ -81,14 +81,18 @@ jobs:
             pr_title="$(git log -1 --format=%s "${head_sha}")"
           fi
 
-          IFS=. read -r major minor patch <<< "${base_version}"
-          case "${pr_title,,}" in
-            feat*) minor=$((minor + 1)); patch=0 ;;
-            fix*|chore*|doc*|ci*|ref*) patch=$((patch + 1)) ;;
-            *) patch=$((patch + 1)) ;;
-          esac
+          if [[ -z "${latest_tag}" ]]; then
+            version="1.0.0"
+          else
+            IFS=. read -r major minor patch <<< "${base_version}"
+            case "${pr_title,,}" in
+              feat*) minor=$((minor + 1)); patch=0 ;;
+              fix*|chore*|doc*|ci*|ref*) patch=$((patch + 1)) ;;
+              *) patch=$((patch + 1)) ;;
+            esac
 
-          version="${major}.${minor}.${patch}"
+            version="${major}.${minor}.${patch}"
+          fi
           tag="v${version}"
 
           if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
