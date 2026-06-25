@@ -9,12 +9,9 @@ fn main() {
 #[cfg(target_os = "linux")]
 fn configure_linux_webkit_environment() {
     set_env_if_missing("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
-
-    if std::env::var("XDG_SESSION_TYPE")
-        .is_ok_and(|session| session.eq_ignore_ascii_case("wayland"))
-    {
-        set_env_if_missing("GDK_BACKEND", "x11");
-    }
+    set_env_if_missing("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
+    set_env_if_missing("GDK_BACKEND", "x11");
+    set_env_if_missing("LIBGL_ALWAYS_SOFTWARE", "1");
 }
 
 #[cfg(not(target_os = "linux"))]

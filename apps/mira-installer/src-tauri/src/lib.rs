@@ -516,12 +516,9 @@ fn launch_path(path: PathBuf) -> Result<(), String> {
 #[cfg(target_os = "linux")]
 fn configure_linux_webkit_command(command: &mut Command) {
     command.env("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
-
-    if std::env::var("XDG_SESSION_TYPE")
-        .is_ok_and(|session| session.eq_ignore_ascii_case("wayland"))
-    {
-        command.env("GDK_BACKEND", "x11");
-    }
+    command.env("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
+    command.env("GDK_BACKEND", "x11");
+    command.env("LIBGL_ALWAYS_SOFTWARE", "1");
 }
 
 #[cfg(not(target_os = "linux"))]

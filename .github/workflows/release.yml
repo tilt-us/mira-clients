@@ -331,6 +331,10 @@ jobs:
           BUNDLES: ${{ matrix.bundles }}
         run: npm run tauri -- build --bundles "${BUNDLES}" --ci
 
+      - name: Patch Linux AppImage environment
+        if: runner.os == 'Linux'
+        run: ../../scripts/patch-tauri-appimage-env.sh src-tauri/target/release/bundle/appimage
+
       - name: Stage artifact
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
@@ -466,6 +470,10 @@ jobs:
         env:
           BUNDLES: ${{ matrix.bundles }}
         run: npm run tauri -- build --bundles "${BUNDLES}" --ci
+
+      - name: Patch Linux AppImage environment
+        if: runner.os == 'Linux'
+        run: ../../scripts/patch-tauri-appimage-env.sh src-tauri/target/release/bundle/appimage
 
       - name: Stage artifact
         env:
