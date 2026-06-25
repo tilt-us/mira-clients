@@ -101,7 +101,7 @@
 }
 
 .champion-selection-layout {
-  --pick-indicator-list-offset: 13px;
+  --pick-indicator-list-offset: 5px;
 
   position: relative;
   z-index: 1;
@@ -268,6 +268,7 @@
   flex: 0 0 16px;
   width: 16px;
   height: 16px;
+  transform: translateY(-2px);
 }
 
 .champion-selection-player-role span,
@@ -283,6 +284,7 @@
   flex: 0 0 auto;
   font-size: 0.62rem;
   opacity: 0.72;
+  transform: translateY(-1px);
 }
 
 .champion-selection-center {

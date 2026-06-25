@@ -162,6 +162,10 @@ type LobbyMemberContextMenuState = {
   top: number;
 };
 type MatchDecision = "accept" | "decline";
+type PresenceSnapshot = {
+  mode?: string;
+  status: ApiPresenceStatus;
+};
 
 const afkDelayMs = 5 * 60 * 1000;
 const matchAcceptTimeoutMs = 20_000;
@@ -210,6 +214,16 @@ function sendPresenceKeepalive(status: ApiPresenceStatus, mode?: string) {
   }).catch(() => {
     // The regular API path also attempts to send the status; unload keepalive is best effort.
   });
+}
+
+function isActivePresenceStatus(status: ApiPresenceStatus | undefined) {
+  return (
+    status === "IN_LOBBY" ||
+    status === "IN_QUEUE" ||
+    status === "CHAMPION_SELECTION" ||
+    status === "IN_GAME" ||
+    status === "SPECTATE"
+  );
 }
 
 function getErrorMessage(error: unknown, fallback: string) {
@@ -417,6 +431,10 @@ function isMatchReady(match: _8083ApiMatchResponse) {
     (acceptances.length > 0 &&
       acceptances.every((acceptance) => acceptance.status === "ACCEPTED"))
   );
+}
+
+function isMatchGameStarted(match: _8083ApiMatchResponse | undefined) {
+  return match?.status === "READY";
 }
 
 function normalizeRoleAssignmentSource(value: unknown): MatchPlayerResponse["roleAssignmentSource"] {
@@ -1079,6 +1097,8 @@ function Client({
   const lastActivityRef = useRef(Date.now());
   const hiddenSinceRef = useRef<number | undefined>(undefined);
   const remotePresenceRef = useRef<string | undefined>(undefined);
+  const currentPresenceRef = useRef<PresenceSnapshot>({ status: "ONLINE" });
+  const presenceInitializedRef = useRef(false);
   const requeueingLobbyIdsRef = useRef<Set<string>>(new Set());
   const declinedLobbyInvitationIdsRef = useRef<Set<string>>(new Set());
   const playButtonAnimated =
@@ -1455,7 +1475,10 @@ function Client({
       }));
     }
 
-    if (activeLobbyRef.current) {
+    if (activeLobbyRef.current?.status === "SEARCHING") {
+      setPresenceStatus("inqueue");
+      publishActivePresence("IN_QUEUE", nextSelectedRoles);
+    } else if (activeLobbyRef.current) {
       setPresenceStatus("inlobby");
       void publishPresence(
         "IN_LOBBY",
@@ -1500,7 +1523,7 @@ function Client({
     setGameClientRunning(false);
     setGameClientClosedByClient(Boolean(storedSession.closedByClient));
     setPresenceStatus("ingame");
-    void publishPresence("IN_GAME");
+    publishActivePresence("IN_GAME");
   }, [profilePublicId]);
 
   useEffect(() => {
@@ -1950,6 +1973,12 @@ function Client({
       setMatchFoundStartedAt(undefined);
       setMatchAutoDeclinedId(undefined);
       setChampionSelectionMatch(hydratedMatch);
+
+      if (isMatchGameStarted(hydratedMatch)) {
+        setPresenceStatus("ingame");
+        publishActivePresence("IN_GAME");
+      }
+
       return;
     }
 
@@ -2178,6 +2207,8 @@ function Client({
   async function publishPresence(status: ApiPresenceStatus, mode?: string) {
     const presenceKey = `${status}:${mode ?? ""}`;
 
+    currentPresenceRef.current = { status, mode };
+
     if (remotePresenceRef.current === presenceKey) {
       return;
     }
@@ -2194,6 +2225,23 @@ function Client({
     }
   }
 
+  function getSelectedPresenceMode(roles = selectedLobbyRoles) {
+    return getLobbyPresenceMode(selectedGameMode, roles);
+  }
+
+  function publishActivePresence(
+    status: Extract<ApiPresenceStatus, "IN_QUEUE" | "CHAMPION_SELECTION" | "IN_GAME">,
+    roles = selectedLobbyRoles,
+  ) {
+    void publishPresence(status, getSelectedPresenceMode(roles));
+  }
+
+  function sendActivePresenceKeepalive(
+    status: Extract<ApiPresenceStatus, "IN_QUEUE" | "CHAMPION_SELECTION" | "IN_GAME">,
+  ) {
+    sendPresenceKeepalive(status, getSelectedPresenceMode());
+  }
+
   function getIdlePresenceStatus(): ApiPresenceStatus {
     const now = Date.now();
     const hiddenForMs = hiddenSinceRef.current ? now - hiddenSinceRef.current : 0;
@@ -2205,21 +2253,31 @@ function Client({
   }
 
   function syncPresenceWithActivity() {
+    if (!presenceInitializedRef.current) {
+      return;
+    }
+
     if (gameInProgressRef.current) {
       setPresenceStatus("ingame");
-      void publishPresence("IN_GAME");
+      publishActivePresence("IN_GAME");
+      return;
+    }
+
+    if (isMatchGameStarted(championSelectionMatchRef.current)) {
+      setPresenceStatus("ingame");
+      publishActivePresence("IN_GAME");
       return;
     }
 
     if (championSelectionMatchRef.current) {
       setPresenceStatus("championselection");
-      void publishPresence("CHAMPION_SELECTION");
+      publishActivePresence("CHAMPION_SELECTION");
       return;
     }
 
     if (activeLobbyRef.current?.status === "SEARCHING") {
       setPresenceStatus("inqueue");
-      void publishPresence("IN_QUEUE");
+      publishActivePresence("IN_QUEUE");
       return;
     }
 
@@ -2239,17 +2297,22 @@ function Client({
 
   function sendCurrentPresenceKeepalive() {
     if (gameInProgressRef.current) {
-      sendPresenceKeepalive("IN_GAME");
+      sendActivePresenceKeepalive("IN_GAME");
+      return;
+    }
+
+    if (isMatchGameStarted(championSelectionMatchRef.current)) {
+      sendActivePresenceKeepalive("IN_GAME");
       return;
     }
 
     if (championSelectionMatchRef.current) {
-      sendPresenceKeepalive("CHAMPION_SELECTION");
+      sendActivePresenceKeepalive("CHAMPION_SELECTION");
       return;
     }
 
     if (activeLobbyRef.current?.status === "SEARCHING") {
-      sendPresenceKeepalive("IN_QUEUE");
+      sendActivePresenceKeepalive("IN_QUEUE");
       return;
     }
 
@@ -2261,7 +2324,10 @@ function Client({
       return;
     }
 
-    sendPresenceKeepalive("OFFLINE");
+    sendPresenceKeepalive(
+      currentPresenceRef.current.status,
+      currentPresenceRef.current.mode,
+    );
   }
 
   function suppressMatchLobbyInvitations(match?: _8083ApiMatchResponse) {
@@ -2319,6 +2385,10 @@ function Client({
         setPresenceStatus(
           mapUserStatusToPresence(currentStatus.data.status, currentStatus.data.mode),
         );
+        currentPresenceRef.current = {
+          status: currentStatus.data.status,
+          mode: currentStatus.data.mode,
+        };
       }
 
       const storedSession = readStoredGameSession();
@@ -2328,12 +2398,19 @@ function Client({
         (typeof storedSession.playerPublicId !== "number" ||
           storedSession.playerPublicId === profilePublicId)
       ) {
+        presenceInitializedRef.current = true;
         setPresenceStatus("ingame");
-        void publishPresence("IN_GAME");
+        publishActivePresence("IN_GAME");
+        return;
+      }
+
+      if (isActivePresenceStatus(currentStatus.data?.status)) {
+        presenceInitializedRef.current = true;
         return;
       }
 
       lastActivityRef.current = Date.now();
+      presenceInitializedRef.current = true;
       setPresenceStatus("online");
       void publishPresence("ONLINE");
     }
@@ -2364,7 +2441,11 @@ function Client({
         hiddenSinceRef.current = undefined;
       }
 
-      if (!activeLobbyRef.current && !championSelectionMatchRef.current) {
+      if (
+        !gameInProgressRef.current &&
+        !activeLobbyRef.current &&
+        !championSelectionMatchRef.current
+      ) {
         setPresenceStatus("online");
         void publishPresence("ONLINE");
       }
@@ -2732,7 +2813,7 @@ function Client({
       setLobbySearchStartedAt(Number.isFinite(startedAt) ? startedAt : Date.now());
       setLobbySearchNow(Date.now());
       setPresenceStatus("inqueue");
-      void publishPresence("IN_QUEUE");
+      publishActivePresence("IN_QUEUE");
 
       const result = await startSearch({
         baseUrl: MATCHMAKING_API_BASE_URL,
@@ -2751,7 +2832,7 @@ function Client({
     }
 
     setPresenceStatus("inqueue");
-    void publishPresence("IN_QUEUE");
+    publishActivePresence("IN_QUEUE");
 
     const [result, matchSearchResult] = await Promise.all([
       searchRanked({
@@ -3516,7 +3597,7 @@ function Client({
     setGameClientRunning(true);
     setGameClientClosedByClient(false);
     setPresenceStatus("ingame");
-    void publishPresence("IN_GAME");
+    publishActivePresence("IN_GAME");
     writeStoredGameSession({
       closedByClient: false,
       parameters,
@@ -3536,7 +3617,7 @@ function Client({
     setGameSelectorOpen(false);
     setGameInProgress(true);
     setPresenceStatus("ingame");
-    void publishPresence("IN_GAME");
+    publishActivePresence("IN_GAME");
   }
 
   async function handleReadyPhaseComplete() {

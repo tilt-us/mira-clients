@@ -874,7 +874,7 @@ fn sync_loading_screen_ui(
     mut layout_nodes: ParamSet<(
         Query<&mut Node, With<LoadingScreenRoot>>,
         Query<(&mut Node, &mut BackgroundColor), With<LoadingProgressFill>>,
-        Query<(&LoadingCard, &mut Node), With<LoadingCard>>,
+        Query<(&LoadingCard, &mut Node, &mut BorderColor), With<LoadingCard>>,
         Query<(&LoadingCardAvatar, &mut BackgroundColor)>,
         Query<(&LoadingCardImage, &mut ImageNode)>,
         Query<(&LoadingCardAvatarImage, &mut Node, &mut ImageNode)>,
@@ -885,7 +885,10 @@ fn sync_loading_screen_ui(
         Query<(&mut Text, &mut TextColor), With<LoadingProgressBadgeText>>,
         Query<(&mut Text, &mut TextColor), With<LoadingPingText>>,
     )>,
-    mut ping_spinners: Query<(&mut UiTransform, &mut BorderColor), With<LoadingPingSpinner>>,
+    mut ping_spinners: Query<
+        (&mut UiTransform, &mut BorderColor),
+        (With<LoadingPingSpinner>, Without<LoadingCard>),
+    >,
 ) {
     let snapshot = state.snapshot();
     let visible = snapshot.active && !snapshot.complete;
@@ -898,6 +901,10 @@ fn sync_loading_screen_ui(
     }
 
     let accent = launch_settings.accent_color_bevy();
+    let local_player_public_id = launch_settings
+        .player_public_id
+        .as_deref()
+        .and_then(|public_id| public_id.parse::<u64>().ok());
     if last_progress_accent.as_ref() != Some(&accent) {
         if let Some(progress_badge_image) = progress_badge_image.as_deref() {
             if let Some(image) = ui_images.get_mut(progress_badge_image.handle.id()) {
@@ -912,13 +919,17 @@ fn sync_loading_screen_ui(
         *background = BackgroundColor(accent);
     }
 
-    for (card, mut node) in &mut layout_nodes.p2() {
+    for (card, mut node, mut border) in &mut layout_nodes.p2() {
         let player = loading_card_player(&snapshot, card.team, card.index);
+        let is_local_player =
+            player.is_some_and(|player| Some(player.public_id) == local_player_public_id);
         node.display = if player.is_some() {
             Display::Flex
         } else {
             Display::None
         };
+        node.border = UiRect::all(px(if is_local_player { 5 } else { 1 }));
+        border.set_all(accent);
     }
 
     for (card_image, mut image_node) in &mut layout_nodes.p4() {

@@ -82,6 +82,9 @@ const folderMoveRuleOptions: FriendFolderMoveRule[] = [
 
 const friendSidebarStorageKey = "mira-client-friend-sidebar-v2";
 const blockedFriendPublicIdsStorageKey = "mira-client-blocked-public-ids-v1";
+const activeFriendStatusCacheTtlMs = 2 * 60 * 1000;
+const transientFriendStatusCacheTtlMs = 15 * 1000;
+const lobbyPresenceFallbackMaxAgeMs = 15 * 1000;
 
 type DragState = {
   active: boolean;
@@ -130,6 +133,10 @@ type FriendRequestItem = FriendRequestResponse | FriendRequest;
 type FriendUserItem = FriendUserResponse | FriendUser;
 
 type FriendConfirmAction = "block" | "report" | "unfriend";
+type CachedFriendStatus = {
+  seenAt: number;
+  snapshot: UserStatusSnapshot;
+};
 
 type FriendConfirmState = {
   action: FriendConfirmAction;
@@ -305,6 +312,7 @@ function stripLobbyRoleMode(mode?: string) {
 function getFriendLobbyInfo(
   publicId: number | undefined,
   lobbies: LobbySnapshot[],
+  now: number,
 ): { queueStartedAt?: string; status: PresenceStatus } | undefined {
   if (typeof publicId !== "number") {
     return undefined;
@@ -318,12 +326,23 @@ function getFriendLobbyInfo(
     return undefined;
   }
 
+  if (!isLobbyPresenceFallbackFresh(lobby, now)) {
+    return undefined;
+  }
+
   return {
     queueStartedAt: lobby.status === "SEARCHING"
       ? lobby.updatedAt ?? lobby.createdAt
       : undefined,
     status: lobby.status === "SEARCHING" ? "inqueue" : "inlobby",
   };
+}
+
+function isLobbyPresenceFallbackFresh(lobby: LobbySnapshot, now: number) {
+  const lastChangedAt = Date.parse(lobby.updatedAt ?? lobby.createdAt ?? "");
+
+  return !Number.isFinite(lastChangedAt) ||
+    now - lastChangedAt <= lobbyPresenceFallbackMaxAgeMs;
 }
 
 function formatElapsedDuration(startedAtIso: string | undefined, now: number) {
@@ -380,6 +399,141 @@ function getTimedPresenceLabel(
   return undefined;
 }
 
+function isActiveFriendStatus(status: UserStatusSnapshot["status"] | undefined) {
+  return (
+    status === "IN_LOBBY" ||
+    status === "IN_QUEUE" ||
+    status === "CHAMPION_SELECTION" ||
+    status === "IN_GAME" ||
+    status === "SPECTATE"
+  );
+}
+
+function friendStatusCacheTtlMs(status: UserStatusSnapshot["status"] | undefined) {
+  return status === "IN_LOBBY" || status === "IN_QUEUE"
+    ? transientFriendStatusCacheTtlMs
+    : activeFriendStatusCacheTtlMs;
+}
+
+function friendStatusPriority(status: UserStatusSnapshot["status"] | undefined) {
+  switch (status) {
+    case "IN_GAME":
+    case "SPECTATE":
+      return 5;
+    case "CHAMPION_SELECTION":
+      return 4;
+    case "IN_QUEUE":
+      return 3;
+    case "IN_LOBBY":
+      return 2;
+    case "AFK":
+    case "ONLINE":
+      return 1;
+    case "OFFLINE":
+    default:
+      return 0;
+  }
+}
+
+function isCachedFriendStatusFresh(cachedStatus: CachedFriendStatus, now: number) {
+  return now - cachedStatus.seenAt <= friendStatusCacheTtlMs(cachedStatus.snapshot.status);
+}
+
+function mergeFriendStatusCache(
+  friendStatuses: UserStatusSnapshot[],
+  apiFriends: FriendUserItem[],
+  openLobbies: LobbySnapshot[],
+  statusCache: Map<number, CachedFriendStatus>,
+) {
+  const now = Date.now();
+  const friendPublicIds = new Set(
+    apiFriends
+      .map((friend) => friend.publicId)
+      .filter((publicId): publicId is number => typeof publicId === "number"),
+  );
+  const currentStatusPublicIds = new Set<number>();
+  const mergedStatuses = [...friendStatuses];
+
+  for (const status of friendStatuses) {
+    if (typeof status.publicId !== "number") {
+      continue;
+    }
+
+    currentStatusPublicIds.add(status.publicId);
+    statusCache.set(status.publicId, {
+      seenAt: now,
+      snapshot: status,
+    });
+  }
+
+  for (const lobby of openLobbies) {
+    if (!isLobbyPresenceFallbackFresh(lobby, now)) {
+      continue;
+    }
+
+    const lobbyStatus = lobby.status === "SEARCHING" ? "IN_QUEUE" : "IN_LOBBY";
+
+    for (const member of lobby.members ?? []) {
+      if (
+        typeof member.publicId !== "number" ||
+        !friendPublicIds.has(member.publicId) ||
+        currentStatusPublicIds.has(member.publicId)
+      ) {
+        continue;
+      }
+
+      const cachedStatus = statusCache.get(member.publicId);
+      if (
+        cachedStatus &&
+        isCachedFriendStatusFresh(cachedStatus, now) &&
+        friendStatusPriority(cachedStatus.snapshot.status) > friendStatusPriority(lobbyStatus)
+      ) {
+        currentStatusPublicIds.add(member.publicId);
+        mergedStatuses.push(cachedStatus.snapshot);
+        continue;
+      }
+
+      const snapshot = {
+        mode: undefined,
+        publicId: member.publicId,
+        status: lobbyStatus,
+        updatedAt: lobby.updatedAt ?? lobby.createdAt,
+      } satisfies UserStatusSnapshot;
+
+      statusCache.set(member.publicId, {
+        seenAt: now,
+        snapshot,
+      });
+      currentStatusPublicIds.add(member.publicId);
+      mergedStatuses.push(snapshot);
+    }
+  }
+
+  for (const [publicId, cachedStatus] of statusCache) {
+    if (!friendPublicIds.has(publicId)) {
+      statusCache.delete(publicId);
+      continue;
+    }
+
+    if (currentStatusPublicIds.has(publicId)) {
+      continue;
+    }
+
+    if (!isCachedFriendStatusFresh(cachedStatus, now)) {
+      statusCache.delete(publicId);
+      continue;
+    }
+
+    if (!isActiveFriendStatus(cachedStatus.snapshot.status)) {
+      continue;
+    }
+
+    mergedStatuses.push(cachedStatus.snapshot);
+  }
+
+  return mergedStatuses;
+}
+
 function mapApiFriendsToProfiles(
   apiFriends: FriendUserItem[],
   folders: FriendFolder[],
@@ -389,6 +543,7 @@ function mapApiFriendsToProfiles(
   forceOnlinePublicIds: number[] = [],
   blockedPublicIds: number[] = [],
 ) {
+  const now = Date.now();
   const folderIds = new Set(folders.map((folder) => folder.id));
   const forcedOnlinePublicIds = new Set(forceOnlinePublicIds);
   const blockedPublicIdSet = new Set(blockedPublicIds);
@@ -407,7 +562,7 @@ function mapApiFriendsToProfiles(
     const id = getFriendUserId(friend);
     const folderId = friendFolders?.[id];
     const userStatus = statusesByPublicId.get(friend.publicId);
-    const lobbyInfo = getFriendLobbyInfo(friend.publicId, openLobbies);
+    const lobbyInfo = getFriendLobbyInfo(friend.publicId, openLobbies, now);
     const lobbyPresence = lobbyInfo?.status;
     const forcedOnline =
       typeof friend.publicId === "number" &&
@@ -517,6 +672,7 @@ function Sidebar({
   const renameInputRef = useRef<HTMLInputElement | null>(null);
   const notificationMenuRef = useRef<HTMLDivElement | null>(null);
   const profileMenuRef = useRef<HTMLDivElement | null>(null);
+  const friendStatusCacheRef = useRef(new Map<number, CachedFriendStatus>());
   const { clearNotifications, notifications, notify, removeNotification } =
     useNotifications();
 
@@ -996,8 +1152,12 @@ function Sidebar({
 
     const openLobbies = result.data?.openFriendLobbies ?? [];
     const apiFriends = result.data?.friends?.friends ?? [];
-    const friendStatuses =
-      statusesResult.data?.statuses ?? result.data?.friendStatuses?.statuses ?? [];
+    const friendStatuses = mergeFriendStatusCache(
+      statusesResult.data?.statuses ?? result.data?.friendStatuses?.statuses ?? [],
+      apiFriends,
+      openLobbies,
+      friendStatusCacheRef.current,
+    );
     const resolvedFriendFolders = applyFolderRulesToFriendFolders(
       apiFriends,
       nextFolders,
