@@ -337,41 +337,80 @@ jobs:
           fs.writeFileSync(cargoPath, cargo);
           NODE
 
-      - name: Report macOS signing mode
+      - name: Prepare macOS signing env
         if: runner.os == 'macOS'
         env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          ENABLE_APPLE_SIGNING: ${{ vars.ENABLE_APPLE_SIGNING }}
+          APPLE_CERTIFICATE_SECRET: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD_SECRET: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY_SECRET: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID_SECRET: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD_SECRET: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID_SECRET: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
+
+          if [[ "${ENABLE_APPLE_SIGNING:-false}" != "true" ]]; then
+            echo "Unsigned macOS build; set repository variable ENABLE_APPLE_SIGNING=true to enable signing."
+            exit 0
+          fi
+
           missing=()
-          for key in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+          for key in APPLE_CERTIFICATE_SECRET APPLE_CERTIFICATE_PASSWORD_SECRET APPLE_ID_SECRET APPLE_PASSWORD_SECRET APPLE_TEAM_ID_SECRET; do
             if [[ -z "${!key:-}" ]]; then
               missing+=("${key}")
             fi
           done
 
           if (( ${#missing[@]} > 0 )); then
-            printf 'Unsigned macOS build; missing signing secret: %s\n' "${missing[@]}"
-            echo "Set Apple signing secrets later to produce notarized DMGs."
-          else
-            echo "Apple signing secrets are present; Tauri will sign and notarize the DMG."
+            printf 'macOS signing is enabled, but a required signing secret is missing: %s\n' "${missing[@]}"
+            exit 1
           fi
+
+          cert_file="$(mktemp)"
+          trap 'rm -f "${cert_file}"' EXIT
+
+          if ! CERT_FILE="${cert_file}" python3 - <<'PY'
+          import base64
+          import os
+          import sys
+
+          try:
+              cert = base64.b64decode(os.environ["APPLE_CERTIFICATE_SECRET"], validate=True)
+          except Exception:
+              sys.exit(1)
+
+          with open(os.environ["CERT_FILE"], "wb") as file:
+              file.write(cert)
+          PY
+          then
+            echo "APPLE_CERTIFICATE is not valid one-line base64. Recreate it with: openssl base64 -A -in DeveloperIDApplication.p12 -out certificate-base64.txt"
+            exit 1
+          fi
+
+          if ! openssl pkcs12 -in "${cert_file}" -passin "pass:${APPLE_CERTIFICATE_PASSWORD_SECRET}" -nokeys -info -noout >/dev/null 2>&1; then
+            echo "APPLE_CERTIFICATE could not be opened as a .p12 with APPLE_CERTIFICATE_PASSWORD."
+            exit 1
+          fi
+
+          {
+            echo "APPLE_CERTIFICATE=${APPLE_CERTIFICATE_SECRET}"
+            echo "APPLE_CERTIFICATE_PASSWORD=${APPLE_CERTIFICATE_PASSWORD_SECRET}"
+            echo "APPLE_ID=${APPLE_ID_SECRET}"
+            echo "APPLE_PASSWORD=${APPLE_PASSWORD_SECRET}"
+            echo "APPLE_TEAM_ID=${APPLE_TEAM_ID_SECRET}"
+            if [[ -n "${APPLE_SIGNING_IDENTITY_SECRET:-}" ]]; then
+              echo "APPLE_SIGNING_IDENTITY=${APPLE_SIGNING_IDENTITY_SECRET}"
+            fi
+          } >> "${GITHUB_ENV}"
+
+          echo "Apple signing enabled; Tauri will sign and notarize the DMG."
 
       - name: Build
         env:
           BUNDLES: ${{ matrix.bundles }}
           TAURI_BUNDLER_NEW_APPIMAGE_FORMAT: ${{ runner.os == 'Linux' && 'true' || 'false' }}
           NO_STRIP: ${{ runner.os == 'Linux' && '1' || '' }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: npm run tauri -- build --bundles "${BUNDLES}" --ci
 
       - name: Stage artifact
@@ -516,41 +555,80 @@ jobs:
           fs.writeFileSync(cargoPath, cargo);
           NODE
 
-      - name: Report macOS signing mode
+      - name: Prepare macOS signing env
         if: runner.os == 'macOS'
         env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          ENABLE_APPLE_SIGNING: ${{ vars.ENABLE_APPLE_SIGNING }}
+          APPLE_CERTIFICATE_SECRET: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD_SECRET: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY_SECRET: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID_SECRET: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD_SECRET: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID_SECRET: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
+
+          if [[ "${ENABLE_APPLE_SIGNING:-false}" != "true" ]]; then
+            echo "Unsigned macOS build; set repository variable ENABLE_APPLE_SIGNING=true to enable signing."
+            exit 0
+          fi
+
           missing=()
-          for key in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+          for key in APPLE_CERTIFICATE_SECRET APPLE_CERTIFICATE_PASSWORD_SECRET APPLE_ID_SECRET APPLE_PASSWORD_SECRET APPLE_TEAM_ID_SECRET; do
             if [[ -z "${!key:-}" ]]; then
               missing+=("${key}")
             fi
           done
 
           if (( ${#missing[@]} > 0 )); then
-            printf 'Unsigned macOS build; missing signing secret: %s\n' "${missing[@]}"
-            echo "Set Apple signing secrets later to produce notarized DMGs."
-          else
-            echo "Apple signing secrets are present; Tauri will sign and notarize the DMG."
+            printf 'macOS signing is enabled, but a required signing secret is missing: %s\n' "${missing[@]}"
+            exit 1
           fi
+
+          cert_file="$(mktemp)"
+          trap 'rm -f "${cert_file}"' EXIT
+
+          if ! CERT_FILE="${cert_file}" python3 - <<'PY'
+          import base64
+          import os
+          import sys
+
+          try:
+              cert = base64.b64decode(os.environ["APPLE_CERTIFICATE_SECRET"], validate=True)
+          except Exception:
+              sys.exit(1)
+
+          with open(os.environ["CERT_FILE"], "wb") as file:
+              file.write(cert)
+          PY
+          then
+            echo "APPLE_CERTIFICATE is not valid one-line base64. Recreate it with: openssl base64 -A -in DeveloperIDApplication.p12 -out certificate-base64.txt"
+            exit 1
+          fi
+
+          if ! openssl pkcs12 -in "${cert_file}" -passin "pass:${APPLE_CERTIFICATE_PASSWORD_SECRET}" -nokeys -info -noout >/dev/null 2>&1; then
+            echo "APPLE_CERTIFICATE could not be opened as a .p12 with APPLE_CERTIFICATE_PASSWORD."
+            exit 1
+          fi
+
+          {
+            echo "APPLE_CERTIFICATE=${APPLE_CERTIFICATE_SECRET}"
+            echo "APPLE_CERTIFICATE_PASSWORD=${APPLE_CERTIFICATE_PASSWORD_SECRET}"
+            echo "APPLE_ID=${APPLE_ID_SECRET}"
+            echo "APPLE_PASSWORD=${APPLE_PASSWORD_SECRET}"
+            echo "APPLE_TEAM_ID=${APPLE_TEAM_ID_SECRET}"
+            if [[ -n "${APPLE_SIGNING_IDENTITY_SECRET:-}" ]]; then
+              echo "APPLE_SIGNING_IDENTITY=${APPLE_SIGNING_IDENTITY_SECRET}"
+            fi
+          } >> "${GITHUB_ENV}"
+
+          echo "Apple signing enabled; Tauri will sign and notarize the DMG."
 
       - name: Build
         env:
           BUNDLES: ${{ matrix.bundles }}
           TAURI_BUNDLER_NEW_APPIMAGE_FORMAT: ${{ runner.os == 'Linux' && 'true' || 'false' }}
           NO_STRIP: ${{ runner.os == 'Linux' && '1' || '' }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
           if [[ "${RUNNER_OS}" == "Windows" ]]; then

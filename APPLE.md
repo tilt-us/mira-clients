@@ -11,6 +11,11 @@ Bis Signing und Notarization eingerichtet sind, werden die macOS-DMGs unsigned
 ausgeliefert. Der Release-Workflow baut trotzdem weiter und legt
 `install-macos.sh` neben die macOS-Dateien.
 
+Apple Signing ist im Release-Workflow standardmäßig deaktiviert. Dadurch führen
+halbe oder ungültige Apple Secrets nicht zu einem kaputten Release. Erst wenn
+die Repository Variable `ENABLE_APPLE_SIGNING` auf `true` gesetzt ist, werden
+die `APPLE_*` Secrets an Tauri weitergegeben.
+
 Mira besteht auf macOS aktuell aus zwei Apps:
 
 - `Mira Installer.app`
@@ -52,6 +57,15 @@ APPLE_SIGNING_IDENTITY
 ```
 
 `APPLE_SIGNING_IDENTITY` ist optional, aber empfohlen.
+
+Zusätzlich benötigte GitHub Repository Variable:
+
+```text
+ENABLE_APPLE_SIGNING=true
+```
+
+Ohne diese Variable werden macOS-DMGs unsigned gebaut, auch wenn einzelne
+`APPLE_*` Secrets vorhanden sind.
 
 ### Apple Account erstellen
 
