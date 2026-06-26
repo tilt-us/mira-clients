@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { Gamepad2, Monitor, Search, Users } from "lucide-react";
+import germanFlagUrl from "../../../../assets/icons/flags/de.svg";
+import unitedKingdomFlagUrl from "../../../../assets/icons/flags/gb.svg";
 import type { AppLocale } from "../i18n";
 import type {
   AppResolution,
@@ -153,7 +155,7 @@ function SettingsModal({
   const [uiScaleDropdownOpen, setUiScaleDropdownOpen] = useState(false);
   const selectedLanguage =
     locale === "de" ? t("language-german") : t("language-english");
-  const selectedFlag = locale === "de" ? "🇩🇪" : "🇬🇧";
+  const selectedFlagUrl = locale === "de" ? germanFlagUrl : unitedKingdomFlagUrl;
   const gameTabAvailable = vision === "Vision.ALL";
   const socialTabAvailable = vision === "Vision.ALL";
   const visibleResolutionOptions = resolutionOptions.filter((option) => {
@@ -484,7 +486,12 @@ function SettingsModal({
                         setLanguageDropdownOpen((open) => !open);
                       }}
                     >
-                      <span>{selectedFlag}</span>
+                      <img
+                        alt=""
+                        aria-hidden="true"
+                        className="settings-language-flag"
+                        src={selectedFlagUrl}
+                      />
                       <span>{selectedLanguage}</span>
                     </button>
 
@@ -496,7 +503,12 @@ function SettingsModal({
                           type="button"
                           onClick={() => handleLocaleSelect("de")}
                         >
-                          <span>🇩🇪</span>
+                          <img
+                            alt=""
+                            aria-hidden="true"
+                            className="settings-language-flag"
+                            src={germanFlagUrl}
+                          />
                           <span>{t("language-german")}</span>
                         </button>
                         <button
@@ -505,7 +517,12 @@ function SettingsModal({
                           type="button"
                           onClick={() => handleLocaleSelect("en")}
                         >
-                          <span>🇬🇧</span>
+                          <img
+                            alt=""
+                            aria-hidden="true"
+                            className="settings-language-flag"
+                            src={unitedKingdomFlagUrl}
+                          />
                           <span>{t("language-english")}</span>
                         </button>
                       </div>

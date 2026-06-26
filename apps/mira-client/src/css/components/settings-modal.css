@@ -124,6 +124,16 @@
   white-space: nowrap;
 }
 
+.settings-language-flag {
+  display: block;
+  flex: 0 0 auto;
+  width: 24px;
+  height: 16px;
+  border-radius: 3px;
+  object-fit: cover;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.16);
+}
+
 .settings-dropdown-trigger:hover,
 .settings-dropdown-menu button:hover,
 .settings-dropdown-menu button[aria-selected="true"] {

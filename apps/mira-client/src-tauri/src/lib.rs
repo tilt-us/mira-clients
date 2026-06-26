@@ -421,8 +421,6 @@ fn start_oauth_window(app: tauri::AppHandle, request: OAuthWindowRequest) -> Res
         .build()
         .map_err(|error| format!("OAuth-Fenster konnte nicht geoeffnet werden: {error}"))?;
 
-    disable_webview_hardware_acceleration(&oauth_window);
-
     let app_for_close = app.clone();
     oauth_window.on_window_event(move |event| {
         if matches!(event, tauri::WindowEvent::Destroyed) {
@@ -1047,12 +1045,6 @@ pub fn run() {
         .manage(GameProcessState::default())
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_opener::init())
-        .setup(|app| {
-            if let Some(window) = app.get_webview_window("main") {
-                disable_webview_hardware_acceleration(&window);
-            }
-            Ok(())
-        })
         .invoke_handler(tauri::generate_handler![
             client_config,
             game_client_status,
@@ -1064,17 +1056,3 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
-
-#[cfg(target_os = "linux")]
-fn disable_webview_hardware_acceleration(window: &tauri::WebviewWindow) {
-    let _ = window.with_webview(|webview| {
-        use webkit2gtk::{HardwareAccelerationPolicy, SettingsExt, WebViewExt};
-
-        if let Some(settings) = webview.inner().settings() {
-            settings.set_hardware_acceleration_policy(HardwareAccelerationPolicy::Never);
-        }
-    });
-}
-
-#[cfg(not(target_os = "linux"))]
-fn disable_webview_hardware_acceleration(_window: &tauri::WebviewWindow) {}

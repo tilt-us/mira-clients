@@ -20,10 +20,14 @@
   background: rgba(255, 255, 255, 0.12);
 }
 
-.language-dropdown-button span,
-.language-dropdown-menu button span {
-  font-size: 1rem;
-  line-height: 1;
+.language-dropdown-button img,
+.language-dropdown-menu button img {
+  display: block;
+  width: 24px;
+  height: 16px;
+  border-radius: 3px;
+  object-fit: cover;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.16);
 }
 
 .language-dropdown-menu {

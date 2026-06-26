@@ -56,9 +56,8 @@ password_client_id = "mira-e2e"
 
 The desktop client looks for the config in this order: `MIRA_CLIENT_CONFIG`, next
 to the app executable, the current working directory, the app config directory,
-the bundled resource, and finally the repository root in development. Release
-bundles include `mira-client.prod.toml` as `mira-client.toml`, so production
-desktop builds use:
+and finally the repository root in development. Release bundles do not include a
+TOML config file; production desktop builds use compiled defaults:
 
 ```toml
 [services]

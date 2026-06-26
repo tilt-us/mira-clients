@@ -1,5 +1,7 @@
 import { ChevronDown } from "lucide-react";
 import { useState } from "react";
+import germanFlagUrl from "../../../../assets/icons/flags/de.svg";
+import unitedStatesFlagUrl from "../../../../assets/icons/flags/us.svg";
 
 export type InstallerLocale = "de" | "en";
 
@@ -11,11 +13,11 @@ type LanguageDropdownProps = {
 
 const languages: Array<{
   countryMessage: string;
-  flag: string;
+  flagUrl: string;
   locale: InstallerLocale;
 }> = [
-  { countryMessage: "language-germany", flag: "🇩🇪", locale: "de" },
-  { countryMessage: "language-united-states", flag: "🇺🇸", locale: "en" },
+  { countryMessage: "language-germany", flagUrl: germanFlagUrl, locale: "de" },
+  { countryMessage: "language-united-states", flagUrl: unitedStatesFlagUrl, locale: "en" },
 ];
 
 function LanguageDropdown({ locale, t, onLocaleChange }: LanguageDropdownProps) {
@@ -38,7 +40,7 @@ function LanguageDropdown({ locale, t, onLocaleChange }: LanguageDropdownProps) 
         type="button"
         onClick={() => setOpen((currentOpen) => !currentOpen)}
       >
-        <span aria-hidden="true">{activeLanguage.flag}</span>
+        <img alt="" aria-hidden="true" src={activeLanguage.flagUrl} />
         <ChevronDown size={14} />
       </button>
 
@@ -53,7 +55,7 @@ function LanguageDropdown({ locale, t, onLocaleChange }: LanguageDropdownProps) 
               type="button"
               onClick={() => selectLocale(language.locale)}
             >
-              <span aria-hidden="true">{language.flag}</span>
+              <img alt="" aria-hidden="true" src={language.flagUrl} />
             </button>
           ))}
         </div>
