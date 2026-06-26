@@ -2413,9 +2413,41 @@ function Client({
 
   function handleRemovedFromActiveLobby() {
     activeLobbyRef.current = undefined;
+    setLobbySearchStartedAt(undefined);
+    setLobbySearchAbortedLobbyId(undefined);
+    setLobbyMemberContextMenu(undefined);
+    setLobbyMemberActionBusyId(undefined);
+    setLobbyIdContextMenuOpen(false);
+    setPartyInviteOpen(false);
     setActiveLobby(undefined);
     setPresenceStatus("online");
     void publishPresence("ONLINE");
+  }
+
+  function userStatusRemovedCurrentPlayerFromActiveLobby(
+    userStatus: UserStatusSnapshot,
+  ) {
+    if (
+      typeof profilePublicId !== "number" ||
+      userStatus.publicId !== profilePublicId ||
+      isActivePresenceStatus(userStatus.status)
+    ) {
+      return false;
+    }
+
+    const lobby = activeLobbyRef.current;
+
+    if (!lobby) {
+      return false;
+    }
+
+    const statusUpdatedAt = Date.parse(userStatus.updatedAt ?? "");
+    const lobbyChangedAt = Date.parse(lobby.updatedAt ?? lobby.createdAt ?? "");
+
+    return (
+      Number.isFinite(statusUpdatedAt) &&
+      (!Number.isFinite(lobbyChangedAt) || statusUpdatedAt >= lobbyChangedAt)
+    );
   }
 
   useEffect(() => {
@@ -2631,15 +2663,12 @@ function Client({
         return;
       }
 
-      const stillInLobby = Boolean(
-        getCurrentLobbyMember(lobby, profilePublicId, profileName),
-      );
-
-      if (stillInLobby) {
-        setActiveLobby(lobby);
-      } else {
+      if (!getCurrentLobbyMember(lobby, profilePublicId, profileName)) {
         handleRemovedFromActiveLobby();
+        return;
       }
+
+      setActiveLobby(lobby);
     }
 
     async function listenForLobbyEvents() {
@@ -2682,6 +2711,11 @@ function Client({
 
           if (userStatusSnapshot) {
             rememberLobbyRolesFromStatuses([userStatusSnapshot]);
+
+            if (userStatusRemovedCurrentPlayerFromActiveLobby(userStatusSnapshot)) {
+              handleRemovedFromActiveLobby();
+              continue;
+            }
           }
 
           if (lobbySnapshot && lobbySnapshot.id === activeLobbyRef.current?.id) {

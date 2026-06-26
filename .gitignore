@@ -1,3 +1,5 @@
 /target/
 /tests-results/
 *.tsbuildinfo
+/local-release
+mira-game-client
