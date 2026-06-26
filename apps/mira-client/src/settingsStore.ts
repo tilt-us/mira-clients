@@ -140,12 +140,8 @@ export function useClientSettings() {
       return;
     }
 
-    if (
-      (resolution === "1920x1080" && !monitorResolutionSupport.twoK) ||
-      (resolution === "2600x1600" && !monitorResolutionSupport.fourK) ||
-      (resolution === "2140x1440" && !monitorResolutionSupport.fourK)
-    ) {
-      setResolution(defaultResolution);
+    if (!isResolutionSupportedByMonitor(resolution, monitorResolutionSupport)) {
+      setResolution(getMinimumResolutionForMonitor(monitorResolutionSupport));
     }
   }, [monitorResolutionSupport, resolution]);
 
@@ -202,11 +198,7 @@ export function useClientSettings() {
       return;
     }
 
-    if (
-      (resolution === "1920x1080" && !monitorResolutionSupport.twoK) ||
-      (resolution === "2600x1600" && !monitorResolutionSupport.fourK) ||
-      (resolution === "2140x1440" && !monitorResolutionSupport.fourK)
-    ) {
+    if (!isResolutionSupportedByMonitor(resolution, monitorResolutionSupport)) {
       return;
     }
 
@@ -283,17 +275,16 @@ async function applyWindowResolution(
 }
 
 async function applyUiScale(uiScale: UiScale) {
+  document.documentElement.style.removeProperty("zoom");
+  document.documentElement.style.setProperty("font-size", `${16 * uiScale}px`);
+
   if (runsInTauriLikeShell()) {
     try {
-      await getCurrentWebview().setZoom(uiScale);
-      document.documentElement.style.removeProperty("zoom");
-      return;
+      await getCurrentWebview().setZoom(1);
     } catch (caughtError) {
       console.error("Webview zoom could not be applied.", caughtError);
     }
   }
-
-  document.documentElement.style.setProperty("zoom", String(uiScale));
 }
 
 type MonitorResolutionSupport = {
@@ -366,6 +357,62 @@ function getMaxUiScaleForResolution(resolution: AppResolution): UiScale {
     case "2600x1600":
     case "2140x1440":
       return 1.5;
+  }
+}
+
+function getMinimumResolutionForMonitor(
+  monitorResolutionSupport: MonitorResolutionSupport,
+): AppResolution {
+  if (monitorResolutionSupport.fourK) {
+    return "1600x900";
+  }
+
+  if (monitorResolutionSupport.twoK) {
+    return "1400x800";
+  }
+
+  return "1270x720";
+}
+
+function isResolutionSupportedByMonitor(
+  resolution: AppResolution,
+  monitorResolutionSupport: MonitorResolutionSupport,
+) {
+  if (
+    getResolutionRank(resolution) <
+    getResolutionRank(getMinimumResolutionForMonitor(monitorResolutionSupport))
+  ) {
+    return false;
+  }
+
+  if (resolution === "1920x1080" && !monitorResolutionSupport.twoK) {
+    return false;
+  }
+
+  if (
+    (resolution === "2600x1600" || resolution === "2140x1440") &&
+    !monitorResolutionSupport.fourK
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+function getResolutionRank(resolution: AppResolution) {
+  switch (resolution) {
+    case "1270x720":
+      return 0;
+    case "1400x800":
+      return 1;
+    case "1600x900":
+      return 2;
+    case "1920x1080":
+      return 3;
+    case "2140x1440":
+      return 4;
+    case "2600x1600":
+      return 5;
   }
 }
 

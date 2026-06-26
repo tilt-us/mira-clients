@@ -226,6 +226,10 @@ function isActivePresenceStatus(status: ApiPresenceStatus | undefined) {
   );
 }
 
+function isFinishedMatchStatus(status?: _8083ApiMatchResponse["status"]) {
+  return status === "ENDED" || status === "CANCELLED";
+}
+
 function getErrorMessage(error: unknown, fallback: string) {
   if (error instanceof Error) {
     return error.message;
@@ -1518,12 +1522,48 @@ function Client({
       return;
     }
 
-    setGameLaunchParameters(storedSession.parameters);
-    setGameInProgress(true);
-    setGameClientRunning(false);
-    setGameClientClosedByClient(Boolean(storedSession.closedByClient));
-    setPresenceStatus("ingame");
-    publishActivePresence("IN_GAME");
+    const session = storedSession;
+    let active = true;
+
+    async function restoreStoredGameSession() {
+      const result = await getMatch({
+        baseUrl: MATCHMAKING_API_BASE_URL,
+        path: { matchId: session.parameters.matchId },
+      });
+
+      if (!active) {
+        return;
+      }
+
+      if (
+        result.response?.status === 404 ||
+        result.response?.status === 410 ||
+        !result.data ||
+        isFinishedMatchStatus(result.data.status)
+      ) {
+        clearStoredGameSession();
+        setGameLaunchParameters(undefined);
+        setGameInProgress(false);
+        setGameClientRunning(false);
+        setGameClientClosedByClient(false);
+        setPresenceStatus("online");
+        void publishPresence("ONLINE");
+        return;
+      }
+
+      setGameLaunchParameters(session.parameters);
+      setGameInProgress(true);
+      setGameClientRunning(false);
+      setGameClientClosedByClient(Boolean(session.closedByClient));
+      setPresenceStatus("ingame");
+      publishActivePresence("IN_GAME");
+    }
+
+    void restoreStoredGameSession();
+
+    return () => {
+      active = false;
+    };
   }, [profilePublicId]);
 
   useEffect(() => {
@@ -1577,11 +1617,20 @@ function Client({
         path: { matchId: activeMatchId },
       });
 
-      if (!active || result.error || !result.data) {
+      if (!active) {
         return;
       }
 
-      if (result.data.status === "ENDED") {
+      if (
+        result.response?.status === 404 ||
+        result.response?.status === 410 ||
+        !result.data
+      ) {
+        finishGameSession();
+        return;
+      }
+
+      if (isFinishedMatchStatus(result.data.status)) {
         applyMatch(normalizeMatchResponse(result.data));
       }
     }
@@ -1907,7 +1956,7 @@ function Client({
 
     if (gameInProgress) {
       if (
-        hydratedMatch.status === "ENDED" &&
+        isFinishedMatchStatus(hydratedMatch.status) &&
         (!gameLaunchParameters?.matchId ||
           hydratedMatch.matchId === gameLaunchParameters.matchId)
       ) {
@@ -2398,10 +2447,28 @@ function Client({
         (typeof storedSession.playerPublicId !== "number" ||
           storedSession.playerPublicId === profilePublicId)
       ) {
-        presenceInitializedRef.current = true;
-        setPresenceStatus("ingame");
-        publishActivePresence("IN_GAME");
-        return;
+        const matchStatus = await getMatch({
+          baseUrl: MATCHMAKING_API_BASE_URL,
+          path: { matchId: storedSession.parameters.matchId },
+        });
+
+        if (!active) {
+          return;
+        }
+
+        if (
+          matchStatus.response?.status === 404 ||
+          matchStatus.response?.status === 410 ||
+          !matchStatus.data ||
+          isFinishedMatchStatus(matchStatus.data.status)
+        ) {
+          clearStoredGameSession();
+        } else {
+          presenceInitializedRef.current = true;
+          setPresenceStatus("ingame");
+          publishActivePresence("IN_GAME");
+          return;
+        }
       }
 
       if (isActivePresenceStatus(currentStatus.data?.status)) {

@@ -157,15 +157,11 @@ function SettingsModal({
   const gameTabAvailable = vision === "Vision.ALL";
   const socialTabAvailable = vision === "Vision.ALL";
   const visibleResolutionOptions = resolutionOptions.filter((option) => {
-    if (option.value === "1920x1080") {
-      return supportsTwoKResolution || supportsFourKResolution;
-    }
-
-    if (option.value === "2600x1600" || option.value === "2140x1440") {
-      return supportsFourKResolution;
-    }
-
-    return true;
+    return isResolutionVisible(
+      option.value,
+      supportsTwoKResolution,
+      supportsFourKResolution,
+    );
   });
   const selectedResolution =
     visibleResolutionOptions.find((option) => option.value === resolution)?.label ??
@@ -605,6 +601,63 @@ function SettingsModal({
       </div>
     </div>
   );
+}
+
+function isResolutionVisible(
+  resolution: AppResolution,
+  supportsTwoKResolution: boolean,
+  supportsFourKResolution: boolean,
+) {
+  if (
+    getResolutionRank(resolution) <
+    getResolutionRank(
+      getMinimumVisibleResolution(supportsTwoKResolution, supportsFourKResolution),
+    )
+  ) {
+    return false;
+  }
+
+  if (resolution === "1920x1080") {
+    return supportsTwoKResolution || supportsFourKResolution;
+  }
+
+  if (resolution === "2600x1600" || resolution === "2140x1440") {
+    return supportsFourKResolution;
+  }
+
+  return true;
+}
+
+function getMinimumVisibleResolution(
+  supportsTwoKResolution: boolean,
+  supportsFourKResolution: boolean,
+): AppResolution {
+  if (supportsFourKResolution) {
+    return "1600x900";
+  }
+
+  if (supportsTwoKResolution) {
+    return "1400x800";
+  }
+
+  return "1270x720";
+}
+
+function getResolutionRank(resolution: AppResolution) {
+  switch (resolution) {
+    case "1270x720":
+      return 0;
+    case "1400x800":
+      return 1;
+    case "1600x900":
+      return 2;
+    case "1920x1080":
+      return 3;
+    case "2140x1440":
+      return 4;
+    case "2600x1600":
+      return 5;
+  }
 }
 
 export default SettingsModal;

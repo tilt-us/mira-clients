@@ -37,7 +37,11 @@ export let KEYCLOAK_AUTH_URL = getKeycloakAuthUrl();
 
 export let KEYCLOAK_TOKEN_URL = getKeycloakTokenUrl();
 
-export const REDIRECT_URI = window.location.origin + window.location.pathname;
+export const DESKTOP_REDIRECT_URI = "http://localhost:1420/";
+
+export function getRedirectUri() {
+  return isTauriLocation() ? DESKTOP_REDIRECT_URI : getBrowserRedirectUri();
+}
 
 export function applyKeycloakRuntimeConfig(config: KeycloakRuntimeConfig) {
   KEYCLOAK_BASE_URL = normalizeKeycloakBaseUrl(
@@ -67,6 +71,17 @@ function getKeycloakAuthUrl() {
 
 function getKeycloakTokenUrl() {
   return `${KEYCLOAK_ISSUER_URL}/protocol/openid-connect/token`;
+}
+
+function getBrowserRedirectUri() {
+  return window.location.origin + window.location.pathname;
+}
+
+function isTauriLocation() {
+  return (
+    window.location.protocol === "tauri:" ||
+    window.location.hostname === "tauri.localhost"
+  );
 }
 
 function valueOrDefault(value: string | undefined, defaultValue: string) {

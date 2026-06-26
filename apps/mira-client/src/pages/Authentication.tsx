@@ -564,6 +564,18 @@ function Authentication() {
     window.close();
   }
 
+  useEffect(() => {
+    const className = "mira-client-authenticated";
+
+    document.documentElement.classList.toggle(className, Boolean(profile));
+    document.body.classList.toggle(className, Boolean(profile));
+
+    return () => {
+      document.documentElement.classList.remove(className);
+      document.body.classList.remove(className);
+    };
+  }, [profile]);
+
   const busy = loadState === "loading";
   const clientVersion = `Client v${__CLIENT_VERSION__}`;
   const profileName = profile ? getProfileName(profile) : undefined;

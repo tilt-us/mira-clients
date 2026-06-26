@@ -491,7 +491,8 @@
   align-content: start;
   gap: 18px;
   min-width: 0;
-  min-height: 100vh;
+  min-height: 0;
+  height: 100dvh;
   overflow: hidden;
   padding: 74px 32px 32px;
 }

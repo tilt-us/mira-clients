@@ -27,10 +27,18 @@ body {
 }
 
 html,
+body,
 #root {
+  height: 100%;
   width: 100%;
   max-width: 100%;
   overflow-x: hidden;
+}
+
+html.mira-client-authenticated,
+body.mira-client-authenticated,
+body.mira-client-authenticated #root {
+  overflow: hidden;
 }
 
 button,
@@ -81,8 +89,9 @@ button {
   align-items: stretch;
   place-items: stretch;
   width: 100%;
-  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
   max-width: 100vw;
-  overflow-x: hidden;
+  overflow: hidden;
   padding: 0;
 }

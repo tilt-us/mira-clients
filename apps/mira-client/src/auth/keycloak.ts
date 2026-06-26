@@ -5,7 +5,7 @@ import {
   KEYCLOAK_ISSUER_URL,
   KEYCLOAK_PASSWORD_CLIENT_ID,
   KEYCLOAK_TOKEN_URL,
-  REDIRECT_URI,
+  getRedirectUri,
 } from "./config";
 import { apiFetch } from "../api/http";
 import {
@@ -162,13 +162,14 @@ export async function startGoogleLogin() {
   const state = createRandomString(24);
   const codeVerifier = createRandomString(64);
   const codeChallenge = await createCodeChallenge(codeVerifier);
+  const redirectUri = getRedirectUri();
   const searchParams = new URLSearchParams({
     client_id: KEYCLOAK_CLIENT_ID,
     code_challenge: codeChallenge,
     code_challenge_method: "S256",
     kc_idp_hint: "google",
     prompt: "select_account",
-    redirect_uri: REDIRECT_URI,
+    redirect_uri: redirectUri,
     response_type: "code",
     scope: "openid email profile",
     state,
@@ -178,7 +179,7 @@ export async function startGoogleLogin() {
   const authUrl = `${KEYCLOAK_AUTH_URL}?${searchParams.toString()}`;
   console.info("[mira-client] Starting Google login", {
     authUrl,
-    keycloakClientRedirectUri: REDIRECT_URI,
+    keycloakClientRedirectUri: redirectUri,
     expectedGoogleRedirectUri: `${KEYCLOAK_ISSUER_URL}/broker/google/endpoint`,
   });
 
@@ -186,7 +187,7 @@ export async function startGoogleLogin() {
     await invoke("start_oauth_window", {
       request: {
         authUrl,
-        redirectUri: REDIRECT_URI,
+        redirectUri,
       },
     });
     return;
@@ -204,7 +205,7 @@ export async function completeRedirectLogin(callbackUrl?: string) {
   if (error) {
     clearOAuthRequest();
     if (!callbackUrl) {
-      window.history.replaceState({}, document.title, REDIRECT_URI);
+      window.history.replaceState({}, document.title, getRedirectUri());
     }
     throw new Error(error);
   }
@@ -218,25 +219,26 @@ export async function completeRedirectLogin(callbackUrl?: string) {
   if (state !== savedRequest.state || !savedRequest.codeVerifier) {
     clearOAuthRequest();
     if (!callbackUrl) {
-      window.history.replaceState({}, document.title, REDIRECT_URI);
+      window.history.replaceState({}, document.title, getRedirectUri());
     }
     throw new Error("OAuth-Antwort konnte nicht validiert werden.");
   }
 
+  const redirectUri = getRedirectUri();
   const tokens = await requestToken(
     new URLSearchParams({
       client_id: KEYCLOAK_CLIENT_ID,
       code,
       code_verifier: savedRequest.codeVerifier,
       grant_type: "authorization_code",
-      redirect_uri: REDIRECT_URI,
+      redirect_uri: redirectUri,
     }),
     KEYCLOAK_CLIENT_ID,
   );
 
   clearOAuthRequest();
   if (!callbackUrl) {
-    window.history.replaceState({}, document.title, REDIRECT_URI);
+    window.history.replaceState({}, document.title, redirectUri);
   }
   return tokens;
 }

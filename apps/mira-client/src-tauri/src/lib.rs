@@ -28,8 +28,12 @@ const DEFAULT_KEYCLOAK_REALM: &str = "mira";
 const DEFAULT_KEYCLOAK_CLIENT_ID: &str = "mira-bevy";
 const DEFAULT_KEYCLOAK_PASSWORD_CLIENT_ID: &str = "mira-e2e";
 const FORCE_RESTART_RECONNECT_DELAY: Duration = Duration::from_millis(8_500);
-const OAUTH_MODAL_WIDTH: f64 = 540.0;
-const OAUTH_MODAL_HEIGHT: f64 = 680.0;
+const OAUTH_MODAL_WIDTH_RATIO: f64 = 0.75;
+const OAUTH_MODAL_HEIGHT_RATIO: f64 = 0.8;
+const OAUTH_MODAL_FALLBACK_WIDTH: f64 = 960.0;
+const OAUTH_MODAL_FALLBACK_HEIGHT: f64 = 720.0;
+const OAUTH_MODAL_MIN_WIDTH: f64 = 720.0;
+const OAUTH_MODAL_MIN_HEIGHT: f64 = 560.0;
 
 #[derive(serde::Serialize)]
 struct LauncherStatus {
@@ -355,11 +359,12 @@ fn start_oauth_window(app: tauri::AppHandle, request: OAuthWindowRequest) -> Res
     let back_button_script = oauth_back_button_init_script(&redirect_uri)
         .map_err(|error| format!("OAuth-Button konnte nicht vorbereitet werden: {error}"))?;
 
+    let mut modal_width = OAUTH_MODAL_FALLBACK_WIDTH;
+    let mut modal_height = OAUTH_MODAL_FALLBACK_HEIGHT;
     let mut oauth_window_builder =
         tauri::WebviewWindowBuilder::new(&app, "mira-oauth", tauri::WebviewUrl::External(auth_url))
             .title("Mira Login")
-            .inner_size(OAUTH_MODAL_WIDTH, OAUTH_MODAL_HEIGHT)
-            .min_inner_size(420.0, 560.0)
+            .min_inner_size(OAUTH_MODAL_MIN_WIDTH, OAUTH_MODAL_MIN_HEIGHT)
             .resizable(false)
             .decorations(false)
             .skip_taskbar(true)
@@ -388,18 +393,21 @@ fn start_oauth_window(app: tauri::AppHandle, request: OAuthWindowRequest) -> Res
             });
 
     if let Some(main_window) = app.get_webview_window("main") {
-        let (x, y) = oauth_modal_position(&main_window, OAUTH_MODAL_WIDTH, OAUTH_MODAL_HEIGHT)?;
+        let geometry = oauth_modal_geometry(&main_window)?;
+        modal_width = geometry.width;
+        modal_height = geometry.height;
         oauth_window_builder = oauth_window_builder
             .parent(&main_window)
             .map_err(|error| {
                 format!("OAuth-Modal konnte nicht an das Main-Window gebunden werden: {error}")
             })?
-            .position(x, y);
+            .position(geometry.x, geometry.y);
     } else {
         oauth_window_builder = oauth_window_builder.center();
     }
 
     let oauth_window = oauth_window_builder
+        .inner_size(modal_width, modal_height)
         .build()
         .map_err(|error| format!("OAuth-Fenster konnte nicht geoeffnet werden: {error}"))?;
 
@@ -415,11 +423,14 @@ fn start_oauth_window(app: tauri::AppHandle, request: OAuthWindowRequest) -> Res
     Ok(())
 }
 
-fn oauth_modal_position(
-    main_window: &tauri::WebviewWindow,
-    modal_width: f64,
-    modal_height: f64,
-) -> Result<(f64, f64), String> {
+struct OAuthModalGeometry {
+    height: f64,
+    width: f64,
+    x: f64,
+    y: f64,
+}
+
+fn oauth_modal_geometry(main_window: &tauri::WebviewWindow) -> Result<OAuthModalGeometry, String> {
     let scale_factor = main_window
         .scale_factor()
         .map_err(|error| format!("Main-Window-Skalierung konnte nicht gelesen werden: {error}"))?;
@@ -434,11 +445,22 @@ fn oauth_modal_position(
     let main_y = f64::from(main_position.y) / scale_factor;
     let main_width = f64::from(main_size.width) / scale_factor;
     let main_height = f64::from(main_size.height) / scale_factor;
+    let modal_width = (main_width * OAUTH_MODAL_WIDTH_RATIO)
+        .max(OAUTH_MODAL_MIN_WIDTH)
+        .min((main_width - 48.0).max(OAUTH_MODAL_MIN_WIDTH));
+    let modal_height = (main_height * OAUTH_MODAL_HEIGHT_RATIO)
+        .max(OAUTH_MODAL_MIN_HEIGHT)
+        .min((main_height - 48.0).max(OAUTH_MODAL_MIN_HEIGHT));
 
     let x = main_x + ((main_width - modal_width) / 2.0).max(24.0);
     let y = main_y + ((main_height - modal_height) / 2.0).max(24.0);
 
-    Ok((x, y))
+    Ok(OAuthModalGeometry {
+        height: modal_height,
+        width: modal_width,
+        x,
+        y,
+    })
 }
 
 fn is_oauth_redirect_url(target_url: &str, redirect_uri: &str) -> bool {
