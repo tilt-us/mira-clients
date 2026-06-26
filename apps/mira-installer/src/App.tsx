@@ -46,7 +46,8 @@ function App() {
   useEffect(() => {
     async function loadDefaultPath() {
       try {
-        setInstallationPath(await executableDir());
+        const defaultPath = await invoke<string>("default_install_path");
+        setInstallationPath(defaultPath || (await executableDir()));
       } catch {
         setInstallationPath(".");
       }

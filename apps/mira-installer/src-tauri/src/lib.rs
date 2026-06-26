@@ -14,6 +14,7 @@ use std::os::unix::fs::PermissionsExt;
 const LATEST_MANIFEST_URL: &str = "https://api.tilt-us.com/downloads/mira/game-sources/latest.json";
 const ERROR_CODE_GAME_DATA: &str = "465";
 const ERROR_CODE_SERVER_NO_RESPONSE: &str = "19145";
+const WINDOWS_PROGRAM_FILES_FALLBACK: &str = r"C:\Program Files";
 const FHD_INSTALLER_SIZE: InstallerWindowSize = InstallerWindowSize {
     width: 450.0,
     height: 575.0,
@@ -88,6 +89,11 @@ fn detect_platform() -> PlatformInfo {
 }
 
 #[tauri::command]
+fn default_install_path() -> String {
+    default_install_path_buf().to_string_lossy().into_owned()
+}
+
+#[tauri::command]
 fn path_has_content(install_path: String) -> Result<bool, String> {
     let path = PathBuf::from(install_path);
 
@@ -138,6 +144,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             detect_platform,
+            default_install_path,
             install_game,
             launch_installed_launcher,
             path_has_content
@@ -196,6 +203,24 @@ fn installer_window_size_for_monitor(width: u32, height: u32) -> InstallerWindow
     } else {
         FHD_INSTALLER_SIZE
     }
+}
+
+fn default_install_path_buf() -> PathBuf {
+    if cfg!(windows) {
+        let mut install_path = std::env::var_os("ProgramFiles")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(WINDOWS_PROGRAM_FILES_FALLBACK));
+
+        install_path.push("Mira Games");
+        install_path.push("Mira Moba");
+        return install_path;
+    }
+
+    std::env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(Path::to_path_buf))
+        .or_else(|| std::env::current_dir().ok())
+        .unwrap_or_else(|| PathBuf::from("."))
 }
 
 fn install_game_blocking(
