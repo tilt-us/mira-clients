@@ -1,9 +1,14 @@
 use std::{
+    io::{BufRead, BufReader, Write},
+    net::{TcpListener, TcpStream},
     path::PathBuf,
     process::{Child, Command},
-    sync::Mutex,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tauri::{Emitter, Manager};
 
@@ -34,6 +39,7 @@ const OAUTH_MODAL_FALLBACK_WIDTH: f64 = 960.0;
 const OAUTH_MODAL_FALLBACK_HEIGHT: f64 = 720.0;
 const OAUTH_MODAL_MIN_WIDTH: f64 = 720.0;
 const OAUTH_MODAL_MIN_HEIGHT: f64 = 560.0;
+const OAUTH_BROWSER_CALLBACK_TIMEOUT: Duration = Duration::from_secs(600);
 
 #[derive(serde::Serialize)]
 struct LauncherStatus {
@@ -338,14 +344,18 @@ fn stop_game_client(process_state: tauri::State<'_, GameProcessState>) -> Result
 
 #[tauri::command]
 fn start_oauth_window(app: tauri::AppHandle, request: OAuthWindowRequest) -> Result<(), String> {
-    let auth_url = request
-        .auth_url
+    let auth_url_text = request.auth_url.trim().to_string();
+    let auth_url = auth_url_text
         .parse()
         .map_err(|error| format!("OAuth-URL ist ungueltig: {error}"))?;
     let redirect_uri = request.redirect_uri.trim().to_string();
 
     if redirect_uri.is_empty() {
         return Err("OAuth-Redirect-URI fehlt.".to_string());
+    }
+
+    if cfg!(windows) && !cfg!(debug_assertions) {
+        return start_external_oauth_login(app, auth_url_text, redirect_uri);
     }
 
     if let Some(existing_window) = app.get_webview_window("mira-oauth") {
@@ -421,6 +431,152 @@ fn start_oauth_window(app: tauri::AppHandle, request: OAuthWindowRequest) -> Res
     });
 
     Ok(())
+}
+
+fn start_external_oauth_login(
+    app: tauri::AppHandle,
+    auth_url: String,
+    redirect_uri: String,
+) -> Result<(), String> {
+    let listeners = bind_oauth_redirect_listeners(&redirect_uri)?;
+    let callback_origin = oauth_redirect_origin(&redirect_uri)?;
+    let completed = Arc::new(AtomicBool::new(false));
+
+    for listener in listeners {
+        let app_for_callback = app.clone();
+        let callback_origin = callback_origin.clone();
+        let completed = Arc::clone(&completed);
+
+        thread::spawn(move || {
+            accept_oauth_redirect(listener, app_for_callback, callback_origin, completed);
+        });
+    }
+
+    tauri_plugin_opener::open_url(&auth_url, None::<&str>)
+        .map_err(|error| format!("OAuth-Browser konnte nicht geoeffnet werden: {error}"))
+}
+
+fn bind_oauth_redirect_listeners(redirect_uri: &str) -> Result<Vec<TcpListener>, String> {
+    let redirect_url: tauri::Url = redirect_uri
+        .parse()
+        .map_err(|error| format!("OAuth-Redirect-URI ist ungueltig: {error}"))?;
+    let port = redirect_url
+        .port_or_known_default()
+        .ok_or_else(|| "OAuth-Redirect-URI hat keinen Port.".to_string())?;
+
+    let mut listeners = Vec::new();
+    let mut errors = Vec::new();
+
+    for address in [format!("127.0.0.1:{port}"), format!("[::1]:{port}")] {
+        match TcpListener::bind(&address) {
+            Ok(listener) => {
+                listener.set_nonblocking(true).map_err(|error| {
+                    format!("OAuth-Redirect-Port {port} konnte nicht vorbereitet werden: {error}")
+                })?;
+                listeners.push(listener);
+            }
+            Err(error) => {
+                errors.push(format!("{address}: {error}"));
+            }
+        }
+    }
+
+    if listeners.is_empty() {
+        return Err(format!(
+            "OAuth-Redirect-Port {port} konnte nicht geoeffnet werden: {}",
+            errors.join(", ")
+        ));
+    }
+
+    Ok(listeners)
+}
+
+fn oauth_redirect_origin(redirect_uri: &str) -> Result<String, String> {
+    let redirect_url: tauri::Url = redirect_uri
+        .parse()
+        .map_err(|error| format!("OAuth-Redirect-URI ist ungueltig: {error}"))?;
+    let host = redirect_url
+        .host_str()
+        .ok_or_else(|| "OAuth-Redirect-URI hat keinen Host.".to_string())?;
+    let port = redirect_url
+        .port_or_known_default()
+        .ok_or_else(|| "OAuth-Redirect-URI hat keinen Port.".to_string())?;
+
+    Ok(format!("{}://{}:{}", redirect_url.scheme(), host, port))
+}
+
+fn accept_oauth_redirect(
+    listener: TcpListener,
+    app: tauri::AppHandle,
+    callback_origin: String,
+    completed: Arc<AtomicBool>,
+) {
+    let started_at = Instant::now();
+
+    while !completed.load(Ordering::Relaxed)
+        && started_at.elapsed() < OAUTH_BROWSER_CALLBACK_TIMEOUT
+    {
+        match listener.accept() {
+            Ok((stream, _)) => {
+                if completed.swap(true, Ordering::Relaxed) {
+                    return;
+                }
+
+                handle_oauth_redirect_stream(stream, app, callback_origin);
+                return;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                thread::sleep(Duration::from_millis(100));
+            }
+            Err(_) => return,
+        }
+    }
+}
+
+fn handle_oauth_redirect_stream(
+    mut stream: TcpStream,
+    app: tauri::AppHandle,
+    callback_origin: String,
+) {
+    let callback_url = read_oauth_callback_url(&stream, &callback_origin);
+    let _ = write_oauth_browser_response(&mut stream, callback_url.is_some());
+
+    if let Some(url) = callback_url {
+        let _ = app.emit("mira-oauth-callback", OAuthCallbackPayload { url });
+    } else {
+        let _ = app.emit("mira-oauth-closed", ());
+    }
+}
+
+fn read_oauth_callback_url(stream: &TcpStream, callback_origin: &str) -> Option<String> {
+    let mut reader = BufReader::new(stream.try_clone().ok()?);
+    let mut request_line = String::new();
+    reader.read_line(&mut request_line).ok()?;
+
+    let target = request_line.split_whitespace().nth(1)?;
+    if target.starts_with("http://") || target.starts_with("https://") {
+        return Some(target.to_string());
+    }
+
+    Some(format!("{callback_origin}{target}"))
+}
+
+fn write_oauth_browser_response(stream: &mut TcpStream, success: bool) -> std::io::Result<()> {
+    let message = if success {
+        "Mira login complete. You can close this browser tab and return to Mira."
+    } else {
+        "Mira login could not be completed. You can close this browser tab and return to Mira."
+    };
+    let body = format!(
+        "<!doctype html><html><head><meta charset=\"utf-8\"><title>Mira Login</title></head><body>{message}</body></html>"
+    );
+    let response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        body.len(),
+        body
+    );
+
+    stream.write_all(response.as_bytes())
 }
 
 struct OAuthModalGeometry {

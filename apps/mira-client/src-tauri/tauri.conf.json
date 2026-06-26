@@ -28,6 +28,11 @@
   "bundle": {
     "active": true,
     "targets": ["deb"],
+    "windows": {
+      "nsis": {
+        "installMode": "perMachine"
+      }
+    },
     "resources": {
       "../mira-client.prod.toml": "mira-client.toml"
     },

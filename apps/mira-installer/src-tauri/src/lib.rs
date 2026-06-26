@@ -319,14 +319,21 @@ fn install_game_blocking(
     let launcher_path = root.join(launcher_filename(&platform));
     let game_path = root.join(game_client_filename(&platform));
     remove_legacy_install_entries(&root)?;
-    remove_if_exists(&launcher_path)?;
     remove_if_exists(&game_path)?;
 
-    fs::copy(&client_download, &launcher_path)
-        .map_err(|error| format!("failed to install launcher: {error}"))?;
+    let launcher_path = if platform.os == "windows" {
+        install_windows_launcher(&client_download, &root)?;
+        resolve_windows_launcher_path(&root)?
+    } else {
+        remove_if_exists(&launcher_path)?;
+        fs::copy(&client_download, &launcher_path)
+            .map_err(|error| format!("failed to install launcher: {error}"))?;
+        make_executable(&launcher_path)?;
+        launcher_path
+    };
+
     fs::copy(&game_download, &game_path)
         .map_err(|error| format!("failed to install game client: {error}"))?;
-    make_executable(&launcher_path)?;
     make_executable(&game_path)?;
 
     unzip_archive(
@@ -438,7 +445,7 @@ fn game_client_suffix(platform: &PlatformInfo) -> &'static str {
 
 fn launcher_filename(platform: &PlatformInfo) -> &'static str {
     match platform.os.as_str() {
-        "windows" => "mira-launcher.exe",
+        "windows" => "mira-client.exe",
         "macos" => "mira-launcher.dmg",
         "linux" => match platform.package_extension.as_str() {
             ".deb" => "mira-launcher.deb",
@@ -472,6 +479,44 @@ fn remove_legacy_install_entries(root: &Path) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+fn install_windows_launcher(installer_path: &Path, install_dir: &Path) -> Result<(), String> {
+    let install_dir_arg = format!("/D={}", install_dir.to_string_lossy());
+    let status = Command::new(installer_path)
+        .arg("/S")
+        .arg(install_dir_arg)
+        .status()
+        .map_err(|error| format!("failed to run client installer: {error}"))?;
+
+    if status.success() {
+        return Ok(());
+    }
+
+    Err(format!(
+        "client installer failed with exit code {}",
+        status
+            .code()
+            .map(|code| code.to_string())
+            .unwrap_or_else(|| "unknown".to_string())
+    ))
+}
+
+fn resolve_windows_launcher_path(install_dir: &Path) -> Result<PathBuf, String> {
+    let candidates = [
+        install_dir.join("mira-client.exe"),
+        install_dir.join("Mira Client.exe"),
+    ];
+
+    candidates
+        .into_iter()
+        .find(|candidate| candidate.is_file())
+        .ok_or_else(|| {
+            format!(
+                "installed client executable was not found in {}",
+                install_dir.display()
+            )
+        })
 }
 
 fn find_archive(

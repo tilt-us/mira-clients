@@ -341,13 +341,7 @@ jobs:
         env:
           BUNDLES: ${{ matrix.bundles }}
           TAURI_BUNDLER_NEW_APPIMAGE_FORMAT: ${{ runner.os == 'Linux' && 'true' || 'false' }}
-        run: |
-          set -euo pipefail
-          if [[ "${RUNNER_OS}" == "Windows" ]]; then
-            npm run tauri -- build --no-bundle --ci
-          else
-            npm run tauri -- build --bundles "${BUNDLES}" --ci
-          fi
+        run: npm run tauri -- build --bundles "${BUNDLES}" --ci
 
       - name: Patch Linux AppImage environment
         if: runner.os == 'Linux'
@@ -362,20 +356,16 @@ jobs:
           shopt -s nullglob
 
           mkdir -p dist
-          if [[ "${RUNNER_OS}" == "Windows" ]]; then
-            cp src-tauri/target/release/mira-client.exe \
-              "dist/mira-client-${VERSION}-${LABEL}-mira-client.exe"
-          else
-            while IFS= read -r -d '' asset; do
-              name="$(basename "${asset}" | tr ' ' '-')"
-              cp "${asset}" "dist/mira-client-${VERSION}-${LABEL}-${name}"
-            done < <(find src-tauri/target/release/bundle -type f \
-              \( -name '*.deb' \
-              -o -name '*.AppImage' \
-              -o -name '*.rpm' \
-              -o -name '*.dmg' \) \
-              -print0)
-          fi
+          while IFS= read -r -d '' asset; do
+            name="$(basename "${asset}" | tr ' ' '-')"
+            cp "${asset}" "dist/mira-client-${VERSION}-${LABEL}-${name}"
+          done < <(find src-tauri/target/release/bundle -type f \
+            \( -name '*.deb' \
+            -o -name '*.AppImage' \
+            -o -name '*.rpm' \
+            -o -name '*.exe' \
+            -o -name '*.dmg' \) \
+            -print0)
 
           if [[ -z "$(find dist -type f -print -quit)" ]]; then
             echo "No mira-client release bundles found."
