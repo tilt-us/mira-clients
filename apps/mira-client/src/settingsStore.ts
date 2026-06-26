@@ -354,8 +354,7 @@ function getMaxUiScaleForResolution(resolution: AppResolution): UiScale {
     case "1600x900":
       return 1.25;
     case "1920x1080":
-    case "2600x1600":
-    case "2140x1440":
+    case "2140x1080":
       return 1.5;
   }
 }
@@ -389,10 +388,7 @@ function isResolutionSupportedByMonitor(
     return false;
   }
 
-  if (
-    (resolution === "2600x1600" || resolution === "2140x1440") &&
-    !monitorResolutionSupport.fourK
-  ) {
+  if (resolution === "2140x1080" && !monitorResolutionSupport.fourK) {
     return false;
   }
 
@@ -409,10 +405,8 @@ function getResolutionRank(resolution: AppResolution) {
       return 2;
     case "1920x1080":
       return 3;
-    case "2140x1440":
+    case "2140x1080":
       return 4;
-    case "2600x1600":
-      return 5;
   }
 }
 

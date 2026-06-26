@@ -14,8 +14,7 @@ export type AppResolution =
   | "1400x800"
   | "1600x900"
   | "1920x1080"
-  | "2600x1600"
-  | "2140x1440";
+  | "2140x1080";
 
 export type ClientAnimation = "all" | "ui-elements" | "images" | "none";
 export type UiScale = 0.5 | 0.6 | 0.7 | 0.8 | 0.9 | 1 | 1.1 | 1.25 | 1.5;
@@ -67,8 +66,7 @@ export function isAppResolution(value: unknown): value is AppResolution {
     value === "1400x800" ||
     value === "1600x900" ||
     value === "1920x1080" ||
-    value === "2600x1600" ||
-    value === "2140x1440"
+    value === "2140x1080"
   );
 }
 
@@ -136,12 +134,8 @@ export function getResolutionFromSize(
     return "1920x1080";
   }
 
-  if (roundedWidth === 2600 && roundedHeight === 1600) {
-    return "2600x1600";
-  }
-
-  if (roundedWidth === 2140 && roundedHeight === 1440) {
-    return "2140x1440";
+  if (roundedWidth === 2140 && roundedHeight === 1080) {
+    return "2140x1080";
   }
 
   return undefined;

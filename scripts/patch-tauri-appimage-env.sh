@@ -38,20 +38,62 @@ for appdir in "${appdirs[@]}"; do
   binary_name="$(basename "${binary_path}")"
   wrapper_name="${binary_name}-appimage-env"
   wrapper_path="${appdir}/usr/bin/${wrapper_name}"
+  plugin_staging_dir="$(mktemp -d)"
+  trap 'rm -rf "${plugin_staging_dir}"' EXIT
 
-  cat > "${wrapper_path}" <<EOF
+  plugins_dir="$(pkg-config --variable=pluginsdir gstreamer-1.0 2>/dev/null || true)"
+  scanner_dir="$(pkg-config --variable=pluginscannerdir gstreamer-1.0 2>/dev/null || true)"
+  gst_app_plugin=""
+  gst_plugin_scanner=""
+  if [[ -n "${plugins_dir}" && -f "${plugins_dir}/libgstapp.so" ]]; then
+    gst_app_plugin="${plugins_dir}/libgstapp.so"
+  else
+    while IFS= read -r candidate; do
+      gst_app_plugin="${candidate}"
+      break
+    done < <(find /usr/lib /usr/lib64 -path '*/gstreamer-1.0/libgstapp.so' -type f 2>/dev/null)
+  fi
+
+  if [[ -n "${scanner_dir}" && -x "${scanner_dir}/gst-plugin-scanner" ]]; then
+    gst_plugin_scanner="${scanner_dir}/gst-plugin-scanner"
+  else
+    while IFS= read -r candidate; do
+      gst_plugin_scanner="${candidate}"
+      break
+    done < <(find /usr/lib /usr/lib64 -path '*/gstreamer-1.0/gst-plugin-scanner' -type f -perm -111 2>/dev/null)
+  fi
+
+  if [[ -z "${gst_app_plugin}" ]]; then
+    echo "Could not find GStreamer appsink plugin libgstapp.so."
+    exit 1
+  fi
+  if [[ -z "${gst_plugin_scanner}" ]]; then
+    echo "Could not find GStreamer plugin scanner."
+    exit 1
+  fi
+
+  cp "${gst_app_plugin}" "${plugin_staging_dir}/libgstapp.so"
+  cp "${gst_plugin_scanner}" "${plugin_staging_dir}/gst-plugin-scanner"
+
+  # Keep the AppImage on the host WebKitGTK/GTK graphics stack. Bundled copies
+  # can be stable but noticeably slower on some Linux desktops.
+  rm -rf "${appdir}/usr/lib" "${appdir}/usr/lib64"
+  mkdir -p "${appdir}/usr/lib/gstreamer-1.0"
+  cp "${plugin_staging_dir}/libgstapp.so" "${appdir}/usr/lib/gstreamer-1.0/libgstapp.so"
+  cp "${plugin_staging_dir}/gst-plugin-scanner" "${appdir}/usr/lib/gstreamer-1.0/gst-plugin-scanner"
+
+cat > "${wrapper_path}" <<EOF
 #!/bin/sh
-export WEBKIT_DISABLE_DMABUF_RENDERER=1
-export WEBKIT_DISABLE_COMPOSITING_MODE=1
-export GDK_BACKEND=x11
-exec "\$(dirname "\$0")/${binary_name}" "\$@"
+script_dir="\$(dirname "\$0")"
+unset WEBKIT_DISABLE_DMABUF_RENDERER
+unset WEBKIT_DISABLE_COMPOSITING_MODE
+unset GDK_BACKEND
+unset LIBGL_ALWAYS_SOFTWARE
+export GST_PLUGIN_PATH="\${script_dir}/../lib/gstreamer-1.0\${GST_PLUGIN_PATH:+:\${GST_PLUGIN_PATH}}"
+export GST_PLUGIN_SCANNER="\${script_dir}/../lib/gstreamer-1.0/gst-plugin-scanner"
+exec "\${script_dir}/${binary_name}" "\$@"
 EOF
   chmod +x "${wrapper_path}"
-
-  # Tauri/linuxdeploy bundles WebKitGTK, GTK, GStreamer and graphics libraries
-  # into usr/lib. On rolling Linux systems those AppImage copies can conflict
-  # with the host EGL/GL stack and abort WebKit with EGL_BAD_PARAMETER.
-  rm -rf "${appdir}/usr/lib" "${appdir}/usr/lib64"
 
   while IFS= read -r -d '' candidate_desktop_file; do
     sed -i -E "s|^Exec=.*$|Exec=${wrapper_name}|" "${candidate_desktop_file}"

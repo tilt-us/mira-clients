@@ -651,9 +651,9 @@ fn launch_path(path: PathBuf) -> Result<(), String> {
 
 #[cfg(target_os = "linux")]
 fn configure_linux_webkit_command(command: &mut Command) {
-    command.env("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
-    command.env("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
-    command.env("GDK_BACKEND", "x11");
+    command.env_remove("WEBKIT_DISABLE_DMABUF_RENDERER");
+    command.env_remove("WEBKIT_DISABLE_COMPOSITING_MODE");
+    command.env_remove("GDK_BACKEND");
     command.env_remove("LIBGL_ALWAYS_SOFTWARE");
 }
 
