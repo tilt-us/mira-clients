@@ -37,6 +37,18 @@ async function fulfillMockApiRequest(route: Route) {
     return;
   }
 
+  if (pathname.endsWith("/protocol/openid-connect/logout")) {
+    const referer = request.headers().referer;
+    const appOrigin = referer ? new URL(referer).origin : "http://127.0.0.1:4173";
+    const redirectScript = `window.location.replace(${JSON.stringify(`${appOrigin}/`)})`;
+
+    await route.fulfill({
+      contentType: "text/html",
+      body: `<!doctype html><script>${redirectScript}</script>`,
+    });
+    return;
+  }
+
   if (pathname === "/api/public/login-options") {
     await route.fulfill({
       contentType: "application/json",

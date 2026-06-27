@@ -1,4 +1,16 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
+
+const keycloakAuthPattern =
+  /^(?:https:\/\/api\.tilt-us\.com\/keycloak|http:\/\/localhost:8081)\/.*$/;
+
+async function mockKeycloakAuth(page: Page) {
+  await page.route(keycloakAuthPattern, async (route) => {
+    await route.fulfill({
+      contentType: "text/html",
+      body: "<!doctype html><title>Keycloak</title>",
+    });
+  });
+}
 
 test.beforeEach(async ({ page }) => {
   await page.route("**/api/public/login-options", async (route) => {
@@ -27,12 +39,7 @@ test("renders the authentication screen", async ({ page }) => {
 });
 
 test("starts GitHub login with the GitHub identity provider hint", async ({ page }) => {
-  await page.route("http://localhost:8081/**", async (route) => {
-    await route.fulfill({
-      contentType: "text/html",
-      body: "<!doctype html><title>Keycloak</title>",
-    });
-  });
+  await mockKeycloakAuth(page);
 
   await page.goto("/");
 
@@ -53,12 +60,7 @@ test("starts GitHub login with the GitHub identity provider hint", async ({ page
 });
 
 test("starts Google login with account selection and Google language hint", async ({ page }) => {
-  await page.route("http://localhost:8081/**", async (route) => {
-    await route.fulfill({
-      contentType: "text/html",
-      body: "<!doctype html><title>Keycloak</title>",
-    });
-  });
+  await mockKeycloakAuth(page);
 
   await page.goto("/");
 
@@ -80,12 +82,7 @@ test("starts Google login with account selection and Google language hint", asyn
 });
 
 test("starts Discord login with the Discord identity provider hint", async ({ page }) => {
-  await page.route("http://localhost:8081/**", async (route) => {
-    await route.fulfill({
-      contentType: "text/html",
-      body: "<!doctype html><title>Keycloak</title>",
-    });
-  });
+  await mockKeycloakAuth(page);
 
   await page.goto("/");
 
