@@ -40,7 +40,7 @@ async function fulfillMockApiRequest(route: Route) {
   if (pathname === "/api/public/login-options") {
     await route.fulfill({
       contentType: "application/json",
-      json: { providers: ["email", "google"] },
+      json: { providers: ["email", "google", "github", "discord"] },
     });
     return;
   }

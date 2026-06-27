@@ -1,4 +1,5 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
   KEYCLOAK_AUTH_URL,
   KEYCLOAK_CLIENT_ID,
@@ -8,6 +9,8 @@ import {
   getRedirectUri,
 } from "./config";
 import { apiFetch } from "../api/http";
+import { getAccentForegroundColor, isHexColor } from "../settings";
+import type { AppLocale } from "../i18n";
 import {
   clearTokens,
   clearOAuthRequest,
@@ -20,11 +23,13 @@ import {
 
 type TokenResponse = {
   access_token: string;
+  id_token?: string;
   refresh_token?: string;
   expires_in?: number;
 };
 
 const accessTokenRefreshMarginMs = 60_000;
+const keycloakLogoutTimeoutMs = 15_000;
 
 let refreshPromise: Promise<AuthTokens | undefined> | undefined;
 
@@ -95,12 +100,14 @@ function toAuthTokens(
   tokenResponse: TokenResponse,
   clientId: string,
   fallbackRefreshToken?: string,
+  fallbackIdToken?: string,
 ): AuthTokens {
   assertAccessTokenIssuer(tokenResponse.access_token);
 
   return {
     accessToken: tokenResponse.access_token,
     clientId,
+    idToken: tokenResponse.id_token ?? fallbackIdToken,
     refreshToken: tokenResponse.refresh_token ?? fallbackRefreshToken,
     expiresAt: tokenResponse.expires_in
       ? Date.now() + tokenResponse.expires_in * 1000
@@ -112,6 +119,7 @@ async function requestToken(
   body: URLSearchParams,
   clientId: string,
   fallbackRefreshToken?: string,
+  fallbackIdToken?: string,
 ) {
   const response = await apiFetch(KEYCLOAK_TOKEN_URL, {
     method: "POST",
@@ -139,7 +147,12 @@ async function requestToken(
     );
   }
 
-  return toAuthTokens(parsedResponse as TokenResponse, clientId, fallbackRefreshToken);
+  return toAuthTokens(
+    parsedResponse as TokenResponse,
+    clientId,
+    fallbackRefreshToken,
+    fallbackIdToken,
+  );
 }
 
 function normalizeKeycloakError(error: string) {
@@ -158,7 +171,44 @@ function normalizeKeycloakError(error: string) {
   return error;
 }
 
-export async function startGoogleLogin() {
+type OAuthProvider = {
+  googleLanguage?: true;
+  idpHint: string;
+  name: string;
+  prompt?: string;
+};
+
+type KeycloakThemeOptions = {
+  accentColor: string;
+  locale: AppLocale;
+};
+
+function addKeycloakThemeParams(
+  searchParams: URLSearchParams,
+  options?: KeycloakThemeOptions,
+) {
+  if (!options) {
+    return;
+  }
+
+  if (isHexColor(options.accentColor)) {
+    searchParams.set("accent", options.accentColor.slice(1));
+    searchParams.set(
+      "fontColor",
+      getAccentForegroundColor(options.accentColor) === "#ffffff" ? "white" : "black",
+    );
+  }
+
+  const localeCode = options.locale === "de" ? "de" : "en";
+  searchParams.set("kc_locale", localeCode);
+  searchParams.set("lang", options.locale === "de" ? "german" : "english");
+  searchParams.set("ui_locales", localeCode);
+}
+
+async function startProviderLogin(
+  provider: OAuthProvider,
+  options?: KeycloakThemeOptions,
+) {
   const state = createRandomString(24);
   const codeVerifier = createRandomString(64);
   const codeChallenge = await createCodeChallenge(codeVerifier);
@@ -167,20 +217,29 @@ export async function startGoogleLogin() {
     client_id: KEYCLOAK_CLIENT_ID,
     code_challenge: codeChallenge,
     code_challenge_method: "S256",
-    kc_idp_hint: "google",
-    prompt: "select_account",
+    kc_idp_hint: provider.idpHint,
     redirect_uri: redirectUri,
     response_type: "code",
     scope: "openid email profile",
     state,
   });
 
+  if (provider.prompt) {
+    searchParams.set("prompt", provider.prompt);
+  }
+
+  addKeycloakThemeParams(searchParams, options);
+
+  if (provider.googleLanguage && options) {
+    searchParams.set("hl", options.locale === "de" ? "de" : "en");
+  }
+
   saveOAuthRequest(state, codeVerifier);
   const authUrl = `${KEYCLOAK_AUTH_URL}?${searchParams.toString()}`;
-  console.info("[mira-client] Starting Google login", {
+  console.info(`[mira-client] Starting ${provider.name} login`, {
     authUrl,
     keycloakClientRedirectUri: redirectUri,
-    expectedGoogleRedirectUri: `${KEYCLOAK_ISSUER_URL}/broker/google/endpoint`,
+    expectedProviderRedirectUri: `${KEYCLOAK_ISSUER_URL}/broker/${provider.idpHint}/endpoint`,
   });
 
   if (isTauri()) {
@@ -194,6 +253,161 @@ export async function startGoogleLogin() {
   }
 
   window.location.assign(authUrl);
+}
+
+export function startGoogleLogin(options?: KeycloakThemeOptions) {
+  return startProviderLogin(
+    {
+      googleLanguage: true,
+      idpHint: "google",
+      name: "Google",
+      prompt: "select_account",
+    },
+    options,
+  );
+}
+
+export function startGithubLogin(options?: KeycloakThemeOptions) {
+  return startProviderLogin(
+    {
+      idpHint: "github",
+      name: "GitHub",
+      prompt: "select_account",
+    },
+    options,
+  );
+}
+
+export function startDiscordLogin(options?: KeycloakThemeOptions) {
+  return startProviderLogin(
+    {
+      idpHint: "discord",
+      name: "Discord",
+    },
+    options,
+  );
+}
+
+type OAuthCallbackPayload = {
+  url: string;
+};
+
+async function createTauriOAuthCallbackWaiter() {
+  const unlisteners: UnlistenFn[] = [];
+  let completed = false;
+  let timeoutId: number | undefined;
+  let finish: (error?: Error) => void = () => undefined;
+
+  const promise = new Promise<void>((resolve, reject) => {
+    finish = (error?: Error) => {
+      if (completed) {
+        return;
+      }
+
+      completed = true;
+
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId);
+      }
+
+      for (const unlisten of unlisteners) {
+        unlisten();
+      }
+
+      if (error) {
+        reject(error);
+        return;
+      }
+
+      resolve();
+    };
+
+    timeoutId = window.setTimeout(() => {
+      finish(new Error("Keycloak-Logout hat keinen Redirect zurück zur App geliefert."));
+    }, keycloakLogoutTimeoutMs);
+  });
+
+  try {
+    unlisteners.push(
+      await listen<OAuthCallbackPayload>("mira-oauth-callback", () => {
+        finish();
+      }),
+    );
+
+  } catch (caughtError) {
+    finish(
+      caughtError instanceof Error
+        ? caughtError
+        : new Error("Keycloak-Logout konnte nicht überwacht werden."),
+    );
+  }
+
+  return {
+    cancel() {
+      finish(new Error("Keycloak-Logout wurde abgebrochen."));
+    },
+    wait: promise,
+  };
+}
+
+async function getLogoutIdToken() {
+  const tokens = readTokens();
+
+  if (!tokens?.accessToken) {
+    return undefined;
+  }
+
+  if (tokens.idToken) {
+    return tokens.idToken;
+  }
+
+  const refreshedTokens = await refreshStoredAccessToken(tokens);
+
+  return refreshedTokens?.idToken;
+}
+
+export async function startKeycloakLogout() {
+  const redirectUri = getRedirectUri();
+  const idToken = await getLogoutIdToken();
+  const searchParams = new URLSearchParams({
+    client_id: KEYCLOAK_CLIENT_ID,
+    post_logout_redirect_uri: redirectUri,
+  });
+
+  if (idToken) {
+    searchParams.set("id_token_hint", idToken);
+  }
+
+  const logoutUrl = `${KEYCLOAK_ISSUER_URL}/protocol/openid-connect/logout?${searchParams.toString()}`;
+
+  console.info("[mira-client] Starting Keycloak logout", {
+    hasIdTokenHint: Boolean(idToken),
+    logoutUrl,
+    postLogoutRedirectUri: redirectUri,
+  });
+
+  if (isTauri()) {
+    const logoutCompleted = await createTauriOAuthCallbackWaiter();
+
+    try {
+      await invoke("start_oauth_window", {
+        request: {
+          authUrl: logoutUrl,
+          redirectUri,
+          visible: false,
+        },
+      });
+    } catch (caughtError) {
+      logoutCompleted.cancel();
+      await logoutCompleted.wait.catch(() => undefined);
+      throw caughtError;
+    }
+
+    await logoutCompleted.wait;
+    return;
+  }
+
+  window.location.assign(logoutUrl);
 }
 
 export async function completeRedirectLogin(callbackUrl?: string) {
@@ -309,6 +523,7 @@ async function refreshAccessToken(tokens: AuthTokens) {
         }),
         clientId,
         tokens.refreshToken,
+        tokens.idToken,
       );
 
       saveTokens(refreshedTokens);

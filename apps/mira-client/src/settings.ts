@@ -60,6 +60,22 @@ export function isHexColor(value: unknown): value is string {
   return typeof value === "string" && /^#[0-9a-fA-F]{6}$/.test(value);
 }
 
+export function getAccentForegroundColor(hexColor: string) {
+  const red = Number.parseInt(hexColor.slice(1, 3), 16) / 255;
+  const green = Number.parseInt(hexColor.slice(3, 5), 16) / 255;
+  const blue = Number.parseInt(hexColor.slice(5, 7), 16) / 255;
+
+  const toLinear = (value: number) =>
+    value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+
+  const luminance =
+    0.2126 * toLinear(red) + 0.7152 * toLinear(green) + 0.0722 * toLinear(blue);
+  const whiteContrast = (1 + 0.05) / (luminance + 0.05);
+  const darkContrast = (luminance + 0.05) / 0.055;
+
+  return whiteContrast > darkContrast ? "#ffffff" : "#101216";
+}
+
 export function isAppResolution(value: unknown): value is AppResolution {
   return (
     value === "1270x720" ||

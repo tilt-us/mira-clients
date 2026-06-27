@@ -1,14 +1,12 @@
 use std::{
-    io::{BufRead, BufReader, Write},
-    net::{TcpListener, TcpStream},
     path::PathBuf,
     process::{Child, Command},
     sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        Mutex,
+        atomic::{AtomicU64, Ordering},
     },
     thread,
-    time::{Duration, Instant},
+    time::Duration,
 };
 use tauri::{Emitter, Manager};
 
@@ -33,13 +31,16 @@ const DEFAULT_KEYCLOAK_REALM: &str = "mira";
 const DEFAULT_KEYCLOAK_CLIENT_ID: &str = "mira-bevy";
 const DEFAULT_KEYCLOAK_PASSWORD_CLIENT_ID: &str = "mira-e2e";
 const FORCE_RESTART_RECONNECT_DELAY: Duration = Duration::from_millis(8_500);
-const OAUTH_MODAL_WIDTH_RATIO: f64 = 0.75;
-const OAUTH_MODAL_HEIGHT_RATIO: f64 = 0.8;
+const OAUTH_MODAL_MARGIN: f64 = 84.0;
+const OAUTH_MODAL_WIDTH_RATIO: f64 = 0.62;
+const OAUTH_MODAL_HEIGHT_RATIO: f64 = 0.66;
 const OAUTH_MODAL_FALLBACK_WIDTH: f64 = 960.0;
-const OAUTH_MODAL_FALLBACK_HEIGHT: f64 = 720.0;
+const OAUTH_MODAL_FALLBACK_HEIGHT: f64 = 640.0;
+const OAUTH_MODAL_MAX_WIDTH: f64 = 1040.0;
+const OAUTH_MODAL_MAX_HEIGHT: f64 = 680.0;
 const OAUTH_MODAL_MIN_WIDTH: f64 = 720.0;
-const OAUTH_MODAL_MIN_HEIGHT: f64 = 560.0;
-const OAUTH_BROWSER_CALLBACK_TIMEOUT: Duration = Duration::from_secs(600);
+const OAUTH_MODAL_MIN_HEIGHT: f64 = 520.0;
+static OAUTH_WINDOW_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 #[derive(serde::Serialize)]
 struct LauncherStatus {
@@ -125,12 +126,33 @@ struct GameClientStatus {
 struct OAuthWindowRequest {
     auth_url: String,
     redirect_uri: String,
+    #[serde(default = "default_oauth_window_visible")]
+    visible: bool,
 }
 
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct OAuthCallbackPayload {
     url: String,
+}
+
+#[derive(Clone)]
+struct OAuthTheme {
+    accent_color: Option<String>,
+    font_color: Option<String>,
+}
+
+fn default_oauth_window_visible() -> bool {
+    true
+}
+
+fn oauth_window_label(visible: bool) -> String {
+    if visible {
+        return "mira-oauth".to_string();
+    }
+
+    let id = OAUTH_WINDOW_COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("mira-oauth-logout-{id}")
 }
 
 #[tauri::command]
@@ -354,32 +376,41 @@ fn start_oauth_window(app: tauri::AppHandle, request: OAuthWindowRequest) -> Res
         return Err("OAuth-Redirect-URI fehlt.".to_string());
     }
 
-    if cfg!(windows) && !cfg!(debug_assertions) {
-        return start_external_oauth_login(app, auth_url_text, redirect_uri);
-    }
+    let window_label = oauth_window_label(request.visible);
 
-    if let Some(existing_window) = app.get_webview_window("mira-oauth") {
+    if request.visible
+        && let Some(existing_window) = app.get_webview_window(&window_label)
+    {
         existing_window
             .close()
             .map_err(|error| format!("OAuth-Fenster konnte nicht ersetzt werden: {error}"))?;
     }
 
     let app_for_navigation = app.clone();
+    let window_label_for_navigation = window_label.clone();
     let redirect_uri_for_navigation = redirect_uri.clone();
-    let back_button_script = oauth_back_button_init_script(&redirect_uri)
-        .map_err(|error| format!("OAuth-Button konnte nicht vorbereitet werden: {error}"))?;
+    let oauth_theme = oauth_theme_from_url(&auth_url);
+    let oauth_init_script = oauth_window_init_script(&redirect_uri, oauth_theme.clone())
+        .map_err(|error| format!("OAuth-Fenster konnte nicht vorbereitet werden: {error}"))?;
+    let oauth_window_url = if request.visible {
+        oauth_loading_url(&auth_url_text, &oauth_theme)
+    } else {
+        tauri::WebviewUrl::External(auth_url)
+    };
 
     let mut modal_width = OAUTH_MODAL_FALLBACK_WIDTH;
     let mut modal_height = OAUTH_MODAL_FALLBACK_HEIGHT;
     let mut oauth_window_builder =
-        tauri::WebviewWindowBuilder::new(&app, "mira-oauth", tauri::WebviewUrl::External(auth_url))
+        tauri::WebviewWindowBuilder::new(&app, window_label.clone(), oauth_window_url)
             .title("Mira Login")
             .min_inner_size(OAUTH_MODAL_MIN_WIDTH, OAUTH_MODAL_MIN_HEIGHT)
+            .max_inner_size(OAUTH_MODAL_MAX_WIDTH, OAUTH_MODAL_MAX_HEIGHT)
             .resizable(false)
             .decorations(false)
             .skip_taskbar(true)
             .always_on_top(true)
-            .initialization_script(back_button_script)
+            .visible(request.visible)
+            .initialization_script(oauth_init_script)
             .on_navigation(move |url| {
                 let target_url = url.as_str();
 
@@ -391,7 +422,8 @@ fn start_oauth_window(app: tauri::AppHandle, request: OAuthWindowRequest) -> Res
                         },
                     );
 
-                    if let Some(oauth_window) = app_for_navigation.get_webview_window("mira-oauth")
+                    if let Some(oauth_window) =
+                        app_for_navigation.get_webview_window(&window_label_for_navigation)
                     {
                         let _ = oauth_window.close();
                     }
@@ -431,152 +463,6 @@ fn start_oauth_window(app: tauri::AppHandle, request: OAuthWindowRequest) -> Res
     Ok(())
 }
 
-fn start_external_oauth_login(
-    app: tauri::AppHandle,
-    auth_url: String,
-    redirect_uri: String,
-) -> Result<(), String> {
-    let listeners = bind_oauth_redirect_listeners(&redirect_uri)?;
-    let callback_origin = oauth_redirect_origin(&redirect_uri)?;
-    let completed = Arc::new(AtomicBool::new(false));
-
-    for listener in listeners {
-        let app_for_callback = app.clone();
-        let callback_origin = callback_origin.clone();
-        let completed = Arc::clone(&completed);
-
-        thread::spawn(move || {
-            accept_oauth_redirect(listener, app_for_callback, callback_origin, completed);
-        });
-    }
-
-    tauri_plugin_opener::open_url(&auth_url, None::<&str>)
-        .map_err(|error| format!("OAuth-Browser konnte nicht geoeffnet werden: {error}"))
-}
-
-fn bind_oauth_redirect_listeners(redirect_uri: &str) -> Result<Vec<TcpListener>, String> {
-    let redirect_url: tauri::Url = redirect_uri
-        .parse()
-        .map_err(|error| format!("OAuth-Redirect-URI ist ungueltig: {error}"))?;
-    let port = redirect_url
-        .port_or_known_default()
-        .ok_or_else(|| "OAuth-Redirect-URI hat keinen Port.".to_string())?;
-
-    let mut listeners = Vec::new();
-    let mut errors = Vec::new();
-
-    for address in [format!("127.0.0.1:{port}"), format!("[::1]:{port}")] {
-        match TcpListener::bind(&address) {
-            Ok(listener) => {
-                listener.set_nonblocking(true).map_err(|error| {
-                    format!("OAuth-Redirect-Port {port} konnte nicht vorbereitet werden: {error}")
-                })?;
-                listeners.push(listener);
-            }
-            Err(error) => {
-                errors.push(format!("{address}: {error}"));
-            }
-        }
-    }
-
-    if listeners.is_empty() {
-        return Err(format!(
-            "OAuth-Redirect-Port {port} konnte nicht geoeffnet werden: {}",
-            errors.join(", ")
-        ));
-    }
-
-    Ok(listeners)
-}
-
-fn oauth_redirect_origin(redirect_uri: &str) -> Result<String, String> {
-    let redirect_url: tauri::Url = redirect_uri
-        .parse()
-        .map_err(|error| format!("OAuth-Redirect-URI ist ungueltig: {error}"))?;
-    let host = redirect_url
-        .host_str()
-        .ok_or_else(|| "OAuth-Redirect-URI hat keinen Host.".to_string())?;
-    let port = redirect_url
-        .port_or_known_default()
-        .ok_or_else(|| "OAuth-Redirect-URI hat keinen Port.".to_string())?;
-
-    Ok(format!("{}://{}:{}", redirect_url.scheme(), host, port))
-}
-
-fn accept_oauth_redirect(
-    listener: TcpListener,
-    app: tauri::AppHandle,
-    callback_origin: String,
-    completed: Arc<AtomicBool>,
-) {
-    let started_at = Instant::now();
-
-    while !completed.load(Ordering::Relaxed)
-        && started_at.elapsed() < OAUTH_BROWSER_CALLBACK_TIMEOUT
-    {
-        match listener.accept() {
-            Ok((stream, _)) => {
-                if completed.swap(true, Ordering::Relaxed) {
-                    return;
-                }
-
-                handle_oauth_redirect_stream(stream, app, callback_origin);
-                return;
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                thread::sleep(Duration::from_millis(100));
-            }
-            Err(_) => return,
-        }
-    }
-}
-
-fn handle_oauth_redirect_stream(
-    mut stream: TcpStream,
-    app: tauri::AppHandle,
-    callback_origin: String,
-) {
-    let callback_url = read_oauth_callback_url(&stream, &callback_origin);
-    let _ = write_oauth_browser_response(&mut stream, callback_url.is_some());
-
-    if let Some(url) = callback_url {
-        let _ = app.emit("mira-oauth-callback", OAuthCallbackPayload { url });
-    } else {
-        let _ = app.emit("mira-oauth-closed", ());
-    }
-}
-
-fn read_oauth_callback_url(stream: &TcpStream, callback_origin: &str) -> Option<String> {
-    let mut reader = BufReader::new(stream.try_clone().ok()?);
-    let mut request_line = String::new();
-    reader.read_line(&mut request_line).ok()?;
-
-    let target = request_line.split_whitespace().nth(1)?;
-    if target.starts_with("http://") || target.starts_with("https://") {
-        return Some(target.to_string());
-    }
-
-    Some(format!("{callback_origin}{target}"))
-}
-
-fn write_oauth_browser_response(stream: &mut TcpStream, success: bool) -> std::io::Result<()> {
-    let message = if success {
-        "Mira login complete. You can close this browser tab and return to Mira."
-    } else {
-        "Mira login could not be completed. You can close this browser tab and return to Mira."
-    };
-    let body = format!(
-        "<!doctype html><html><head><meta charset=\"utf-8\"><title>Mira Login</title></head><body>{message}</body></html>"
-    );
-    let response = format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-        body.len(),
-        body
-    );
-
-    stream.write_all(response.as_bytes())
-}
-
 struct OAuthModalGeometry {
     height: f64,
     width: f64,
@@ -599,15 +485,25 @@ fn oauth_modal_geometry(main_window: &tauri::WebviewWindow) -> Result<OAuthModal
     let main_y = f64::from(main_position.y) / scale_factor;
     let main_width = f64::from(main_size.width) / scale_factor;
     let main_height = f64::from(main_size.height) / scale_factor;
+    let available_width = (main_width - (OAUTH_MODAL_MARGIN * 2.0)).max(OAUTH_MODAL_MIN_WIDTH);
+    let available_height = (main_height - (OAUTH_MODAL_MARGIN * 2.0)).max(OAUTH_MODAL_MIN_HEIGHT);
     let modal_width = (main_width * OAUTH_MODAL_WIDTH_RATIO)
         .max(OAUTH_MODAL_MIN_WIDTH)
-        .min((main_width - 48.0).max(OAUTH_MODAL_MIN_WIDTH));
+        .min(OAUTH_MODAL_MAX_WIDTH)
+        .min(available_width);
     let modal_height = (main_height * OAUTH_MODAL_HEIGHT_RATIO)
         .max(OAUTH_MODAL_MIN_HEIGHT)
-        .min((main_height - 48.0).max(OAUTH_MODAL_MIN_HEIGHT));
+        .min(OAUTH_MODAL_MAX_HEIGHT)
+        .min(available_height);
 
-    let x = main_x + ((main_width - modal_width) / 2.0).max(24.0);
-    let y = main_y + ((main_height - modal_height) / 2.0).max(24.0);
+    let min_x = main_x + OAUTH_MODAL_MARGIN.min(main_width / 8.0);
+    let min_y = main_y + OAUTH_MODAL_MARGIN.min(main_height / 8.0);
+    let max_x = main_x + main_width - modal_width - OAUTH_MODAL_MARGIN.min(main_width / 8.0);
+    let max_y = main_y + main_height - modal_height - OAUTH_MODAL_MARGIN.min(main_height / 8.0);
+    let centered_x = main_x + ((main_width - modal_width) / 2.0);
+    let centered_y = main_y + ((main_height - modal_height) / 2.0);
+    let x = centered_x.clamp(min_x, max_x.max(min_x));
+    let y = centered_y.clamp(min_y, max_y.max(min_y));
 
     Ok(OAuthModalGeometry {
         height: modal_height,
@@ -624,28 +520,231 @@ fn is_oauth_redirect_url(target_url: &str, redirect_uri: &str) -> bool {
             .is_some_and(|rest| rest.starts_with('?') || rest.starts_with('#'))
 }
 
-fn oauth_back_button_init_script(redirect_uri: &str) -> Result<String, serde_json::Error> {
-    let redirect_uri = serde_json::to_string(redirect_uri)?;
+fn oauth_loading_url(auth_url: &str, theme: &OAuthTheme) -> tauri::WebviewUrl {
+    let mut query = format!("authUrl={}", encode_url_component(auth_url));
 
-    Ok(format!(
-        r###"
-(function () {{
-  var redirectUri = {redirect_uri};
+    if let Some(accent_color) = theme.accent_color.as_deref() {
+        query.push_str("&accent=");
+        query.push_str(&encode_url_component(accent_color));
+    }
+
+    if let Some(font_color) = theme.font_color.as_deref() {
+        let font_color_name = if font_color == "#ffffff" {
+            "white"
+        } else {
+            "black"
+        };
+        query.push_str("&fontColor=");
+        query.push_str(font_color_name);
+    }
+
+    tauri::WebviewUrl::App(format!("oauth-loading.html?{query}").into())
+}
+
+fn encode_url_component(value: &str) -> String {
+    let mut encoded = String::new();
+
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                encoded.push(byte as char);
+            }
+            _ => {
+                encoded.push_str(&format!("%{byte:02X}"));
+            }
+        }
+    }
+
+    encoded
+}
+
+fn oauth_theme_from_url(auth_url: &tauri::Url) -> OAuthTheme {
+    let mut accent_color = None;
+    let mut font_color = None;
+
+    for (key, value) in auth_url.query_pairs() {
+        match key.as_ref() {
+            "accent" => {
+                accent_color = normalize_oauth_accent_color(&value);
+            }
+            "fontColor" => {
+                font_color = normalize_oauth_font_color(&value);
+            }
+            _ => {}
+        }
+    }
+
+    OAuthTheme {
+        accent_color,
+        font_color,
+    }
+}
+
+fn normalize_oauth_accent_color(value: &str) -> Option<String> {
+    let normalized = value.trim().trim_start_matches('#').to_ascii_lowercase();
+
+    if normalized.len() == 6
+        && normalized
+            .chars()
+            .all(|character| character.is_ascii_hexdigit())
+    {
+        return Some(format!("#{normalized}"));
+    }
+
+    None
+}
+
+fn normalize_oauth_font_color(value: &str) -> Option<String> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "white" => Some("#ffffff".to_string()),
+        "black" => Some("#101216".to_string()),
+        _ => None,
+    }
+}
+
+fn oauth_window_init_script(
+    redirect_uri: &str,
+    theme: OAuthTheme,
+) -> Result<String, serde_json::Error> {
+    let redirect_uri = serde_json::to_string(redirect_uri)?;
+    let accent_color = serde_json::to_string(&theme.accent_color)?;
+    let font_color = serde_json::to_string(&theme.font_color)?;
+
+    Ok(r###"
+(function () {
+  var redirectUri = __MIRA_REDIRECT_URI__;
+  var accentColor = __MIRA_ACCENT_COLOR__;
+  var accentForegroundColor = __MIRA_ACCENT_FOREGROUND_COLOR__;
   var backButtonId = "mira-oauth-back-button";
   var closeButtonId = "mira-oauth-close-button";
+  var themeStyleId = "mira-oauth-theme-style";
   var svgNamespace = "http://www.w3.org/2000/svg";
 
-  function closeModal() {{
+  function closeModal() {
     window.location.href = redirectUri;
-  }}
+  }
 
-  function isKeycloakPage() {{
+  function isKeycloakPage() {
     return /\/realms\/[^/]+\/(protocol\/openid-connect\/auth|login-actions|broker)(\/|$)/.test(
       window.location.pathname
     );
-  }}
+  }
 
-  function applyButtonStyle(button, side, compact) {{
+  function redirectOAuthError(error) {
+    if (window.__miraOAuthErrorRedirected) {
+      return;
+    }
+
+    window.__miraOAuthErrorRedirected = true;
+
+    try {
+      var callbackUrl = new URL(redirectUri);
+      callbackUrl.searchParams.set("error", error);
+      window.location.href = callbackUrl.toString();
+    } catch (errorCaught) {
+      window.location.href = redirectUri + (redirectUri.indexOf("?") === -1 ? "?" : "&") + "error=" + encodeURIComponent(error);
+    }
+  }
+
+  function detectAccountProviderConflict() {
+    if (!document.body || window.__miraOAuthErrorRedirected) {
+      return;
+    }
+
+    var text = document.body.textContent.replace(/\s+/g, " ").trim().toLowerCase();
+    var hasEnglishConflict =
+      text.indexOf("account already exists") !== -1 ||
+      (
+        text.indexOf("already exists") !== -1 &&
+        (text.indexOf("add to existing account") !== -1 || text.indexOf("review profile") !== -1)
+      );
+    var hasGermanConflict =
+      text.indexOf("konto existiert bereits") !== -1 ||
+      (
+        text.indexOf("existiert bereits") !== -1 &&
+        (text.indexOf("bestehenden") !== -1 || text.indexOf("profil") !== -1)
+      );
+
+    if (hasEnglishConflict || hasGermanConflict) {
+      redirectOAuthError("oauth_email_provider_conflict");
+    }
+  }
+
+  function applyTheme() {
+    if (!accentColor || !document.documentElement) {
+      return;
+    }
+
+    var foregroundColor = accentForegroundColor || "#101216";
+    var rootStyle = document.documentElement.style;
+    rootStyle.setProperty("--mira-auth-accent", accentColor);
+    rootStyle.setProperty("--mira-auth-accent-foreground", foregroundColor);
+    rootStyle.setProperty("--accent-color", accentColor);
+    rootStyle.setProperty("--accent-foreground-color", foregroundColor);
+    rootStyle.setProperty("--pf-global--primary-color--100", accentColor);
+    rootStyle.setProperty("--pf-global--primary-color--200", accentColor);
+    rootStyle.setProperty("--pf-v5-global--primary-color--100", accentColor);
+    rootStyle.setProperty("--pf-v5-global--primary-color--200", accentColor);
+
+    var style = document.getElementById(themeStyleId);
+    if (!style) {
+      style = document.createElement("style");
+      style.id = themeStyleId;
+      (document.head || document.documentElement).appendChild(style);
+    }
+
+    style.textContent = [
+      ":root{--mira-auth-accent:" + accentColor + ";--mira-auth-accent-foreground:" + foregroundColor + ";}",
+      "html,body{background:#101216!important;}",
+      "@keyframes mira-oauth-spin{to{transform:rotate(360deg);}}",
+      "#mira-oauth-loader{position:fixed;inset:0;z-index:2147483646;display:grid;place-items:center;background:#101216;}",
+      "#mira-oauth-loader::before{content:'';width:46px;height:46px;border-radius:999px;border:4px solid rgba(237,242,247,.16);border-top-color:var(--mira-auth-accent);box-shadow:0 0 22px color-mix(in srgb,var(--mira-auth-accent) 45%,transparent);animation:mira-oauth-spin .8s linear infinite;}",
+      ".mira-auth-logo,.mira-auth-logo-mark,.mira-auth-brand,.mira-auth-brand-mark,.brand-mark,[class*='brand-mark'],[class*='logo-mark'],[class*='auth-logo'],[class*='mira-logo'],[class*='mira-brand']{background:var(--mira-auth-accent)!important;color:var(--mira-auth-accent-foreground)!important;border-color:var(--mira-auth-accent)!important;}",
+      "input[type='submit'],button[type='submit'],#kc-form-buttons input,.pf-c-button.pf-m-primary,.pf-v5-c-button.pf-m-primary{background:var(--mira-auth-accent)!important;border-color:var(--mira-auth-accent)!important;color:var(--mira-auth-accent-foreground)!important;}",
+      "a,.mira-auth-link,#kc-current-locale-link{color:var(--mira-auth-accent)!important;}",
+      "input:focus,textarea:focus{border-color:var(--mira-auth-accent)!important;box-shadow:0 0 0 1px var(--mira-auth-accent)!important;}"
+    ].join("\n");
+
+    Array.prototype.forEach.call(document.querySelectorAll("body *"), function (element) {
+      if (element.children.length > 1 || element.textContent.trim() !== "M") {
+        return;
+      }
+
+      var rect = element.getBoundingClientRect();
+      var hasBadgeSize = rect.width <= 96 && rect.height <= 96;
+      var className = typeof element.className === "string" ? element.className : "";
+      var looksLikeBrand = /brand|logo|mark|mira/i.test(className);
+
+      if (!hasBadgeSize && !looksLikeBrand) {
+        return;
+      }
+
+      element.style.setProperty("background", accentColor, "important");
+      element.style.setProperty("background-color", accentColor, "important");
+      element.style.setProperty("border-color", accentColor, "important");
+      element.style.setProperty("color", foregroundColor, "important");
+    });
+  }
+
+  function ensureLoader() {
+    if (!document.documentElement || document.getElementById("mira-oauth-loader")) {
+      return;
+    }
+
+    var loader = document.createElement("div");
+    loader.id = "mira-oauth-loader";
+    loader.setAttribute("aria-hidden", "true");
+    (document.body || document.documentElement).appendChild(loader);
+  }
+
+  function removeLoader() {
+    var loader = document.getElementById("mira-oauth-loader");
+    if (loader) {
+      loader.remove();
+    }
+  }
+
+  function applyButtonStyle(button, side, compact) {
     var style = button.style;
     style.position = "fixed";
     style.top = compact ? "10px" : "35px";
@@ -664,20 +763,20 @@ fn oauth_back_button_init_script(redirect_uri: &str) -> Result<String, serde_jso
     style.padding = "0";
     style.font = "inherit";
     style.pointerEvents = "auto";
-  }}
+  }
 
-  function attachHover(button) {{
-    button.addEventListener("mouseenter", function () {{
+  function attachHover(button) {
+    button.addEventListener("mouseenter", function () {
       button.style.background = "rgba(32, 36, 44, 0.94)";
       button.style.borderColor = "rgba(237, 242, 247, 0.3)";
-    }});
-    button.addEventListener("mouseleave", function () {{
+    });
+    button.addEventListener("mouseleave", function () {
       button.style.background = "rgba(23, 26, 32, 0.82)";
       button.style.borderColor = "rgba(237, 242, 247, 0.18)";
-    }});
-  }}
+    });
+  }
 
-  function createSvg(paths) {{
+  function createSvg(paths) {
     var svg = document.createElementNS(svgNamespace, "svg");
     svg.setAttribute("viewBox", "0 0 24 24");
     svg.setAttribute("aria-hidden", "true");
@@ -689,16 +788,16 @@ fn oauth_back_button_init_script(redirect_uri: &str) -> Result<String, serde_jso
     svg.style.strokeLinecap = "round";
     svg.style.strokeLinejoin = "round";
 
-    paths.forEach(function (pathValue) {{
+    paths.forEach(function (pathValue) {
       var path = document.createElementNS(svgNamespace, "path");
       path.setAttribute("d", pathValue);
       svg.appendChild(path);
-    }});
+    });
 
     return svg;
-  }}
+  }
 
-  function createButton(id, label, side, paths, compact, onClick) {{
+  function createButton(id, label, side, paths, compact, onClick) {
     var button = document.createElement("button");
     button.id = id;
     button.type = "button";
@@ -706,51 +805,56 @@ fn oauth_back_button_init_script(redirect_uri: &str) -> Result<String, serde_jso
     applyButtonStyle(button, side, compact);
     attachHover(button);
     button.appendChild(createSvg(paths));
-    button.addEventListener("click", function (event) {{
+    button.addEventListener("click", function (event) {
       event.preventDefault();
       event.stopPropagation();
       onClick();
-    }});
+    });
     return button;
-  }}
+  }
 
-  function getMountTarget() {{
+  function getMountTarget() {
     return document.body || document.documentElement;
-  }}
+  }
 
-  function ensureAuthControls() {{
-    if (!document.documentElement) {{
+  function ensureAuthControls() {
+    applyTheme();
+    detectAccountProviderConflict();
+
+    if (!document.documentElement) {
       return;
-    }}
+    }
+
+    removeLoader();
 
     var mountTarget = getMountTarget();
     var hasThemeBackButton = Boolean(document.querySelector(".mira-auth-back, .mira-auth-nav"));
     var shouldShowBackButton = isKeycloakPage();
 
-    if (!shouldShowBackButton || hasThemeBackButton) {{
+    if (!shouldShowBackButton || hasThemeBackButton) {
       var existingBackButton = document.getElementById(backButtonId);
-      if (existingBackButton) {{
+      if (existingBackButton) {
         existingBackButton.remove();
-      }}
-    }} else if (!document.getElementById(backButtonId)) {{
+      }
+    } else if (!document.getElementById(backButtonId)) {
       mountTarget.appendChild(createButton(
         backButtonId,
         "Zurueck",
         "left",
         ["M15 18l-6-6 6-6"],
         false,
-        function () {{
-          if (window.history.length > 1) {{
+        function () {
+          if (window.history.length > 1) {
             window.history.back();
             return;
-          }}
+          }
 
           closeModal();
-        }}
+        }
       ));
-    }}
+    }
 
-    if (!document.getElementById(closeButtonId)) {{
+    if (!document.getElementById(closeButtonId)) {
       mountTarget.appendChild(createButton(
         closeButtonId,
         "Schliessen",
@@ -759,21 +863,28 @@ fn oauth_back_button_init_script(redirect_uri: &str) -> Result<String, serde_jso
         true,
         closeModal
       ));
-    }}
-  }}
+    }
+  }
 
-  if (document.readyState === "loading") {{
-    document.addEventListener("DOMContentLoaded", ensureAuthControls, {{ once: true }});
-  }} else {{
+  applyTheme();
+  ensureLoader();
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", ensureAuthControls, { once: true });
+  } else {
     ensureAuthControls();
-  }}
+  }
 
   window.addEventListener("pageshow", ensureAuthControls);
   window.setTimeout(ensureAuthControls, 50);
   window.setTimeout(ensureAuthControls, 250);
-}})();
+  window.setTimeout(ensureAuthControls, 750);
+  window.setInterval(detectAccountProviderConflict, 500);
+})();
 "###
-    ))
+    .replace("__MIRA_REDIRECT_URI__", &redirect_uri)
+    .replace("__MIRA_ACCENT_COLOR__", &accent_color)
+    .replace("__MIRA_ACCENT_FOREGROUND_COLOR__", &font_color))
 }
 
 fn stop_game_child(child: &mut Child) -> Result<(), String> {

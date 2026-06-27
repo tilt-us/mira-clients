@@ -5,6 +5,7 @@ const AUTH_TOKENS_KEY = "mira.auth.tokens";
 export type AuthTokens = {
   accessToken: string;
   clientId?: string;
+  idToken?: string;
   refreshToken?: string;
   expiresAt?: number;
 };

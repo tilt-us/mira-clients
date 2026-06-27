@@ -122,7 +122,7 @@ type ClientProps = {
   onFriendRequestPolicyChange: (friendRequestPolicy: FriendRequestPolicy) => void;
   onGameScreenModeChange: (gameScreenMode: GameScreenMode) => void;
   onLocaleChange: (locale: AppLocale) => void;
-  onLogout: () => void;
+  onLogout: () => void | Promise<void>;
   onQuit: () => void;
   onResolutionChange: (resolution: AppResolution) => void;
   onSettingsClose: () => void;
@@ -2815,7 +2815,7 @@ function Client({
   async function handleClientLogout() {
     await prepareClientShutdown({ leaveLobby: true });
     await publishPresence("OFFLINE");
-    onLogout();
+    await onLogout();
   }
 
   async function handleClientQuit() {
