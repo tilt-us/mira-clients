@@ -7,6 +7,7 @@ import {
   defaultGameScreenMode,
   defaultResolution,
   defaultUiScale,
+  getAccentForegroundColor,
   getResolutionFromSize,
   getResolutionSize,
   isAppResolution,
@@ -65,6 +66,16 @@ describe("resolution helpers", () => {
     expect(getResolutionFromSize(1920, 1080)).toBe("1920x1080");
     expect(getResolutionFromSize(2140, 1080)).toBe("2140x1080");
     expect(getResolutionFromSize(1111, 777)).toBeUndefined();
+  });
+});
+
+describe("accent color helpers", () => {
+  test("selects dark foreground for light accent colors", () => {
+    expect(getAccentForegroundColor("#f2c45b")).toBe("#101216");
+  });
+
+  test("selects white foreground for dark accent colors", () => {
+    expect(getAccentForegroundColor("#123456")).toBe("#ffffff");
   });
 });
 
