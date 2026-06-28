@@ -1,15 +1,16 @@
 {
   "name": "mira-client",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "dev:desktop": "node scripts/with-env.mjs MIRA_CLIENT_CONFIG=./mira-client.prod.toml -- tauri dev --config src-tauri/tauri.desktop-dev.conf.json",
-    "local:desktop": "node scripts/with-env.mjs MIRA_CLIENT_CONFIG=./mira-client.toml -- tauri dev --config src-tauri/tauri.desktop-dev.conf.json",
+    "local:desktop": "node scripts/local-desktop.mjs",
     "prod:desktop": "tauri build --bundles deb --ci",
     "build:game-client": "cargo build -p mira-game-client",
     "generate:api": "node scripts/merge-openapi.mjs && openapi-ts",
+    "generate:local:api": "node scripts/with-env.mjs OPENAPI_INPUTS=http://localhost:8080/v3/api-docs,http://localhost:8082/v3/api-docs,http://localhost:8083/v3/api-docs -- npm run generate:api",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "test:unit": "vitest run --config vitest.config.ts",

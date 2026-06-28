@@ -3,6 +3,8 @@ const AUTH_CODE_VERIFIER_KEY = "mira.auth.codeVerifier";
 const AUTH_REDIRECT_URI_KEY = "mira.auth.redirectUri";
 const AUTH_TOKENS_KEY = "mira.auth.tokens";
 
+let noSharedAuthStorage = false;
+
 export type AuthTokens = {
   accessToken: string;
   clientId?: string;
@@ -10,6 +12,18 @@ export type AuthTokens = {
   refreshToken?: string;
   expiresAt?: number;
 };
+
+export type AuthStorageRuntimeConfig = {
+  noSharedAuth?: boolean;
+};
+
+export function applyAuthStorageRuntimeConfig(config: AuthStorageRuntimeConfig) {
+  noSharedAuthStorage = Boolean(config.noSharedAuth);
+}
+
+function getTokenStorage() {
+  return noSharedAuthStorage ? sessionStorage : localStorage;
+}
 
 export function saveOAuthRequest(state: string, codeVerifier: string, redirectUri?: string) {
   sessionStorage.setItem(AUTH_STATE_KEY, state);
@@ -37,11 +51,12 @@ export function clearOAuthRequest() {
 }
 
 export function saveTokens(tokens: AuthTokens) {
-  localStorage.setItem(AUTH_TOKENS_KEY, JSON.stringify(tokens));
+  getTokenStorage().setItem(AUTH_TOKENS_KEY, JSON.stringify(tokens));
 }
 
 export function readTokens(): AuthTokens | undefined {
-  const rawTokens = localStorage.getItem(AUTH_TOKENS_KEY);
+  const storage = getTokenStorage();
+  const rawTokens = storage.getItem(AUTH_TOKENS_KEY);
 
   if (!rawTokens) {
     return undefined;
@@ -50,11 +65,11 @@ export function readTokens(): AuthTokens | undefined {
   try {
     return JSON.parse(rawTokens) as AuthTokens;
   } catch {
-    localStorage.removeItem(AUTH_TOKENS_KEY);
+    storage.removeItem(AUTH_TOKENS_KEY);
     return undefined;
   }
 }
 
 export function clearTokens() {
-  localStorage.removeItem(AUTH_TOKENS_KEY);
+  getTokenStorage().removeItem(AUTH_TOKENS_KEY);
 }

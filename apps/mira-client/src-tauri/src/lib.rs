@@ -66,6 +66,7 @@ struct ClientConfig {
     keycloak_password_client_id: String,
     live_api_base_url: String,
     matchmaking_api_base_url: String,
+    no_shared_auth: bool,
 }
 
 #[derive(Default, serde::Deserialize)]
@@ -422,8 +423,25 @@ fn start_oauth_window(
     let window_label_for_navigation = window_label.clone();
     let redirect_uri_for_navigation = redirect_uri.clone();
     let oauth_theme = oauth_theme_from_url(&auth_url);
+    let auth_url_for_navigation = auth_url.clone();
+    let defer_oauth_window_show = request.visible && request.clear_session_before_login;
     let oauth_window_url = if request.visible {
-        oauth_loading_url(&auth_url_text, &oauth_theme)
+        let start_url = if request.clear_session_before_login {
+            let client_id = auth_url
+                .query_pairs()
+                .find_map(|(key, value)| (key == "client_id").then(|| value.into_owned()));
+            windows_browser_keycloak_logout_url(
+                &auth_url,
+                &oauth_start_redirect_uri(&redirect_uri),
+                client_id.as_deref(),
+                request.id_token_hint.as_deref(),
+            )
+            .unwrap_or_else(|| auth_url.clone())
+        } else {
+            auth_url.clone()
+        };
+
+        oauth_loading_url(start_url.as_str(), &oauth_theme)
     } else {
         tauri::WebviewUrl::External(auth_url)
     };
@@ -444,6 +462,18 @@ fn start_oauth_window(
             .visible(false)
             .on_navigation(move |url| {
                 let target_url = url.as_str();
+
+                if is_oauth_start_url(target_url, &redirect_uri_for_navigation) {
+                    if let Some(oauth_window) =
+                        app_for_navigation.get_webview_window(&window_label_for_navigation)
+                    {
+                        let _ = oauth_window.show();
+                        let _ = oauth_window.set_focus();
+                        let _ = oauth_window.navigate(auth_url_for_navigation.clone());
+                    }
+
+                    return false;
+                }
 
                 if is_oauth_redirect_url(target_url, &redirect_uri_for_navigation) {
                     let _ = app_for_navigation.emit(
@@ -466,8 +496,12 @@ fn start_oauth_window(
             });
 
     if !cfg!(windows) {
-        let oauth_init_script = oauth_window_init_script(&redirect_uri, oauth_theme.clone())
-            .map_err(|error| format!("OAuth-Fenster konnte nicht vorbereitet werden: {error}"))?;
+        let oauth_init_script = oauth_window_init_script(
+            &redirect_uri,
+            oauth_theme.clone(),
+            request.clear_session_before_login,
+        )
+        .map_err(|error| format!("OAuth-Fenster konnte nicht vorbereitet werden: {error}"))?;
         oauth_window_builder = oauth_window_builder.initialization_script(oauth_init_script);
     }
 
@@ -495,7 +529,7 @@ fn start_oauth_window(
         .build()
         .map_err(|error| format!("OAuth-Fenster konnte nicht geoeffnet werden: {error}"))?;
 
-    if request.visible {
+    if request.visible && !defer_oauth_window_show {
         oauth_window
             .show()
             .map_err(|error| format!("OAuth-Fenster konnte nicht angezeigt werden: {error}"))?;
@@ -571,6 +605,19 @@ fn is_oauth_redirect_url(target_url: &str, redirect_uri: &str) -> bool {
     target_url == redirect_uri
         || target_url
             .strip_prefix(redirect_uri)
+            .is_some_and(|rest| rest.starts_with('?') || rest.starts_with('#'))
+}
+
+fn oauth_start_redirect_uri(redirect_uri: &str) -> String {
+    format!("{}mira-oauth-start", redirect_uri)
+}
+
+fn is_oauth_start_url(target_url: &str, redirect_uri: &str) -> bool {
+    let start_uri = oauth_start_redirect_uri(redirect_uri);
+
+    target_url == start_uri
+        || target_url
+            .strip_prefix(&start_uri)
             .is_some_and(|rest| rest.starts_with('?') || rest.starts_with('#'))
 }
 
@@ -952,16 +999,19 @@ fn normalize_oauth_font_color(value: &str) -> Option<String> {
 fn oauth_window_init_script(
     redirect_uri: &str,
     theme: OAuthTheme,
+    auto_submit_logout: bool,
 ) -> Result<String, serde_json::Error> {
     let redirect_uri = serde_json::to_string(redirect_uri)?;
     let accent_color = serde_json::to_string(&theme.accent_color)?;
     let font_color = serde_json::to_string(&theme.font_color)?;
+    let auto_submit_logout = serde_json::to_string(&auto_submit_logout)?;
 
     Ok(r###"
 (function () {
   var redirectUri = __MIRA_REDIRECT_URI__;
   var accentColor = __MIRA_ACCENT_COLOR__;
   var accentForegroundColor = __MIRA_ACCENT_FOREGROUND_COLOR__;
+  var autoSubmitLogout = __MIRA_AUTO_SUBMIT_LOGOUT__;
   var backButtonId = "mira-oauth-back-button";
   var closeButtonId = "mira-oauth-close-button";
   var themeStyleId = "mira-oauth-theme-style";
@@ -975,6 +1025,38 @@ fn oauth_window_init_script(
     return /\/realms\/[^/]+\/(protocol\/openid-connect\/auth|login-actions|broker)(\/|$)/.test(
       window.location.pathname
     );
+  }
+
+  function isKeycloakLogoutPage() {
+    return /\/realms\/[^/]+\/protocol\/openid-connect\/logout(\/|$)/.test(
+      window.location.pathname
+    );
+  }
+
+  function autoSubmitKeycloakLogout() {
+    if (!autoSubmitLogout || window.__miraLogoutSubmitted || !isKeycloakLogoutPage()) {
+      return;
+    }
+
+    var form = document.querySelector("form");
+    var submit = document.querySelector(
+      "button[type='submit'],input[type='submit'],#kc-logout,#kc-form-buttons input,.pf-c-button.pf-m-primary,.pf-v5-c-button.pf-m-primary"
+    );
+
+    if (!form && !submit) {
+      return;
+    }
+
+    window.__miraLogoutSubmitted = true;
+
+    if (submit && typeof submit.click === "function") {
+      submit.click();
+      return;
+    }
+
+    if (form && typeof form.submit === "function") {
+      form.submit();
+    }
   }
 
   function redirectOAuthError(error) {
@@ -1167,6 +1249,7 @@ fn oauth_window_init_script(
   function ensureAuthControls() {
     applyTheme();
     detectAccountProviderConflict();
+    autoSubmitKeycloakLogout();
 
     if (!document.documentElement) {
       return;
@@ -1231,7 +1314,8 @@ fn oauth_window_init_script(
 "###
     .replace("__MIRA_REDIRECT_URI__", &redirect_uri)
     .replace("__MIRA_ACCENT_COLOR__", &accent_color)
-    .replace("__MIRA_ACCENT_FOREGROUND_COLOR__", &font_color))
+    .replace("__MIRA_ACCENT_FOREGROUND_COLOR__", &font_color)
+    .replace("__MIRA_AUTO_SUBMIT_LOGOUT__", &auto_submit_logout))
 }
 
 fn stop_game_child(child: &mut Child) -> Result<(), String> {
@@ -1479,8 +1563,15 @@ impl ClientConfigFile {
                 services.matchmaking_api_base_url.as_deref(),
                 DEFAULT_MATCHMAKING_API_BASE_URL,
             ),
+            no_shared_auth: env_flag_enabled("MIRA_CLIENT_NO_SHARED_AUTH"),
         }
     }
+}
+
+fn env_flag_enabled(name: &str) -> bool {
+    std::env::var(name)
+        .map(|value| matches!(value.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+        .unwrap_or(false)
 }
 
 fn normalize_base_url(value: Option<&str>, default_value: &str) -> String {

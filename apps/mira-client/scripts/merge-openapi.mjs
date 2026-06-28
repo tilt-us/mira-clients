@@ -232,10 +232,7 @@ function createUniqueComponentName(prefix, name, targetSection, sourceSection) {
 
 function createComponentPrefix(input) {
   if (isHttpUrl(input)) {
-    const url = new URL(input);
-    const portOrHost = url.port || url.hostname;
-
-    return `${toPascalCase(portOrHost)}Api`;
+    return "Api";
   }
 
   const basename = path.basename(input, path.extname(input));

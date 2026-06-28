@@ -59,11 +59,29 @@ input:focus {
   background: color-mix(in srgb, var(--accent-color) 82%, #ffffff);
 }
 
+.provider-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
 .provider-button,
 .secondary-button {
   color: #edf2f7;
   border: 1px solid rgba(255, 255, 255, 0.12);
   background: #20242c;
+}
+
+.provider-button {
+  min-width: 0;
+  width: 100%;
+  padding: 0;
+}
+
+.provider-button svg {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
 }
 
 .provider-button:hover,

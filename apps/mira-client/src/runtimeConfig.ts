@@ -4,8 +4,14 @@ import {
   applyKeycloakRuntimeConfig,
   type KeycloakRuntimeConfig,
 } from "./auth/config";
+import {
+  applyAuthStorageRuntimeConfig,
+  type AuthStorageRuntimeConfig,
+} from "./auth/storage";
 
-export type ClientRuntimeConfig = ApiRuntimeConfig & KeycloakRuntimeConfig;
+export type ClientRuntimeConfig = ApiRuntimeConfig &
+  KeycloakRuntimeConfig &
+  AuthStorageRuntimeConfig;
 
 export async function loadRuntimeConfig() {
   if (!isTauri()) {
@@ -15,4 +21,5 @@ export async function loadRuntimeConfig() {
   const config = await invoke<ClientRuntimeConfig>("client_config");
   applyApiRuntimeConfig(config);
   applyKeycloakRuntimeConfig(config);
+  applyAuthStorageRuntimeConfig(config);
 }

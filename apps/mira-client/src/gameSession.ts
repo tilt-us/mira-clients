@@ -1,5 +1,5 @@
 import type {
-  _8083ApiMatchResponse,
+  ApiMatchResponse,
   MatchLobbyResponse,
   MatchPlayerResponse,
 } from "./api/client";
@@ -66,7 +66,7 @@ export type GameClientStatus = {
 const storedGameSessionKey = "mira:last-game-session";
 
 export function getMatchChampionForPlayer(
-  match: _8083ApiMatchResponse,
+  match: ApiMatchResponse,
   playerPublicId: number,
 ) {
   return match.championSelections?.find((selection) => {
@@ -94,7 +94,7 @@ function getGameServerChampionId(champion: string) {
 }
 
 export function createGameMatchManifest(
-  match: _8083ApiMatchResponse,
+  match: ApiMatchResponse,
   matchId: string,
 ): GameMatchManifest {
   const teams = getMatchTeams(match);
@@ -133,9 +133,9 @@ export function createGameMatchManifest(
   };
 }
 
-export function getMatchPort(match: _8083ApiMatchResponse) {
+export function getMatchPort(match: ApiMatchResponse) {
   const gameServer = match.gameServer as
-    | (NonNullable<_8083ApiMatchResponse["gameServer"]> & GameServerAddressOverrides)
+    | (NonNullable<ApiMatchResponse["gameServer"]> & GameServerAddressOverrides)
     | undefined;
   const explicitPort =
     gameServer?.publicPort ??
@@ -155,17 +155,17 @@ export function getMatchPort(match: _8083ApiMatchResponse) {
   return undefined;
 }
 
-export function getMatchHost(match: _8083ApiMatchResponse) {
+export function getMatchHost(match: ApiMatchResponse) {
   const gameServer = match.gameServer as
-    | (NonNullable<_8083ApiMatchResponse["gameServer"]> & GameServerAddressOverrides)
+    | (NonNullable<ApiMatchResponse["gameServer"]> & GameServerAddressOverrides)
     | undefined;
 
   return resolvePublishedGameServerHost(gameServer?.publicHost ?? gameServer?.host);
 }
 
-export function getMatchControlBaseUrl(match: _8083ApiMatchResponse) {
+export function getMatchControlBaseUrl(match: ApiMatchResponse) {
   const gameServer = match.gameServer as
-    | (NonNullable<_8083ApiMatchResponse["gameServer"]> & GameServerAddressOverrides)
+    | (NonNullable<ApiMatchResponse["gameServer"]> & GameServerAddressOverrides)
     | undefined;
   const explicitBaseUrl = gameServer?.publicControlBaseUrl ?? gameServer?.controlBaseUrl;
 
@@ -248,7 +248,7 @@ function hashString(value: string) {
   return Math.abs(hash);
 }
 
-function getMatchSeed(match: _8083ApiMatchResponse) {
+function getMatchSeed(match: ApiMatchResponse) {
   return (
     match.matchId ??
     match.lobbies
@@ -273,7 +273,7 @@ function getLobbySeed(lobby: MatchLobbyResponse) {
   return `${lobby.lobbyId ?? ""}:${players ?? ""}`;
 }
 
-function getMatchTeams(match: _8083ApiMatchResponse): MatchLobbyResponse[] {
+function getMatchTeams(match: ApiMatchResponse): MatchLobbyResponse[] {
   const backendTeams: MatchLobbyResponse[] = [{ players: [] }, { players: [] }];
   let hasBackendTeams = false;
 
@@ -332,7 +332,7 @@ function getMatchTeams(match: _8083ApiMatchResponse): MatchLobbyResponse[] {
 }
 
 export function getMatchTeamForPlayer(
-  match: _8083ApiMatchResponse,
+  match: ApiMatchResponse,
   playerPublicId: number,
 ): GameTeam | undefined {
   const teams = getMatchTeams(match);

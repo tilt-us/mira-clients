@@ -1,7 +1,7 @@
 import { client } from "./generated/client.gen";
 import { API_BASE_URL } from "./config";
-import { apiFetch } from "./http";
-import { getValidAccessToken } from "../auth/keycloak";
+import { apiFetch, getClientDeviceType } from "./http";
+import { getValidAccessToken, getValidDesktopApiToken } from "../auth/keycloak";
 
 export type LobbyRole = "TOP" | "JUNGLE" | "MID" | "ADC" | "SUPPORT";
 
@@ -44,7 +44,11 @@ client.setConfig({
 });
 
 client.interceptors.request.use(async (request) => {
-  const accessToken = await getValidAccessToken();
+  const deviceType = getClientDeviceType();
+  const accessToken =
+    deviceType === "Desktop" ? await getValidDesktopApiToken() : await getValidAccessToken();
+
+  request.headers.set("X-Device-Type", deviceType);
 
   if (accessToken) {
     request.headers.set("authorization", `Bearer ${accessToken}`);
@@ -126,8 +130,8 @@ export function getLobbyRoles(options: GetLobbyRolesOptions) {
 
 export { client };
 export type {
-  ApiTiltUsComApiChampionHoverRequest as _8083ApiChampionHoverRequest,
-  ApiTiltUsComApiMatchChampionHoversResponse as _8083ApiMatchChampionHoversResponse,
-  ApiTiltUsComApiMatchResponse as _8083ApiMatchResponse,
+  ApiChampionHoverRequest,
+  ApiMatchChampionHoversResponse,
+  ApiMatchResponse,
 } from "./generated";
 export * from "./generated";

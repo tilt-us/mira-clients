@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "vitest";
 import {
+  applyAuthStorageRuntimeConfig,
   clearOAuthRequest,
   clearTokens,
   readOAuthRequest,
@@ -9,6 +10,7 @@ import {
 } from "../src/auth/storage";
 
 afterEach(() => {
+  applyAuthStorageRuntimeConfig({ noSharedAuth: false });
   localStorage.clear();
   sessionStorage.clear();
 });
@@ -68,5 +70,23 @@ describe("auth token storage", () => {
 
     expect(readTokens()).toBeUndefined();
     expect(localStorage.getItem("mira.auth.tokens")).toBeNull();
+  });
+
+  test("uses session storage when shared auth is disabled", () => {
+    const tokens = {
+      accessToken: "isolated-access-token",
+      clientId: "mira-bevy",
+    };
+
+    applyAuthStorageRuntimeConfig({ noSharedAuth: true });
+    saveTokens(tokens);
+
+    expect(readTokens()).toEqual(tokens);
+    expect(localStorage.getItem("mira.auth.tokens")).toBeNull();
+    expect(sessionStorage.getItem("mira.auth.tokens")).toBe(JSON.stringify(tokens));
+
+    clearTokens();
+    expect(readTokens()).toBeUndefined();
+    expect(sessionStorage.getItem("mira.auth.tokens")).toBeNull();
   });
 });

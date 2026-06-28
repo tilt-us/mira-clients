@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import type {
-  _8083ApiMatchResponse,
+  ApiMatchResponse,
   MatchLobbyResponse,
   MatchPlayerResponse,
 } from "../api/client";
@@ -22,7 +22,7 @@ import { getProfileInitials, getPublicDisplayName } from "../utils/profile";
 
 type ChampionSelectionProps = {
   currentPlayerPublicId?: number;
-  match: _8083ApiMatchResponse;
+  match: ApiMatchResponse;
   onChampionHover: (champion?: string, publish?: boolean) => Promise<void>;
   onChampionSelect: (champion: string) => Promise<boolean>;
   onPickTimeout: () => void;
@@ -68,7 +68,7 @@ function hashString(value: string) {
   return Math.abs(hash);
 }
 
-function getMatchSeed(match: _8083ApiMatchResponse) {
+function getMatchSeed(match: ApiMatchResponse) {
   return (
     match.matchId ??
     match.lobbies
@@ -93,7 +93,7 @@ function getLobbySeed(lobby: MatchLobbyResponse) {
   return `${lobby.lobbyId ?? ""}:${players ?? ""}`;
 }
 
-function getMatchTeams(match: _8083ApiMatchResponse): MatchLobbyResponse[] {
+function getMatchTeams(match: ApiMatchResponse): MatchLobbyResponse[] {
   const backendTeams: MatchLobbyResponse[] = [{ players: [] }, { players: [] }];
   let hasBackendTeams = false;
 
@@ -151,14 +151,14 @@ function getMatchTeams(match: _8083ApiMatchResponse): MatchLobbyResponse[] {
   return hashString(matchSeed) % 2 === 0 ? teams : [teams[1], teams[0]];
 }
 
-function getPlayerSelection(match: _8083ApiMatchResponse, publicId?: number) {
+function getPlayerSelection(match: ApiMatchResponse, publicId?: number) {
   return match.championSelections?.find((selection) => {
     return selection.playerPublicId === publicId;
   });
 }
 
-function getPlayerHoveredChampion(match: _8083ApiMatchResponse, publicId?: number) {
-  const matchWithHoverState = match as _8083ApiMatchResponse & {
+function getPlayerHoveredChampion(match: ApiMatchResponse, publicId?: number) {
+  const matchWithHoverState = match as ApiMatchResponse & {
     championHovers?: Array<{ champion?: string; playerPublicId?: number }>;
     championPreviews?: Array<{ champion?: string; playerPublicId?: number }>;
     hoveredChampions?: Array<{ champion?: string; playerPublicId?: number }>;
@@ -192,7 +192,7 @@ function getPlayerName(player: MatchPlayerResponse) {
   return playerName;
 }
 
-function getPlayerAssignedRole(match: _8083ApiMatchResponse, player: MatchPlayerResponse) {
+function getPlayerAssignedRole(match: ApiMatchResponse, player: MatchPlayerResponse) {
   const assignedRole =
     player.assignedRole ??
     match.roleAssignments?.find((assignment) => {
@@ -245,7 +245,7 @@ function getPickGroups(teams: MatchLobbyResponse[]) {
   return groups;
 }
 
-function getSelectedPublicIds(match: _8083ApiMatchResponse) {
+function getSelectedPublicIds(match: ApiMatchResponse) {
   return new Set(
     match.championSelections
       ?.map((selection) => selection.playerPublicId)

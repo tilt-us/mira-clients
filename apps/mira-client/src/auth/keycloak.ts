@@ -90,6 +90,40 @@ export function assertAccessTokenIssuer(accessToken: string) {
   }
 }
 
+function getTokenPayload(token?: string) {
+  try {
+    const [, payload] = token?.split(".") ?? [];
+
+    if (!payload) {
+      return undefined;
+    }
+
+    return JSON.parse(base64UrlDecode(payload)) as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
+}
+
+function getTokenStringClaim(token: string | undefined, claim: string) {
+  const value = getTokenPayload(token)?.[claim];
+
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function getTokenNumberClaim(token: string | undefined, claim: string) {
+  const value = getTokenPayload(token)?.[claim];
+
+  return typeof value === "number" ? value : undefined;
+}
+
+export function hasDesktopSessionClaims(token?: string) {
+  return Boolean(
+    getTokenStringClaim(token, "sub") &&
+      (getTokenStringClaim(token, "sid") || getTokenStringClaim(token, "jti")) &&
+      getTokenNumberClaim(token, "exp"),
+  );
+}
+
 async function createCodeChallenge(codeVerifier: string) {
   const data = new TextEncoder().encode(codeVerifier);
   const hash = await crypto.subtle.digest("SHA-256", data);
@@ -251,8 +285,8 @@ async function startProviderLogin(
     const result = await invoke<OAuthStartResult>("start_oauth_window", {
       request: {
         authUrl,
-        clearSessionBeforeLogin: provider.idpHint === "discord",
-        idTokenHint: provider.idpHint === "discord" ? readTokens()?.idToken : undefined,
+        clearSessionBeforeLogin: true,
+        idTokenHint: readTokens()?.idToken,
         redirectUri,
       },
     });
@@ -498,6 +532,23 @@ export async function getValidAccessToken() {
   const refreshedTokens = await refreshStoredAccessToken(tokens);
 
   return refreshedTokens?.accessToken ?? tokens.accessToken;
+}
+
+export async function getValidDesktopApiToken() {
+  const accessToken = await getValidAccessToken();
+
+  if (!accessToken || hasDesktopSessionClaims(accessToken)) {
+    return accessToken;
+  }
+
+  const idToken = readTokens()?.idToken;
+
+  if (idToken && hasDesktopSessionClaims(idToken)) {
+    assertAccessTokenIssuer(idToken);
+    return idToken;
+  }
+
+  return accessToken;
 }
 
 function shouldRefreshAccessToken(tokens: AuthTokens) {

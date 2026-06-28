@@ -22,6 +22,7 @@ so they stay attached to the bar transform. The font asset is Roboto Bold at
 ```bash
 npm install
 npm run generate:api
+npm run generate:local:api
 npm run build
 npm run tauri dev
 npm run dev:desktop
@@ -32,6 +33,15 @@ npm run prod:desktop
 `npm run dev:desktop` starts the Tauri app with the built React UI and the
 `api.tilt-us.com` desktop config, without starting a Vite web server. Use
 `npm run local:desktop` for the same desktop start against localhost services.
+For testing multiple local desktop clients with different accounts on one
+machine, start each isolated instance with:
+
+```bash
+npm run local:desktop -- -no-shared
+```
+
+This keeps desktop auth tokens in per-window session storage instead of shared
+local storage.
 Use `npm run prod:desktop` for the Tauri `deb` release bundle with the
 production desktop config.
 
@@ -92,13 +102,20 @@ OpenAPI client code is generated into `src/api/generated`:
 
 ```bash
 npm run generate:api
+npm run generate:local:api
 ```
 
-By default, generation reads and merges:
+By default, `npm run generate:api` reads and merges:
 
 - `https://api.tilt-us.com/auth/v3/api-docs`
 - `https://api.tilt-us.com/live/v3/api-docs`
 - `https://api.tilt-us.com/match/v3/api-docs`
+
+Use `npm run generate:local:api` to generate from localhost instead:
+
+- `http://localhost:8080/v3/api-docs`
+- `http://localhost:8082/v3/api-docs`
+- `http://localhost:8083/v3/api-docs`
 
 The services must expose those endpoints, for example with Springdoc OpenAPI.
 If the backends are running somewhere else, override the input URLs:

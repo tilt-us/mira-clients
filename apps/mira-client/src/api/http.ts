@@ -9,6 +9,10 @@ export function getApiTransport() {
   return "browser-fetch";
 }
 
+export function getClientDeviceType() {
+  return runsInTauriLikeShell() ? "Desktop" : "Web";
+}
+
 function runsInTauriLikeShell() {
   const location = window.location;
 

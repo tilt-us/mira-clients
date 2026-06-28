@@ -11,9 +11,11 @@ import {
   type UserProfileResponse,
 } from "../api/client";
 import { API_BASE_URL } from "../api/config";
+import { apiFetch } from "../api/http";
 import {
   assertAccessTokenIssuer,
   completeRedirectLogin,
+  getValidDesktopApiToken,
   getValidAccessToken,
   loginWithPassword,
   startDiscordLogin,
@@ -43,6 +45,16 @@ type LoadState = "idle" | "loading";
 type OAuthCallbackPayload = {
   url: string;
 };
+
+class ProfileLoadError extends Error {
+  readonly status?: number;
+
+  constructor(message: string, status?: number) {
+    super(message);
+    this.name = "ProfileLoadError";
+    this.status = status;
+  }
+}
 
 /**
  * Description
@@ -106,20 +118,21 @@ function getOAuthErrorMessage(error: unknown, t: (id: string) => string) {
 function getApiResultErrorMessage(
   error: unknown,
   response: Response | undefined,
-  request: Request | undefined,
+  _request: Request | undefined,
   fallback: string,
 ) {
   const details = [];
-  const errorMessage = getErrorMessage(error, "");
+  const errorMessage =
+    response?.status === 401
+      ? "Anmeldung ist abgelaufen. Bitte erneut einloggen."
+      : response?.status === 409
+        ? "User ist bereits eingeloggt."
+        : response?.status === 502
+          ? "Auth-Service ist nicht erreichbar."
+          : getErrorMessage(error, "");
 
   if (response) {
     details.push(`${response.status} ${response.statusText}`.trim());
-  }
-
-  if (request?.url) {
-    details.push(request.url);
-  } else {
-    details.push(`${API_BASE_URL}/api/me`);
   }
 
   if (errorMessage) {
@@ -127,6 +140,89 @@ function getApiResultErrorMessage(
   }
 
   return details.length > 0 ? `${fallback} (${details.join(" - ")})` : fallback;
+}
+
+async function sendAuthServiceSessionRequest(
+  accessToken: string,
+  path: string,
+  method = "POST",
+) {
+  try {
+    const response = await apiFetch(`${API_BASE_URL}${path}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "X-Device-Type": "Web",
+      },
+    });
+
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function releaseCurrentAuthServiceSession(accessToken: string) {
+  for (const request of [
+    { path: "/api/auth/session/logout" },
+    { path: "/api/auth/logout" },
+    { method: "DELETE", path: "/api/auth/session" },
+  ]) {
+    if (await sendAuthServiceSessionRequest(accessToken, request.path, request.method)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function addUniqueToken(tokens: string[], token: string | undefined) {
+  if (token && !tokens.includes(token)) {
+    tokens.push(token);
+  }
+}
+
+async function getStoredTokensForCleanup() {
+  const cleanupTokens: string[] = [];
+
+  try {
+    addUniqueToken(cleanupTokens, await getValidDesktopApiToken());
+  } catch {
+    // Use stored tokens below when refresh or issuer validation fails.
+  }
+
+  const storedTokens = readTokens();
+  addUniqueToken(cleanupTokens, storedTokens?.accessToken);
+  addUniqueToken(cleanupTokens, storedTokens?.idToken);
+
+  return cleanupTokens;
+}
+
+async function releaseStoredAuthServiceSessions() {
+  const cleanupTokens = await getStoredTokensForCleanup();
+  let released = false;
+
+  for (const accessToken of cleanupTokens) {
+    released = (await releaseCurrentAuthServiceSession(accessToken)) || released;
+  }
+
+  return released;
+}
+
+async function prepareNewLogin() {
+  await releaseStoredAuthServiceSessions();
+
+  clearTokens();
+  setApiAccessToken(undefined);
+}
+
+async function releaseStoredAuthServiceSession() {
+  return releaseStoredAuthServiceSessions();
+}
+
+function cleanupRejectedLoginSession() {
+  clearTokens();
+  setApiAccessToken(undefined);
 }
 
 /**
@@ -272,19 +368,25 @@ function Authentication() {
     const result = await me();
 
     if (result.error) {
+      if (result.response?.status === 401) {
+        clearTokens();
+        setApiAccessToken(undefined);
+      }
+
       console.error("Profile request failed", {
         error: result.error,
         status: result.response?.status,
         statusText: result.response?.statusText,
         url: result.request?.url,
       });
-      throw new Error(
+      throw new ProfileLoadError(
         getApiResultErrorMessage(
           result.error,
           result.response,
           result.request,
           t("auth-profile-load-error"),
         ),
+        result.response?.status,
       );
     }
 
@@ -381,8 +483,7 @@ function Authentication() {
         }
       } catch (caughtError) {
         if (!cancelled) {
-          clearTokens();
-          setApiAccessToken(undefined);
+          cleanupRejectedLoginSession();
           notify({
             type: "error",
             message: getOAuthErrorMessage(caughtError, t),
@@ -503,6 +604,7 @@ function Authentication() {
     setLoadState("loading");
 
     try {
+      await prepareNewLogin();
       const tokens = await loginWithPassword(loginName, loginPassword);
       saveTokens(tokens);
       await loadProfile(tokens.accessToken);
@@ -511,6 +613,8 @@ function Authentication() {
         message: t("auth-login-success"),
       });
     } catch (caughtError) {
+      clearTokens();
+      setApiAccessToken(undefined);
       notify({
         type: "error",
         message: getErrorMessage(caughtError, t("auth-action-failed")),
@@ -580,6 +684,7 @@ function Authentication() {
     setLoadState("loading");
 
     try {
+      await prepareNewLogin();
       const result = await startGoogleLogin({ accentColor, locale });
 
       if (isTauri()) {
@@ -607,6 +712,7 @@ function Authentication() {
     setLoadState("loading");
 
     try {
+      await prepareNewLogin();
       const result = await startGithubLogin({ accentColor, locale });
 
       if (isTauri()) {
@@ -634,6 +740,7 @@ function Authentication() {
     setLoadState("loading");
 
     try {
+      await prepareNewLogin();
       const result = await startDiscordLogin({ accentColor, locale });
 
       if (isTauri()) {
@@ -664,6 +771,7 @@ function Authentication() {
     setOauthModalOpen(false);
 
     try {
+      await releaseStoredAuthServiceSession();
       await startKeycloakLogout();
     } catch (caughtError) {
       notify({
@@ -684,6 +792,8 @@ function Authentication() {
    * Closes the app window through Tauri when available, with a browser fallback.
    */
   async function handleQuit() {
+    await releaseStoredAuthServiceSession();
+
     if (isTauri()) {
       await getCurrentWindow().close();
       return;
@@ -808,35 +918,40 @@ function Authentication() {
                   {busy ? t("auth-login-loading") : t("auth-login-button")}
                 </button>
 
-                <button
-                  className="provider-button"
-                  disabled={busy || !googleEnabled}
-                  type="button"
-                  onClick={handleGoogleLogin}
-                >
-                  <GoogleIcon />
-                  {t("auth-google")}
-                </button>
+                <div className="provider-actions" aria-label="OAuth providers">
+                  <button
+                    aria-label={t("auth-google")}
+                    className="provider-button"
+                    disabled={busy || !googleEnabled}
+                    title={t("auth-google")}
+                    type="button"
+                    onClick={handleGoogleLogin}
+                  >
+                    <GoogleIcon />
+                  </button>
 
-                <button
-                  className="provider-button"
-                  disabled={busy || !githubEnabled}
-                  type="button"
-                  onClick={handleGithubLogin}
-                >
-                  <GitHubIcon />
-                  {t("auth-github")}
-                </button>
+                  <button
+                    aria-label={t("auth-github")}
+                    className="provider-button"
+                    disabled={busy || !githubEnabled}
+                    title={t("auth-github")}
+                    type="button"
+                    onClick={handleGithubLogin}
+                  >
+                    <GitHubIcon />
+                  </button>
 
-                <button
-                  className="provider-button"
-                  disabled={busy || !discordEnabled}
-                  type="button"
-                  onClick={handleDiscordLogin}
-                >
-                  <DiscordIcon />
-                  {t("auth-discord")}
-                </button>
+                  <button
+                    aria-label={t("auth-discord")}
+                    className="provider-button"
+                    disabled={busy || !discordEnabled}
+                    title={t("auth-discord")}
+                    type="button"
+                    onClick={handleDiscordLogin}
+                  >
+                    <DiscordIcon />
+                  </button>
+                </div>
               </form>
             </div>
           ) : (
