@@ -298,6 +298,10 @@ export type OnlineUserStatusSnapshot = {
 
 export type OnlineUsersResponse = {
     users?: Array<OnlineUserStatusSnapshot>;
+    page?: number;
+    limit?: number;
+    total?: number;
+    totalPages?: number;
 };
 
 export type FriendUserStatusesResponse = {
@@ -1107,7 +1111,10 @@ export type LiveAcceptRequestResponse = LiveAcceptRequestResponses[keyof LiveAcc
 export type OnlineData = {
     body?: never;
     path?: never;
-    query?: never;
+    query?: {
+        page?: number;
+        limit?: number;
+    };
     url: '/api/users/online';
 };
 

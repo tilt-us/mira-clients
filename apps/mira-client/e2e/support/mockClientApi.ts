@@ -140,29 +140,38 @@ async function fulfillMockApiRequest(route: Route) {
   }
 
   if (pathname === "/api/users/online") {
+    const page = Math.max(0, Number(url.searchParams.get("page") ?? 0));
+    const limit = Math.max(1, Number(url.searchParams.get("limit") ?? 50));
+    const users = [
+      {
+        publicId: 9001,
+        displayName: "E2E Client",
+        status: "ONLINE",
+        updatedAt: now,
+      },
+      {
+        publicId: 9101,
+        displayName: "Lane Partner",
+        status: "ONLINE",
+        updatedAt: now,
+      },
+      {
+        publicId: 9102,
+        displayName: "Jungle Buddy",
+        status: "AFK",
+        updatedAt: now,
+      },
+    ];
+    const offset = page * limit;
+
     await route.fulfill({
       contentType: "application/json",
       json: {
-        users: [
-          {
-            publicId: 9001,
-            displayName: "E2E Client",
-            status: "ONLINE",
-            updatedAt: now,
-          },
-          {
-            publicId: 9101,
-            displayName: "Lane Partner",
-            status: "ONLINE",
-            updatedAt: now,
-          },
-          {
-            publicId: 9102,
-            displayName: "Jungle Buddy",
-            status: "AFK",
-            updatedAt: now,
-          },
-        ],
+        limit,
+        page,
+        total: users.length,
+        totalPages: Math.ceil(users.length / limit),
+        users: users.slice(offset, offset + limit),
       },
     });
     return;
