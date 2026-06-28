@@ -1,6 +1,17 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import { ArrowLeft, Check, Copy, Crown, Info, Plus, Search, X } from "lucide-react";
+import {
+  ArrowLeft,
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  Copy,
+  Crown,
+  Info,
+  Plus,
+  Search,
+  X,
+} from "lucide-react";
 import {
   abortRankedSearch,
   abortSearch,
@@ -25,6 +36,7 @@ import {
   liveSendRequest,
   markChampionsReady,
   markChampionsReadyDuplicate,
+  online as listOnlineUsers,
   searchRanked,
   search as searchUsers,
   selectChampion,
@@ -45,6 +57,7 @@ import {
   type LobbySnapshot,
   type MatchPlayerResponse,
   type MatchResponse,
+  type OnlineUserStatusSnapshot,
   type UpdateUserStatusRequest,
   type UserStatusSnapshot,
 } from "../api/client";
@@ -143,6 +156,8 @@ type GameModeIconProps = {
   question?: boolean;
 };
 
+const PARTY_INVITE_ONLINE_LIMIT = 2;
+
 type ApiPresenceStatus = UpdateUserStatusRequest["status"];
 
 type PartyInviteCandidate = {
@@ -152,6 +167,7 @@ type PartyInviteCandidate = {
   publicId?: number;
   source: "friend" | "user";
 };
+type OnlineInviteUser = OnlineUserStatusSnapshot & Partial<FriendUserResponse>;
 type CurrentMatchPlayerProfile = {
   avatarUrl?: string;
   displayName: string;
@@ -371,24 +387,57 @@ function mapFriendToInviteCandidate(friend: FriendProfile): PartyInviteCandidate
   };
 }
 
+function isInviteablePresence(status: PresenceStatus) {
+  return status !== "offline";
+}
+
 function mapUserToInviteCandidate(user: FriendUserResponse): PartyInviteCandidate {
+  const publicId = toPublicId(user.publicId);
+
   return {
     avatarUrl: getAvatarUrl(user),
     email: user.email,
     name: getFriendUserName(user),
-    publicId: user.publicId,
+    publicId,
     source: "user",
   };
 }
 
-function mapFriendUserToProfile(user: FriendUserResponse): FriendProfile {
+function mapOnlineUserToInviteCandidate(user: OnlineInviteUser): PartyInviteCandidate {
+  const publicId = toPublicId(user.publicId);
+
   return {
     avatarUrl: getAvatarUrl(user),
     email: user.email,
-    id: String(user.publicId ?? user.email ?? user.displayName ?? "unknown-user"),
+    name: getPublicDisplayName(
+      user.displayName,
+      `User ${publicId ?? ""}`.trim(),
+    ),
+    publicId,
+    source: "user",
+  };
+}
+
+function mapFriendUserToProfile(
+  user: FriendUserResponse,
+  userStatus?: UserStatusSnapshot,
+  onlinePublicIds: ReadonlySet<number> = new Set(),
+): FriendProfile {
+  const publicId = toPublicId(user.publicId);
+  const status =
+    userStatus?.status !== undefined
+      ? mapUserStatusToPresence(userStatus.status, userStatus.mode)
+      : typeof publicId === "number" && onlinePublicIds.has(publicId)
+        ? "online"
+        : "offline";
+
+  return {
+    avatarUrl: getAvatarUrl(user),
+    email: user.email,
+    id: String(publicId ?? user.email ?? user.displayName ?? "unknown-user"),
     name: getFriendUserName(user),
-    publicId: user.publicId,
-    status: "offline",
+    publicId,
+    status,
     rank: {
       name: "wood",
       label: "Wood",
@@ -1143,6 +1192,10 @@ function Client({
   const [partyInviteSearchResults, setPartyInviteSearchResults] = useState<
     FriendUserResponse[]
   >([]);
+  const [partyInviteOnlineUsers, setPartyInviteOnlineUsers] = useState<
+    OnlineInviteUser[]
+  >([]);
+  const [partyInviteOnlinePage, setPartyInviteOnlinePage] = useState(0);
   const [partyInviteSearching, setPartyInviteSearching] = useState(false);
   const [partyInviteBusyId, setPartyInviteBusyId] = useState<number>();
   const [selectedLobbyRoles, setSelectedLobbyRoles] =
@@ -1371,14 +1424,32 @@ function Client({
         .filter((publicId): publicId is number => typeof publicId === "number"),
     );
   }, [partyInviteFriends]);
-  const inviteCandidates = useMemo(() => {
+  const partyInviteOnlinePublicIdSet = useMemo(
+    () =>
+      new Set(
+        partyInviteOnlineUsers
+          .map((user) => toPublicId(user.publicId))
+          .filter((publicId): publicId is number => typeof publicId === "number"),
+      ),
+    [partyInviteOnlineUsers],
+  );
+  const partyInviteableFriendPublicIdSet = useMemo(() => {
+    return new Set(
+      partyInviteFriends
+        .filter((friend) => isInviteablePresence(friend.status))
+        .map((friend) => friend.publicId)
+        .filter((publicId): publicId is number => typeof publicId === "number"),
+    );
+  }, [partyInviteFriends]);
+  const filteredInviteCandidates = useMemo(() => {
     const query = partyInviteSearch.trim().toLowerCase();
     const candidatesById = new Map<number | string, PartyInviteCandidate>();
-    const matchesQuery = (candidate: PartyInviteCandidate) => {
-      if (!query) {
-        return true;
-      }
 
+    if (!query) {
+      return [];
+    }
+
+    const matchesQuery = (candidate: PartyInviteCandidate) => {
       return (
         candidate.name.toLowerCase().includes(query) ||
         candidate.email?.toLowerCase().includes(query) ||
@@ -1387,6 +1458,14 @@ function Client({
     };
 
     for (const friend of partyInviteFriends) {
+      if (
+        typeof friend.publicId !== "number" ||
+        !partyInviteOnlinePublicIdSet.has(friend.publicId) ||
+        !isInviteablePresence(friend.status)
+      ) {
+        continue;
+      }
+
       const candidate = mapFriendToInviteCandidate(friend);
 
       if (matchesQuery(candidate)) {
@@ -1403,16 +1482,21 @@ function Client({
       }
     }
 
-    return [...candidatesById.values()].filter((candidate) => {
-      if (candidate.publicId === profilePublicId) {
-        return false;
-      }
+    for (const user of partyInviteOnlineUsers) {
+      const candidate = mapOnlineUserToInviteCandidate(user);
+      const key = getInviteCandidateKey(candidate);
 
-      if (
-        typeof candidate.publicId === "number" &&
-        candidate.publicId === activeLobbyCurrentMember?.publicId
-      ) {
-        return false;
+      if (!candidatesById.has(key) && matchesQuery(candidate)) {
+        candidatesById.set(key, candidate);
+      }
+    }
+
+    return [...candidatesById.values()].filter((candidate) => {
+      if (typeof candidate.publicId === "number") {
+        return (
+          candidate.publicId !== profilePublicId &&
+          candidate.publicId !== activeLobbyCurrentMember?.publicId
+        );
       }
 
       const currentMemberName = activeLobbyCurrentMember
@@ -1425,10 +1509,31 @@ function Client({
   }, [
     activeLobbyCurrentMember,
     partyInviteFriends,
+    partyInviteOnlineUsers,
+    partyInviteOnlinePublicIdSet,
     partyInviteSearch,
+    partyInviteableFriendPublicIdSet,
     partyInviteSearchResults,
     profilePublicId,
   ]);
+  const partyInviteCandidateTotalPages = Math.ceil(
+    filteredInviteCandidates.length / PARTY_INVITE_ONLINE_LIMIT,
+  );
+  const partyInviteShowPagination =
+    partyInviteSearch.trim().length >= 1 && partyInviteCandidateTotalPages > 1;
+  const partyInviteCanPagePrevious =
+    partyInviteOnlinePage > 0 && !partyInviteSearching;
+  const partyInviteCanPageNext =
+    partyInviteOnlinePage + 1 < partyInviteCandidateTotalPages &&
+    !partyInviteSearching;
+  const inviteCandidates = useMemo(
+    () =>
+      filteredInviteCandidates.slice(
+        partyInviteOnlinePage * PARTY_INVITE_ONLINE_LIMIT,
+        (partyInviteOnlinePage + 1) * PARTY_INVITE_ONLINE_LIMIT,
+      ),
+    [filteredInviteCandidates, partyInviteOnlinePage],
+  );
   useEffect(() => {
     activeLobbyRef.current = activeLobby;
   }, [activeLobby]);
@@ -1505,6 +1610,24 @@ function Client({
     setPartyInviteOpen(false);
     setOpenLobbyRolePicker(undefined);
   }, [partyInvitesLocked]);
+
+  useEffect(() => {
+    if (!partyInviteOpen) {
+      return;
+    }
+
+    setPartyInviteOnlinePage(0);
+  }, [partyInviteOpen, partyInviteSearch]);
+
+  useEffect(() => {
+    if (!partyInviteOpen) {
+      return;
+    }
+
+    setPartyInviteOnlinePage((currentPage) =>
+      Math.min(currentPage, Math.max(0, partyInviteCandidateTotalPages - 1)),
+    );
+  }, [partyInviteCandidateTotalPages, partyInviteOpen]);
 
   useEffect(() => {
     if (!lobbyIsFull) {
@@ -2143,23 +2266,126 @@ function Client({
     }, 45_000);
   }
 
-  async function refreshLobbyFriendProfiles() {
-    const result = await liveBootstrap({
-      baseUrl: LIVE_API_BASE_URL,
-    });
+  async function refreshLobbyFriendProfiles(page = partyInviteOnlinePage) {
+    const [result, onlineResult] = await Promise.all([
+      liveBootstrap({
+        baseUrl: LIVE_API_BASE_URL,
+      }),
+      listOnlineUsers({
+        baseUrl: LIVE_API_BASE_URL,
+        query: { limit: PARTY_INVITE_ONLINE_LIMIT, page },
+      }),
+    ]);
 
     if (result.error) {
       notifyLobbyError(t("friend-api-error"));
       return;
     }
 
-    setPartyInviteFriends(
-      (result.data?.friends?.friends ?? []).map(mapFriendUserToProfile),
+    const onlineUsers = onlineResult.error ? [] : (onlineResult.data?.users ?? []);
+    const onlinePublicIds = new Set(
+      onlineUsers
+        .map((user) => toPublicId(user.publicId))
+        .filter((publicId): publicId is number => typeof publicId === "number"),
     );
+    const friendStatusesByPublicId = new Map(
+      (result.data?.friendStatuses?.statuses ?? [])
+        .map((status) => [toPublicId(status.publicId), status] as const)
+        .filter(
+          (entry): entry is readonly [number, UserStatusSnapshot] =>
+            typeof entry[0] === "number",
+        ),
+    );
+
+    console.info("[mira:lobby-invite] /api/users/online", {
+      error: onlineResult.error,
+      pagination: onlineResult.data
+        ? {
+            limit: onlineResult.data.limit,
+            page: onlineResult.data.page,
+            total: onlineResult.data.total,
+            totalPages: onlineResult.data.totalPages,
+          }
+        : undefined,
+      users: onlineUsers,
+    });
+    console.info("[mira:lobby-invite] liveBootstrap friends/statuses", {
+      friends: result.data?.friends?.friends ?? [],
+      friendStatuses: result.data?.friendStatuses?.statuses ?? [],
+    });
+
+    setPartyInviteFriends(
+      (result.data?.friends?.friends ?? []).map((friend) => {
+        const publicId = toPublicId(friend.publicId);
+
+        return mapFriendUserToProfile(
+          friend,
+          typeof publicId === "number"
+            ? friendStatusesByPublicId.get(publicId)
+            : undefined,
+          onlinePublicIds,
+        );
+      }),
+    );
+    setPartyInviteOnlineUsers(onlineUsers);
 
     rememberLobbyRolesFromStatuses(result.data?.friendStatuses?.statuses ?? []);
     replaceLobbyInvitations(result.data?.lobbyInvitations ?? []);
     setLobbyError(undefined);
+  }
+
+  async function listAllPartyInviteOnlineUsers() {
+    const firstResult = await listOnlineUsers({
+      baseUrl: LIVE_API_BASE_URL,
+      query: { limit: PARTY_INVITE_ONLINE_LIMIT, page: 0 },
+    });
+
+    if (firstResult.error) {
+      return {
+        error: firstResult.error,
+        pageResults: [firstResult],
+        users: [] as OnlineInviteUser[],
+      };
+    }
+
+    const firstPageUsers = firstResult.data?.users ?? [];
+    const totalPages = Math.max(0, firstResult.data?.totalPages ?? 0);
+    const remainingPages = Array.from(
+      { length: Math.max(0, totalPages - 1) },
+      (_, index) => index + 1,
+    );
+    const remainingResults = await Promise.all(
+      remainingPages.map((page) =>
+        listOnlineUsers({
+          baseUrl: LIVE_API_BASE_URL,
+          query: { limit: PARTY_INVITE_ONLINE_LIMIT, page },
+        }),
+      ),
+    );
+    const usersByPublicId = new Map<number | string, OnlineInviteUser>();
+
+    for (const user of firstPageUsers) {
+      usersByPublicId.set(toPublicId(user.publicId) ?? `page-0-${usersByPublicId.size}`, user);
+    }
+
+    for (const result of remainingResults) {
+      if (result.error) {
+        continue;
+      }
+
+      for (const user of result.data?.users ?? []) {
+        usersByPublicId.set(
+          toPublicId(user.publicId) ?? `page-rest-${usersByPublicId.size}`,
+          user,
+        );
+      }
+    }
+
+    return {
+      error: remainingResults.find((result) => result.error)?.error,
+      pageResults: [firstResult, ...remainingResults],
+      users: [...usersByPublicId.values()],
+    };
   }
 
   useEffect(() => {
@@ -2251,7 +2477,7 @@ function Client({
 
     const query = partyInviteSearch.trim();
 
-    if (query.length < 2) {
+    if (query.length < 1) {
       setPartyInviteSearchResults([]);
       setPartyInviteSearching(false);
       return;
@@ -2261,19 +2487,73 @@ function Client({
     setPartyInviteSearching(true);
 
     const timeoutId = window.setTimeout(async () => {
-      const result = await searchUsers({
-        query: { q: query },
-      });
+      const [result, onlineResult] = await Promise.all([
+        query.length >= 2
+          ? searchUsers({
+              query: { q: query },
+            })
+          : Promise.resolve(undefined),
+        listAllPartyInviteOnlineUsers(),
+      ]);
 
       if (!active) {
         return;
       }
 
-      if (result.error) {
-        notifyLobbyError(t("friend-api-error"));
+      const onlineUsers = onlineResult.error ? [] : onlineResult.users;
+      const onlinePublicIds = new Set(
+        onlineUsers
+          .map((user) => toPublicId(user.publicId))
+          .filter((publicId): publicId is number => typeof publicId === "number"),
+      );
+
+      console.info("[mira:lobby-invite] /api/users/online search refresh", {
+        error: onlineResult.error,
+        pageResults: onlineResult.pageResults.map((pageResult) => ({
+          error: pageResult.error,
+          limit: pageResult.data?.limit,
+          page: pageResult.data?.page,
+          total: pageResult.data?.total,
+          totalPages: pageResult.data?.totalPages,
+          userCount: pageResult.data?.users?.length ?? 0,
+        })),
+        query,
+        users: onlineUsers,
+      });
+      setPartyInviteOnlineUsers(onlineUsers);
+
+      if (result?.error) {
+        console.info("[mira:lobby-invite] /api/users/search skipped/failed", {
+          error: result.error,
+          query,
+        });
+        if (onlineResult.error) {
+          notifyLobbyError(t("friend-api-error"));
+        }
         setPartyInviteSearchResults([]);
+      } else if (result?.data) {
+        const rawUsers = result.data?.users ?? [];
+        const filteredUsers = rawUsers.filter((user) => {
+          const publicId = toPublicId(user.publicId);
+
+          return (
+            typeof publicId === "number" &&
+            onlinePublicIds.has(publicId)
+          );
+        });
+
+        console.info("[mira:lobby-invite] /api/users/search", {
+          filteredUsers,
+          onlinePublicIds: [...onlinePublicIds],
+          query,
+          rawUsers,
+        });
+        setPartyInviteSearchResults(filteredUsers);
       } else {
-        setPartyInviteSearchResults(result.data?.users ?? []);
+        if (onlineResult.error) {
+          notifyLobbyError(t("friend-api-error"));
+        }
+        setPartyInviteSearchResults([]);
       }
 
       setPartyInviteSearching(false);
@@ -3172,7 +3452,12 @@ function Client({
   ]);
 
   async function handleLobbyFriendDrop(friend: FriendProfile) {
-    if (!activeLobby?.id || partyInvitesLocked || typeof friend.publicId !== "number") {
+    if (
+      !activeLobby?.id ||
+      partyInvitesLocked ||
+      typeof friend.publicId !== "number" ||
+      !isInviteablePresence(friend.status)
+    ) {
       return;
     }
 
@@ -3198,6 +3483,7 @@ function Client({
     setPartyInviteOpen(true);
     setPartyInviteSearch("");
     setPartyInviteSearchResults([]);
+    setPartyInviteOnlinePage(0);
     setLobbyError(undefined);
   }
 
@@ -3334,7 +3620,14 @@ function Client({
   }
 
   async function handleInviteCandidate(candidate: PartyInviteCandidate) {
-    if (!activeLobby?.id || partyInvitesLocked || typeof candidate.publicId !== "number") {
+    if (
+      !activeLobby?.id ||
+      partyInvitesLocked ||
+      typeof candidate.publicId !== "number" ||
+      (!partyInviteOnlinePublicIdSet.has(candidate.publicId) &&
+        (candidate.source !== "friend" ||
+          !partyInviteableFriendPublicIdSet.has(candidate.publicId)))
+    ) {
       return;
     }
 
@@ -4471,7 +4764,10 @@ function Client({
                 autoFocus
                 placeholder={t("lobby-invite-search")}
                 value={partyInviteSearch}
-                onChange={(event) => setPartyInviteSearch(event.target.value)}
+                onChange={(event) => {
+                  setPartyInviteSearch(event.target.value);
+                  setPartyInviteOnlinePage(0);
+                }}
               />
               {partyInviteSearching ? (
                 <span>{t("friend-add-searching")}</span>
@@ -4527,12 +4823,47 @@ function Client({
                 })
               ) : (
                 <p className="friend-add-empty">
-                  {partyInviteSearch.trim().length >= 2
+                  {partyInviteSearch.trim().length >= 1
                     ? t("friend-add-no-results")
                     : t("lobby-invite-empty")}
                 </p>
               )}
             </div>
+
+            {partyInviteShowPagination ? (
+              <div className="friend-add-pagination">
+                <button
+                  aria-label="Previous page"
+                  disabled={!partyInviteCanPagePrevious}
+                  type="button"
+                  onClick={() =>
+                    setPartyInviteOnlinePage((currentPage) =>
+                      Math.max(0, currentPage - 1),
+                    )
+                  }
+                >
+                  <ChevronLeft size={16} />
+                </button>
+                <span>
+                  {partyInviteOnlinePage + 1} / {partyInviteCandidateTotalPages}
+                </span>
+                <button
+                  aria-label="Next page"
+                  disabled={!partyInviteCanPageNext}
+                  type="button"
+                  onClick={() =>
+                    setPartyInviteOnlinePage((currentPage) =>
+                      Math.min(
+                        Math.max(0, partyInviteCandidateTotalPages - 1),
+                        currentPage + 1,
+                      ),
+                    )
+                  }
+                >
+                  <ChevronRight size={16} />
+                </button>
+              </div>
+            ) : null}
           </div>
         </div>
       ) : null}

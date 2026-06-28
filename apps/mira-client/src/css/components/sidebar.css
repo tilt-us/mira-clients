@@ -1145,6 +1145,10 @@
   overflow: hidden;
 }
 
+.lobby-party-invite-dialog {
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+}
+
 .friend-add-dialog-header {
   display: flex;
   align-items: center;
@@ -1411,6 +1415,43 @@
   background: rgba(255, 255, 255, 0.035);
   font-size: 0.78rem;
   font-weight: 780;
+}
+
+.friend-add-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 32px;
+}
+
+.friend-add-pagination button {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border-radius: 7px;
+  color: rgba(237, 242, 247, 0.78);
+  background: #20242c;
+  cursor: pointer;
+}
+
+.friend-add-pagination button:hover {
+  color: #edf2f7;
+  background: #29303a;
+}
+
+.friend-add-pagination button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.friend-add-pagination span {
+  min-width: 52px;
+  text-align: center;
+  color: #9aa7b5;
+  font-size: 0.76rem;
+  font-weight: 850;
 }
 
 .folder-dialog {

@@ -39,6 +39,10 @@ export type UserSearchResponse = {
     users?: Array<FriendUserResponse>;
 };
 
+export type PublicUsersResponse = {
+    users?: Array<FriendUserResponse>;
+};
+
 export type LoginOptionsResponse = {
     providers?: Array<string>;
 };
@@ -282,6 +286,22 @@ export type FriendUser = {
     displayName?: string;
     email?: string;
     avatarUrl?: string;
+};
+
+export type OnlineUserStatusSnapshot = {
+    publicId?: number;
+    displayName?: string;
+    status?: 'OFFLINE' | 'ONLINE' | 'AFK' | 'IN_LOBBY' | 'IN_QUEUE' | 'CHAMPION_SELECTION' | 'IN_GAME' | 'SPECTATE';
+    mode?: string;
+    updatedAt?: string;
+};
+
+export type OnlineUsersResponse = {
+    users?: Array<OnlineUserStatusSnapshot>;
+    page?: number;
+    limit?: number;
+    total?: number;
+    totalPages?: number;
 };
 
 export type FriendUserStatusesResponse = {
@@ -593,6 +613,24 @@ export type SearchResponses = {
 };
 
 export type SearchResponse = SearchResponses[keyof SearchResponses];
+
+export type UsersByPublicIdsData = {
+    body?: never;
+    path?: never;
+    query: {
+        publicIds: Array<number>;
+    };
+    url: '/api/users/by-public-ids';
+};
+
+export type UsersByPublicIdsResponses = {
+    /**
+     * OK
+     */
+    200: PublicUsersResponse;
+};
+
+export type UsersByPublicIdsResponse = UsersByPublicIdsResponses[keyof UsersByPublicIdsResponses];
 
 export type LoginOptionsData = {
     body?: never;
@@ -1069,6 +1107,25 @@ export type LiveAcceptRequestResponses = {
 };
 
 export type LiveAcceptRequestResponse = LiveAcceptRequestResponses[keyof LiveAcceptRequestResponses];
+
+export type OnlineData = {
+    body?: never;
+    path?: never;
+    query?: {
+        page?: number;
+        limit?: number;
+    };
+    url: '/api/users/online';
+};
+
+export type OnlineResponses = {
+    /**
+     * OK
+     */
+    200: OnlineUsersResponse;
+};
+
+export type OnlineResponse = OnlineResponses[keyof OnlineResponses];
 
 export type FriendsData = {
     body?: never;

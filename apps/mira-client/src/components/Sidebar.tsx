@@ -345,6 +345,14 @@ function isLobbyPresenceFallbackFresh(lobby: LobbySnapshot, now: number) {
     now - lastChangedAt <= lobbyPresenceFallbackMaxAgeMs;
 }
 
+function isPartyInviteableFriend(friend: FriendProfile) {
+  return friend.status !== "offline";
+}
+
+function isPartyJoinableFriend(friend: FriendProfile) {
+  return friend.status === "inlobby";
+}
+
 function formatElapsedDuration(startedAtIso: string | undefined, now: number) {
   if (!startedAtIso) {
     return undefined;
@@ -571,7 +579,7 @@ function mapApiFriendsToProfiles(
       ? mapUserStatusToPresence(userStatus.status, userStatus.mode)
       : undefined;
     const status =
-      lobbyPresence && (!apiPresence || apiPresence === "offline" || apiPresence === "online")
+      lobbyPresence && (!apiPresence || apiPresence === "online")
         ? lobbyPresence
         : forcedOnline && apiPresence === "offline"
           ? "online"
@@ -1031,7 +1039,13 @@ function Sidebar({
         (friend) => friend.id === currentDragState.friendId,
       );
 
-      if (currentDragState.active && lobbyDropTarget && droppedFriend) {
+      if (
+        currentDragState.active &&
+        Boolean(partyInviteEnabled) &&
+        lobbyDropTarget &&
+        droppedFriend &&
+        isPartyInviteableFriend(droppedFriend)
+      ) {
         onLobbyFriendDrop?.(droppedFriend);
       }
 
@@ -1045,7 +1059,7 @@ function Sidebar({
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", handlePointerUp);
     };
-  }, [dragInProgress, friends, onLobbyFriendDrop]);
+  }, [dragInProgress, friends, onLobbyFriendDrop, partyInviteEnabled]);
 
   useEffect(() => {
     if (!folderDragState) {
@@ -1488,7 +1502,7 @@ function Sidebar({
   function handleJoinParty(friendId: string) {
     const friend = friends.find((currentFriend) => currentFriend.id === friendId);
 
-    if (typeof friend?.publicId !== "number") {
+    if (typeof friend?.publicId !== "number" || !isPartyJoinableFriend(friend)) {
       return;
     }
 
@@ -1519,7 +1533,7 @@ function Sidebar({
   function handleInviteParty(friendId: string) {
     const friend = friends.find((currentFriend) => currentFriend.id === friendId);
 
-    if (!friend) {
+    if (!friend || !isPartyInviteableFriend(friend)) {
       return;
     }
 
@@ -1736,9 +1750,11 @@ function Sidebar({
       const friendIsInActiveLobby =
         typeof friend.publicId === "number" &&
         activeLobbyMemberPublicIds.includes(friend.publicId);
+      const friendIsPartyInviteable = isPartyInviteableFriend(friend);
       const canJoinParty =
         !queueActionsLocked &&
         typeof friend.publicId === "number" &&
+        isPartyJoinableFriend(friend) &&
         openFriendLobbies.some((lobby) => {
           const friendIsMember = lobby.members?.some((member) => {
             return member.publicId === friend.publicId;
@@ -1759,6 +1775,8 @@ function Sidebar({
           canInviteParty={
             !queueActionsLocked &&
             Boolean(partyInviteEnabled) &&
+            typeof friend.publicId === "number" &&
+            friendIsPartyInviteable &&
             !friendIsInActiveLobby
           }
           canJoinParty={canJoinParty}
