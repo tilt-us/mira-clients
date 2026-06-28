@@ -57,7 +57,6 @@ import {
   type LobbySnapshot,
   type MatchPlayerResponse,
   type MatchResponse,
-  type OnlineUsersResponse,
   type OnlineUserStatusSnapshot,
   type UpdateUserStatusRequest,
   type UserStatusSnapshot,
@@ -157,13 +156,7 @@ type GameModeIconProps = {
   question?: boolean;
 };
 
-const PARTY_INVITE_ONLINE_LIMIT = 10;
-const defaultPartyInviteOnlinePagination: PartyInviteOnlinePagination = {
-  limit: PARTY_INVITE_ONLINE_LIMIT,
-  page: 0,
-  total: 0,
-  totalPages: 0,
-};
+const PARTY_INVITE_ONLINE_LIMIT = 2;
 
 type ApiPresenceStatus = UpdateUserStatusRequest["status"];
 
@@ -175,12 +168,6 @@ type PartyInviteCandidate = {
   source: "friend" | "user";
 };
 type OnlineInviteUser = OnlineUserStatusSnapshot & Partial<FriendUserResponse>;
-type PartyInviteOnlinePagination = {
-  limit: number;
-  page: number;
-  total: number;
-  totalPages: number;
-};
 type CurrentMatchPlayerProfile = {
   avatarUrl?: string;
   displayName: string;
@@ -428,18 +415,6 @@ function mapOnlineUserToInviteCandidate(user: OnlineInviteUser): PartyInviteCand
     ),
     publicId,
     source: "user",
-  };
-}
-
-function getPartyInviteOnlinePagination(
-  response: OnlineUsersResponse | undefined,
-  fallbackPage: number,
-): PartyInviteOnlinePagination {
-  return {
-    limit: response?.limit ?? PARTY_INVITE_ONLINE_LIMIT,
-    page: response?.page ?? fallbackPage,
-    total: response?.total ?? response?.users?.length ?? 0,
-    totalPages: response?.totalPages ?? (response?.users?.length ? 1 : 0),
   };
 }
 
@@ -1221,8 +1196,6 @@ function Client({
     OnlineInviteUser[]
   >([]);
   const [partyInviteOnlinePage, setPartyInviteOnlinePage] = useState(0);
-  const [partyInviteOnlinePagination, setPartyInviteOnlinePagination] =
-    useState<PartyInviteOnlinePagination>(defaultPartyInviteOnlinePagination);
   const [partyInviteSearching, setPartyInviteSearching] = useState(false);
   const [partyInviteBusyId, setPartyInviteBusyId] = useState<number>();
   const [selectedLobbyRoles, setSelectedLobbyRoles] =
@@ -1468,7 +1441,7 @@ function Client({
         .filter((publicId): publicId is number => typeof publicId === "number"),
     );
   }, [partyInviteFriends]);
-  const inviteCandidates = useMemo(() => {
+  const filteredInviteCandidates = useMemo(() => {
     const query = partyInviteSearch.trim().toLowerCase();
     const candidatesById = new Map<number | string, PartyInviteCandidate>();
 
@@ -1543,17 +1516,24 @@ function Client({
     partyInviteSearchResults,
     profilePublicId,
   ]);
-  const partyInviteOnlineTotalPages = Math.max(
-    0,
-    partyInviteOnlinePagination.totalPages,
+  const partyInviteCandidateTotalPages = Math.ceil(
+    filteredInviteCandidates.length / PARTY_INVITE_ONLINE_LIMIT,
   );
   const partyInviteShowPagination =
-    partyInviteSearch.trim().length >= 1 && partyInviteOnlineTotalPages > 1;
+    partyInviteSearch.trim().length >= 1 && partyInviteCandidateTotalPages > 1;
   const partyInviteCanPagePrevious =
-    partyInviteOnlinePagination.page > 0 && !partyInviteSearching;
+    partyInviteOnlinePage > 0 && !partyInviteSearching;
   const partyInviteCanPageNext =
-    partyInviteOnlinePagination.page + 1 < partyInviteOnlineTotalPages &&
+    partyInviteOnlinePage + 1 < partyInviteCandidateTotalPages &&
     !partyInviteSearching;
+  const inviteCandidates = useMemo(
+    () =>
+      filteredInviteCandidates.slice(
+        partyInviteOnlinePage * PARTY_INVITE_ONLINE_LIMIT,
+        (partyInviteOnlinePage + 1) * PARTY_INVITE_ONLINE_LIMIT,
+      ),
+    [filteredInviteCandidates, partyInviteOnlinePage],
+  );
   useEffect(() => {
     activeLobbyRef.current = activeLobby;
   }, [activeLobby]);
@@ -1638,6 +1618,16 @@ function Client({
 
     setPartyInviteOnlinePage(0);
   }, [partyInviteOpen, partyInviteSearch]);
+
+  useEffect(() => {
+    if (!partyInviteOpen) {
+      return;
+    }
+
+    setPartyInviteOnlinePage((currentPage) =>
+      Math.min(currentPage, Math.max(0, partyInviteCandidateTotalPages - 1)),
+    );
+  }, [partyInviteCandidateTotalPages, partyInviteOpen]);
 
   useEffect(() => {
     if (!lobbyIsFull) {
@@ -2309,9 +2299,14 @@ function Client({
 
     console.info("[mira:lobby-invite] /api/users/online", {
       error: onlineResult.error,
-      pagination: onlineResult.error
-        ? { ...defaultPartyInviteOnlinePagination, page }
-        : getPartyInviteOnlinePagination(onlineResult.data, page),
+      pagination: onlineResult.data
+        ? {
+            limit: onlineResult.data.limit,
+            page: onlineResult.data.page,
+            total: onlineResult.data.total,
+            totalPages: onlineResult.data.totalPages,
+          }
+        : undefined,
       users: onlineUsers,
     });
     console.info("[mira:lobby-invite] liveBootstrap friends/statuses", {
@@ -2333,15 +2328,64 @@ function Client({
       }),
     );
     setPartyInviteOnlineUsers(onlineUsers);
-    setPartyInviteOnlinePagination(
-      onlineResult.error
-        ? { ...defaultPartyInviteOnlinePagination, page }
-        : getPartyInviteOnlinePagination(onlineResult.data, page),
-    );
 
     rememberLobbyRolesFromStatuses(result.data?.friendStatuses?.statuses ?? []);
     replaceLobbyInvitations(result.data?.lobbyInvitations ?? []);
     setLobbyError(undefined);
+  }
+
+  async function listAllPartyInviteOnlineUsers() {
+    const firstResult = await listOnlineUsers({
+      baseUrl: LIVE_API_BASE_URL,
+      query: { limit: PARTY_INVITE_ONLINE_LIMIT, page: 0 },
+    });
+
+    if (firstResult.error) {
+      return {
+        error: firstResult.error,
+        pageResults: [firstResult],
+        users: [] as OnlineInviteUser[],
+      };
+    }
+
+    const firstPageUsers = firstResult.data?.users ?? [];
+    const totalPages = Math.max(0, firstResult.data?.totalPages ?? 0);
+    const remainingPages = Array.from(
+      { length: Math.max(0, totalPages - 1) },
+      (_, index) => index + 1,
+    );
+    const remainingResults = await Promise.all(
+      remainingPages.map((page) =>
+        listOnlineUsers({
+          baseUrl: LIVE_API_BASE_URL,
+          query: { limit: PARTY_INVITE_ONLINE_LIMIT, page },
+        }),
+      ),
+    );
+    const usersByPublicId = new Map<number | string, OnlineInviteUser>();
+
+    for (const user of firstPageUsers) {
+      usersByPublicId.set(toPublicId(user.publicId) ?? `page-0-${usersByPublicId.size}`, user);
+    }
+
+    for (const result of remainingResults) {
+      if (result.error) {
+        continue;
+      }
+
+      for (const user of result.data?.users ?? []) {
+        usersByPublicId.set(
+          toPublicId(user.publicId) ?? `page-rest-${usersByPublicId.size}`,
+          user,
+        );
+      }
+    }
+
+    return {
+      error: remainingResults.find((result) => result.error)?.error,
+      pageResults: [firstResult, ...remainingResults],
+      users: [...usersByPublicId.values()],
+    };
   }
 
   useEffect(() => {
@@ -2449,20 +2493,14 @@ function Client({
               query: { q: query },
             })
           : Promise.resolve(undefined),
-        listOnlineUsers({
-          baseUrl: LIVE_API_BASE_URL,
-          query: {
-            limit: PARTY_INVITE_ONLINE_LIMIT,
-            page: partyInviteOnlinePage,
-          },
-        }),
+        listAllPartyInviteOnlineUsers(),
       ]);
 
       if (!active) {
         return;
       }
 
-      const onlineUsers = onlineResult.error ? [] : (onlineResult.data?.users ?? []);
+      const onlineUsers = onlineResult.error ? [] : onlineResult.users;
       const onlinePublicIds = new Set(
         onlineUsers
           .map((user) => toPublicId(user.publicId))
@@ -2471,30 +2509,18 @@ function Client({
 
       console.info("[mira:lobby-invite] /api/users/online search refresh", {
         error: onlineResult.error,
-        pagination: onlineResult.error
-          ? {
-              ...defaultPartyInviteOnlinePagination,
-              page: partyInviteOnlinePage,
-            }
-          : getPartyInviteOnlinePagination(
-              onlineResult.data,
-              partyInviteOnlinePage,
-            ),
+        pageResults: onlineResult.pageResults.map((pageResult) => ({
+          error: pageResult.error,
+          limit: pageResult.data?.limit,
+          page: pageResult.data?.page,
+          total: pageResult.data?.total,
+          totalPages: pageResult.data?.totalPages,
+          userCount: pageResult.data?.users?.length ?? 0,
+        })),
         query,
         users: onlineUsers,
       });
       setPartyInviteOnlineUsers(onlineUsers);
-      setPartyInviteOnlinePagination(
-        onlineResult.error
-          ? {
-              ...defaultPartyInviteOnlinePagination,
-              page: partyInviteOnlinePage,
-            }
-          : getPartyInviteOnlinePagination(
-              onlineResult.data,
-              partyInviteOnlinePage,
-            ),
-      );
 
       if (result?.error) {
         console.info("[mira:lobby-invite] /api/users/search skipped/failed", {
@@ -2537,7 +2563,7 @@ function Client({
       active = false;
       window.clearTimeout(timeoutId);
     };
-  }, [partyInviteOnlinePage, partyInviteOpen, partyInviteSearch, t]);
+  }, [partyInviteOpen, partyInviteSearch, t]);
 
   useEffect(() => {
     if (!lobbyMemberContextMenu) {
@@ -4819,8 +4845,7 @@ function Client({
                   <ChevronLeft size={16} />
                 </button>
                 <span>
-                  {partyInviteOnlinePagination.page + 1} /{" "}
-                  {partyInviteOnlineTotalPages}
+                  {partyInviteOnlinePage + 1} / {partyInviteCandidateTotalPages}
                 </span>
                 <button
                   aria-label="Next page"
@@ -4829,7 +4854,7 @@ function Client({
                   onClick={() =>
                     setPartyInviteOnlinePage((currentPage) =>
                       Math.min(
-                        Math.max(0, partyInviteOnlineTotalPages - 1),
+                        Math.max(0, partyInviteCandidateTotalPages - 1),
                         currentPage + 1,
                       ),
                     )
