@@ -444,7 +444,6 @@ fn start_oauth_window(
             .visible(false)
             .on_navigation(move |url| {
                 let target_url = url.as_str();
-                println!("[mira-client] OAuth window navigating: {target_url}");
 
                 if is_oauth_redirect_url(target_url, &redirect_uri_for_navigation) {
                     let _ = app_for_navigation.emit(
@@ -464,13 +463,6 @@ fn start_oauth_window(
                 }
 
                 true
-            })
-            .on_page_load(|_window, payload| {
-                println!(
-                    "[mira-client] OAuth window page load: {:?} {}",
-                    payload.event(),
-                    payload.url()
-                );
             });
 
     if !cfg!(windows) {
