@@ -16,7 +16,10 @@ import {
   completeRedirectLogin,
   getValidAccessToken,
   loginWithPassword,
+  startDiscordLogin,
+  startGithubLogin,
   startGoogleLogin,
+  startKeycloakLogout,
 } from "../auth/keycloak";
 import { clearTokens, readTokens, saveTokens } from "../auth/storage";
 import SettingsModal from "../components/SettingsModal";
@@ -88,6 +91,18 @@ function getErrorMessage(error: unknown, fallback = "Aktion fehlgeschlagen.") {
   return fallback;
 }
 
+function getOAuthErrorMessage(error: unknown, t: (id: string) => string) {
+  if (error instanceof Error && error.message === "oauth_email_provider_conflict") {
+    return t("auth-oauth-email-provider-conflict");
+  }
+
+  if (error === "oauth_email_provider_conflict") {
+    return t("auth-oauth-email-provider-conflict");
+  }
+
+  return getErrorMessage(error, t("auth-action-failed"));
+}
+
 function getApiResultErrorMessage(
   error: unknown,
   response: Response | undefined,
@@ -150,6 +165,40 @@ function GoogleIcon() {
   );
 }
 
+function GitHubIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      focusable="false"
+      height="18"
+      viewBox="0 0 24 24"
+      width="18"
+    >
+      <path
+        d="M12 .5A11.5 11.5 0 0 0 8.36 22.9c.58.11.79-.25.79-.56v-2.02c-3.22.7-3.9-1.38-3.9-1.38-.53-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.71.08-.71 1.17.08 1.78 1.2 1.78 1.2 1.04 1.78 2.72 1.27 3.38.97.11-.75.41-1.27.74-1.56-2.57-.29-5.27-1.28-5.27-5.72 0-1.26.45-2.3 1.19-3.11-.12-.29-.52-1.47.11-3.07 0 0 .98-.31 3.18 1.19a11.05 11.05 0 0 1 5.8 0c2.2-1.5 3.17-1.19 3.17-1.19.64 1.6.24 2.78.12 3.07.74.81 1.19 1.85 1.19 3.11 0 4.45-2.7 5.43-5.28 5.72.42.36.79 1.07.79 2.16v3.04c0 .31.21.68.8.56A11.5 11.5 0 0 0 12 .5Z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+
+function DiscordIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      focusable="false"
+      height="18"
+      viewBox="0 0 24 24"
+      width="18"
+    >
+      <path
+        d="M19.54 5.23a18.88 18.88 0 0 0-4.68-1.46 12.96 12.96 0 0 0-.6 1.24 17.5 17.5 0 0 0-5.19 0 12.1 12.1 0 0 0-.61-1.24 18.8 18.8 0 0 0-4.68 1.46C.82 9.65.02 13.95.42 18.19a18.93 18.93 0 0 0 5.74 2.9c.46-.62.87-1.28 1.22-1.97-.67-.25-1.31-.56-1.92-.92l.47-.37c3.7 1.71 7.72 1.71 11.38 0l.47.37c-.61.36-1.25.67-1.92.92.35.69.76 1.35 1.22 1.97a18.87 18.87 0 0 0 5.74-2.9c.48-4.91-.82-9.17-3.28-12.96ZM8.09 15.59c-1.12 0-2.04-1.03-2.04-2.29 0-1.26.9-2.29 2.04-2.29 1.14 0 2.06 1.04 2.04 2.29 0 1.26-.9 2.29-2.04 2.29Zm7.53 0c-1.12 0-2.04-1.03-2.04-2.29 0-1.26.9-2.29 2.04-2.29 1.14 0 2.06 1.04 2.04 2.29 0 1.26-.9 2.29-2.04 2.29Z"
+        fill="#5865f2"
+      />
+    </svg>
+  );
+}
+
 /**
  * Description
  * Coordinates authentication, settings persistence, auth bootstrap, and the switch
@@ -196,6 +245,14 @@ function Authentication() {
 
   const googleEnabled = useMemo(
     () => providers.length === 0 || providers.includes("google"),
+    [providers],
+  );
+  const githubEnabled = useMemo(
+    () => providers.length === 0 || providers.includes("github"),
+    [providers],
+  );
+  const discordEnabled = useMemo(
+    () => providers.length === 0 || providers.includes("discord"),
     [providers],
   );
 
@@ -272,7 +329,7 @@ function Authentication() {
         if (redirectTokens) {
           notify({
             type: "info",
-            message: t("auth-google-success"),
+            message: t("auth-oauth-success"),
           });
         }
       } catch (caughtError) {
@@ -282,7 +339,7 @@ function Authentication() {
         if (hasOAuthResponse && !cancelled) {
           notify({
             type: "error",
-            message: getErrorMessage(caughtError, t("auth-action-failed")),
+            message: getOAuthErrorMessage(caughtError, t),
           });
         }
       }
@@ -319,7 +376,7 @@ function Authentication() {
         if (!cancelled) {
           notify({
             type: "info",
-            message: t("auth-google-success"),
+            message: t("auth-oauth-success"),
           });
         }
       } catch (caughtError) {
@@ -328,7 +385,7 @@ function Authentication() {
           setApiAccessToken(undefined);
           notify({
             type: "error",
-            message: getErrorMessage(caughtError, t("auth-action-failed")),
+            message: getOAuthErrorMessage(caughtError, t),
           });
         }
       } finally {
@@ -523,10 +580,68 @@ function Authentication() {
     setLoadState("loading");
 
     try {
-      await startGoogleLogin();
+      const result = await startGoogleLogin({ accentColor, locale });
 
       if (isTauri()) {
-        setOauthModalOpen(true);
+        if (result?.modal === false) {
+          setLoadState("idle");
+        } else {
+          setOauthModalOpen(true);
+        }
+      }
+    } catch (caughtError) {
+      setLoadState("idle");
+      setOauthModalOpen(false);
+      notify({
+        type: "error",
+        message: getErrorMessage(caughtError, t("auth-action-failed")),
+      });
+    }
+  }
+
+  /**
+   * Description
+   * Starts the GitHub OAuth sign-in flow.
+   */
+  async function handleGithubLogin() {
+    setLoadState("loading");
+
+    try {
+      const result = await startGithubLogin({ accentColor, locale });
+
+      if (isTauri()) {
+        if (result?.modal === false) {
+          setLoadState("idle");
+        } else {
+          setOauthModalOpen(true);
+        }
+      }
+    } catch (caughtError) {
+      setLoadState("idle");
+      setOauthModalOpen(false);
+      notify({
+        type: "error",
+        message: getErrorMessage(caughtError, t("auth-action-failed")),
+      });
+    }
+  }
+
+  /**
+   * Description
+   * Starts the Discord OAuth sign-in flow.
+   */
+  async function handleDiscordLogin() {
+    setLoadState("loading");
+
+    try {
+      const result = await startDiscordLogin({ accentColor, locale });
+
+      if (isTauri()) {
+        if (result?.modal === false) {
+          setLoadState("idle");
+        } else {
+          setOauthModalOpen(true);
+        }
       }
     } catch (caughtError) {
       setLoadState("idle");
@@ -542,13 +657,26 @@ function Authentication() {
    * Description
    * Clears auth state, stored tokens, and open dialogs, returning the user to auth.
    */
-  function handleLogout() {
-    clearTokens();
-    setApiAccessToken(undefined);
-    setProfile(undefined);
-    setLoginPassword("");
+  async function handleLogout() {
+    setLoadState("loading");
     setCloseDialogOpen(false);
     setSettingsOpen(false);
+    setOauthModalOpen(false);
+
+    try {
+      await startKeycloakLogout();
+    } catch (caughtError) {
+      notify({
+        type: "error",
+        message: getErrorMessage(caughtError, t("auth-action-failed")),
+      });
+    } finally {
+      clearTokens();
+      setApiAccessToken(undefined);
+      setProfile(undefined);
+      setLoginPassword("");
+      setLoadState("idle");
+    }
   }
 
   /**
@@ -688,6 +816,26 @@ function Authentication() {
                 >
                   <GoogleIcon />
                   {t("auth-google")}
+                </button>
+
+                <button
+                  className="provider-button"
+                  disabled={busy || !githubEnabled}
+                  type="button"
+                  onClick={handleGithubLogin}
+                >
+                  <GitHubIcon />
+                  {t("auth-github")}
+                </button>
+
+                <button
+                  className="provider-button"
+                  disabled={busy || !discordEnabled}
+                  type="button"
+                  onClick={handleDiscordLogin}
+                >
+                  <DiscordIcon />
+                  {t("auth-discord")}
                 </button>
               </form>
             </div>

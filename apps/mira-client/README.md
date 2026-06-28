@@ -117,11 +117,18 @@ Import generated endpoints through `src/api/client.ts` so the configured base
 URL is applied in one place.
 
 Email/password login uses Keycloak's password grant with
-`VITE_KEYCLOAK_PASSWORD_CLIENT_ID`. Google login uses
-`VITE_KEYCLOAK_CLIENT_ID` with the authorization-code flow, PKCE, and
-`kc_idp_hint=google`. The authorization-code client must allow the Tauri dev
+`VITE_KEYCLOAK_PASSWORD_CLIENT_ID`. Google, GitHub, and Discord login use
+`VITE_KEYCLOAK_CLIENT_ID` with the authorization-code flow, PKCE, and the
+provider hints `kc_idp_hint=google`, `kc_idp_hint=github`, and
+`kc_idp_hint=discord`. The authorization-code client must allow the Tauri dev
 redirect URL, for example `http://localhost:1420/*`. The password client must
 have Direct Access Grants enabled.
+
+Local identity provider redirect URLs:
+
+- Google: `http://localhost:8081/realms/mira/broker/google/endpoint`
+- GitHub: `http://localhost:8081/realms/mira/broker/github/endpoint`
+- Discord: `http://localhost:8081/realms/mira/broker/discord/endpoint`
 
 ## Linux Prerequisites
 

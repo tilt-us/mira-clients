@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "dev:desktop": "MIRA_CLIENT_CONFIG=$PWD/mira-client.prod.toml tauri dev --config src-tauri/tauri.desktop-dev.conf.json",
-    "local:desktop": "MIRA_CLIENT_CONFIG=$PWD/mira-client.toml tauri dev --config src-tauri/tauri.desktop-dev.conf.json",
+    "dev:desktop": "node scripts/with-env.mjs MIRA_CLIENT_CONFIG=./mira-client.prod.toml -- tauri dev --config src-tauri/tauri.desktop-dev.conf.json",
+    "local:desktop": "node scripts/with-env.mjs MIRA_CLIENT_CONFIG=./mira-client.toml -- tauri dev --config src-tauri/tauri.desktop-dev.conf.json",
     "prod:desktop": "tauri build --bundles deb --ci",
     "build:game-client": "cargo build -p mira-game-client",
     "generate:api": "node scripts/merge-openapi.mjs && openapi-ts",
@@ -14,9 +14,9 @@
     "preview": "vite preview",
     "test:unit": "vitest run --config vitest.config.ts",
     "test:unit:coverage": "vitest run --config vitest.config.ts --coverage",
-    "test:e2e": "E2E_TARGET=dev VITE_API_BASE_URL=https://api.tilt-us.com/auth VITE_LIVE_API_BASE_URL=https://api.tilt-us.com/live VITE_MATCHMAKING_API_BASE_URL=https://api.tilt-us.com/match VITE_KEYCLOAK_BASE_URL=https://api.tilt-us.com/keycloak playwright test",
-    "test:e2e-local": "E2E_TARGET=local playwright test",
-    "test:e2e:ui": "E2E_TARGET=dev VITE_API_BASE_URL=https://api.tilt-us.com/auth VITE_LIVE_API_BASE_URL=https://api.tilt-us.com/live VITE_MATCHMAKING_API_BASE_URL=https://api.tilt-us.com/match VITE_KEYCLOAK_BASE_URL=https://api.tilt-us.com/keycloak playwright test --ui",
+    "test:e2e": "node scripts/with-env.mjs E2E_TARGET=dev VITE_API_BASE_URL=https://api.tilt-us.com/auth VITE_LIVE_API_BASE_URL=https://api.tilt-us.com/live VITE_MATCHMAKING_API_BASE_URL=https://api.tilt-us.com/match VITE_KEYCLOAK_BASE_URL=https://api.tilt-us.com/keycloak -- playwright test",
+    "test:e2e-local": "node scripts/with-env.mjs E2E_TARGET=local -- playwright test",
+    "test:e2e:ui": "node scripts/with-env.mjs E2E_TARGET=dev VITE_API_BASE_URL=https://api.tilt-us.com/auth VITE_LIVE_API_BASE_URL=https://api.tilt-us.com/live VITE_MATCHMAKING_API_BASE_URL=https://api.tilt-us.com/match VITE_KEYCLOAK_BASE_URL=https://api.tilt-us.com/keycloak -- playwright test --ui",
     "tauri": "tauri"
   },
   "dependencies": {

@@ -17,20 +17,31 @@ describe("OAuth request storage", () => {
   test("saves, reads, and clears OAuth request state", () => {
     expect(readOAuthRequest()).toEqual({
       codeVerifier: null,
+      redirectUri: null,
       state: null,
     });
 
-    saveOAuthRequest("state-value", "verifier-value");
+    saveOAuthRequest("state-value", "verifier-value", "http://localhost:1420/");
 
     expect(readOAuthRequest()).toEqual({
       codeVerifier: "verifier-value",
+      redirectUri: "http://localhost:1420/",
       state: "state-value",
+    });
+
+    saveOAuthRequest("next-state", "next-verifier");
+
+    expect(readOAuthRequest()).toEqual({
+      codeVerifier: "next-verifier",
+      redirectUri: null,
+      state: "next-state",
     });
 
     clearOAuthRequest();
 
     expect(readOAuthRequest()).toEqual({
       codeVerifier: null,
+      redirectUri: null,
       state: null,
     });
   });
