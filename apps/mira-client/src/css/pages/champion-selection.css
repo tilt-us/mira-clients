@@ -174,7 +174,21 @@
   transition:
     border-color 160ms ease,
     box-shadow 160ms ease,
-    transform 240ms ease;
+  transform 240ms ease;
+}
+
+.champion-selection-team-light .champion-selection-player {
+  grid-template-columns: minmax(0, 1fr) 60px;
+}
+
+.champion-selection-team-light .champion-selection-player-avatar {
+  order: 2;
+}
+
+.champion-selection-team-light .champion-selection-player-meta {
+  order: 1;
+  justify-items: end;
+  text-align: right;
 }
 
 .champion-selection-player.current {
@@ -232,11 +246,12 @@
   gap: 4px;
 }
 
-.champion-selection-player-meta span {
+.champion-selection-player-champion {
   max-width: 100%;
   overflow: hidden;
   color: #edf2f7;
-  font-weight: 900;
+  font-size: 0.9rem;
+  font-weight: 950;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -244,7 +259,6 @@
 .champion-selection-player-meta small {
   min-width: 0;
   overflow: hidden;
-  color: color-mix(in srgb, var(--accent-color) 72%, #edf2f7);
   font-size: 0.72rem;
   font-weight: 900;
   line-height: 1.1;
@@ -261,6 +275,10 @@
   gap: 6px;
   color: color-mix(in srgb, var(--accent-color) 82%, #edf2f7);
   line-height: 1;
+}
+
+.champion-selection-player-name {
+  color: rgba(237, 242, 247, 0.62);
 }
 
 .champion-selection-player-role .lobby-role-icon {

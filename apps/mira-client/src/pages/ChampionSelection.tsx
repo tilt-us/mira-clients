@@ -704,14 +704,16 @@ function ChampionSelection({
                   const playerChampionImage = getChampionImage(previewChampion);
                   const isCurrentPick = activePickPublicIds.has(player.publicId ?? -1);
                   const isCurrentPlayer = player.publicId === currentPlayerPublicId;
-                  const playerName = isOpponentTeam
+                  const playerLabel = isOpponentTeam
                     ? `${t("champion-select-opponent")} ${playerIndex + 1}`
                     : isCurrentPlayer
                       ? t("champion-select-self")
                       : getPlayerName(player);
+                  const userName = getPlayerName(player);
                   const assignedRole = !isOpponentTeam
                     ? getPlayerAssignedRole(match, player)
                     : undefined;
+                  const championLabel = previewChampion ?? "-";
 
                   return (
                     <article
@@ -736,17 +738,19 @@ function ChampionSelection({
                         ) : null}
                       </div>
                       <div className="champion-selection-player-meta">
-                        <span>{playerName}</span>
-                        {previewChampion ? (
-                          <small>{previewChampion}</small>
-                        ) : null}
-                        {assignedRole ? (
+                        <span className="champion-selection-player-champion">
+                          {championLabel}
+                        </span>
+                        {!isOpponentTeam && assignedRole ? (
                           <small className="champion-selection-player-role">
                             <LobbyRoleIcon role={assignedRole} />
                             <span aria-hidden="true">&bull;</span>
                             <strong>{championSelectionRoleLabels[assignedRole]}</strong>
                           </small>
                         ) : null}
+                        <small className="champion-selection-player-name">
+                          {isOpponentTeam ? playerLabel : userName}
+                        </small>
                       </div>
                     </article>
                   );

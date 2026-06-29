@@ -1368,48 +1368,64 @@
   display: grid;
   align-content: center;
   justify-items: center;
-  width: min(50vw, calc(100vw - 40px));
-  min-width: 340px;
-  height: min(65vh, calc(100vh - 40px));
-  min-height: 430px;
-  gap: clamp(16px, 3vh, 30px);
-  border: 1px solid color-mix(in srgb, var(--accent-color) 44%, rgba(255, 255, 255, 0.12));
-  border-radius: 8px;
-  padding: clamp(24px, 4vh, 46px);
-  background:
-    linear-gradient(180deg, rgba(38, 43, 54, 0.96), rgba(13, 16, 23, 0.98)),
-    rgba(13, 16, 23, 0.98);
-  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.54);
-}
-
-@property --match-found-progress-angle {
-  syntax: "<angle>";
-  inherits: false;
-  initial-value: 360deg;
+  width: min(540px, calc(100vw - 32px));
+  height: min(540px, calc(100vh - 32px));
+  gap: 18px;
+  border: 0;
+  padding: clamp(42px, 7vh, 70px);
+  background: transparent;
+  box-shadow: none;
 }
 
 .match-found-countdown {
   position: relative;
   display: grid;
-  width: clamp(220px, 30vmin, 340px);
-  height: clamp(220px, 30vmin, 340px);
+  width: min(430px, 78vmin);
+  height: min(430px, 78vmin);
   place-items: center;
-  border-radius: 999px;
-  background:
-    conic-gradient(
-      var(--accent-color) var(--match-found-progress-angle, 360deg),
-      rgba(255, 255, 255, 0.1) 0
-    );
-  box-shadow: 0 0 34px color-mix(in srgb, var(--accent-color) 22%, transparent);
-  transition: --match-found-progress-angle 80ms linear;
+  filter: drop-shadow(0 0 28px color-mix(in srgb, var(--accent-color) 28%, transparent));
 }
 
-.match-found-countdown::before {
+.match-found-border {
   position: absolute;
-  inset: 17px;
-  border-radius: inherit;
-  background: rgba(13, 16, 23, 0.96);
-  content: "";
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.match-found-border-ring {
+  fill: transparent;
+  stroke-linejoin: round;
+  stroke-width: 3px;
+  stroke-linecap: butt;
+  transform-box: fill-box;
+  transform-origin: center;
+  vector-effect: non-scaling-stroke;
+}
+
+.match-found-border-ring-base {
+  stroke: var(--accent-color);
+  animation: match-found-spin-counter 18s linear infinite;
+}
+
+.match-found-border-ring-overlay {
+  opacity: 0.78;
+  stroke: color-mix(in srgb, var(--accent-color) 72%, #ffffff);
+  stroke-width: 2px;
+  animation: match-found-spin-clockwise 12s linear infinite;
+}
+
+@keyframes match-found-spin-counter {
+  to {
+    transform: rotate(-360deg);
+  }
+}
+
+@keyframes match-found-spin-clockwise {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .match-found-countdown-core {
@@ -1417,32 +1433,44 @@
   z-index: 1;
   display: grid;
   justify-items: center;
-  gap: clamp(6px, 1.2vh, 12px);
+  gap: 10px;
   text-align: center;
 }
 
 .match-found-countdown-core h2 {
   margin: 0;
   color: #edf2f7;
-  font-size: clamp(0.92rem, 1.5vw, 1.53rem);
+  font-size: clamp(1.7rem, 3.3vw, 2.5rem);
   font-weight: 950;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.match-found-countdown-core p {
+  margin: 0;
+  color: color-mix(in srgb, var(--accent-color) 78%, #ffffff);
+  font-size: clamp(0.9rem, 1.6vw, 1.12rem);
+  font-weight: 950;
+  letter-spacing: 0;
+  text-transform: uppercase;
 }
 
 .match-found-countdown-core span {
   color: color-mix(in srgb, var(--accent-color) 72%, #ffffff);
-  font-size: clamp(0.75rem, 1.16vw, 1.22rem);
+  font-size: clamp(3.2rem, 7vw, 5.5rem);
   font-weight: 950;
+  line-height: 0.9;
 }
 
 .match-found-countdown-core small {
   color: rgba(237, 242, 247, 0.68);
-  font-size: clamp(0.56rem, 0.82vw, 0.79rem);
+  font-size: clamp(0.9rem, 1.6vw, 1.12rem);
   font-weight: 950;
 }
 
 .match-found-actions {
   display: grid;
-  width: min(62%, 320px);
+  width: min(60%, 320px);
   gap: 8px;
 }
 

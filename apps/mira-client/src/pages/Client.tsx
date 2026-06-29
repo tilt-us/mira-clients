@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import {
   ArrowLeft,
@@ -197,7 +197,34 @@ type PresenceSnapshot = {
 };
 
 const afkDelayMs = 5 * 60 * 1000;
-const matchAcceptTimeoutMs = 20_000;
+const matchAcceptTimeoutMs = 10_000;
+const matchFoundRequiredAcceptCount = 10;
+
+function getMatchFoundOverlayStroke(accentColor: string) {
+  const hexMatch = accentColor.trim().match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+
+  if (!hexMatch) {
+    return `color-mix(in srgb, ${accentColor} 72%, #ffffff)`;
+  }
+
+  const hexValue =
+    hexMatch[1].length === 3
+      ? hexMatch[1]
+          .split("")
+          .map((part) => part + part)
+          .join("")
+      : hexMatch[1];
+  const red = Number.parseInt(hexValue.slice(0, 2), 16);
+  const green = Number.parseInt(hexValue.slice(2, 4), 16);
+  const blue = Number.parseInt(hexValue.slice(4, 6), 16);
+  const brightness = (red * 299 + green * 587 + blue * 114) / 1000;
+  const mixTarget = brightness > 220 ? 24 : 255;
+  const mixAmount = brightness > 220 ? 0.32 : 0.26;
+  const mixChannel = (channel: number) =>
+    Math.round(channel + (mixTarget - channel) * mixAmount);
+
+  return `rgb(${mixChannel(red)} ${mixChannel(green)} ${mixChannel(blue)})`;
+}
 
 function parseApiTimestamp(value?: string) {
   if (!value) {
@@ -897,7 +924,14 @@ function findLobbyInvitation(value: unknown, depth = 0): LobbyInvitation | undef
   const lobbyRecord =
     lobby && typeof lobby === "object" ? (lobby as Record<string, unknown>) : undefined;
 
-  if (typeof record.lobbyId === "string") {
+  if (
+    typeof record.lobbyId === "string" &&
+    ("inviteePublicId" in record ||
+      "inviters" in record ||
+      "lobby" in record ||
+      "updatedAt" in record) &&
+    !("players" in record)
+  ) {
     return normalizeLobbyInvitation(record as LobbyInvitation);
   }
 
@@ -1538,10 +1572,6 @@ function Client({
       : matchFoundStartedAt
         ? Math.max(0, matchAcceptTimeoutMs - matchFoundFallbackElapsedMs)
         : matchAcceptTimeoutMs;
-  const matchFoundProgress = Math.max(
-    0,
-    Math.min(1, matchFoundRemainingMs / matchAcceptTimeoutMs),
-  );
   const matchFoundRemainingSeconds = Math.max(
     0,
     Math.ceil(matchFoundRemainingMs / 1_000),
@@ -1549,12 +1579,10 @@ function Client({
   const matchFoundAcceptedCount =
     pendingMatch?.acceptances?.filter((acceptance) => acceptance.status === "ACCEPTED")
       .length ?? 0;
-  const matchFoundMaxAcceptCount =
-    pendingMatch?.acceptances?.length ||
-    pendingMatch?.lobbies?.reduce((count, lobby) => {
-      return count + (lobby.players?.length ?? 0);
-    }, 0) ||
-    0;
+  const matchFoundOverlayStroke = useMemo(
+    () => getMatchFoundOverlayStroke(accentColor),
+    [accentColor],
+  );
 
   function notifyLobbyError(message: string) {
     setLobbyError(message);
@@ -2167,12 +2195,15 @@ function Client({
 
     setMatchFoundNow(Date.now());
 
-    const intervalId = window.setInterval(() => {
+    let animationFrameId = 0;
+    const updateMatchFoundNow = () => {
       setMatchFoundNow(Date.now());
-    }, 50);
+      animationFrameId = window.requestAnimationFrame(updateMatchFoundNow);
+    };
+    animationFrameId = window.requestAnimationFrame(updateMatchFoundNow);
 
     return () => {
-      window.clearInterval(intervalId);
+      window.cancelAnimationFrame(animationFrameId);
     };
   }, [matchFoundStartedAt, pendingMatch]);
 
@@ -2545,6 +2576,14 @@ function Client({
       const keepSearching =
         options.keepSearchingOnCancel ?? lobby?.status === "SEARCHING";
 
+      suppressMatchLobbyInvitations(hydratedMatch);
+      setLobbyInvitations((currentInvitations) =>
+        currentInvitations.filter((invitation) => {
+          const lobbyId = normalizeLobbyInvitation(invitation).lobbyId;
+
+          return !lobbyId || !hydratedMatch.lobbies?.some((matchLobby) => matchLobby.lobbyId === lobbyId);
+        }),
+      );
       setPendingMatch(undefined);
       setMatchFoundStartedAt(undefined);
       setMatchAutoDeclinedId(undefined);
@@ -2579,6 +2618,15 @@ function Client({
         }
       } else {
         setLobbySearchStartedAt(undefined);
+        setLobbySearchAbortedLobbyId(undefined);
+        setActiveLobby((currentLobby) =>
+          currentLobby
+            ? {
+                ...currentLobby,
+                status: "OPEN",
+              }
+            : currentLobby,
+        );
       }
 
       return;
@@ -3774,7 +3822,7 @@ function Client({
     setMatchDecisionBusy(decision);
 
     const result = await (decision === "accept" ? accept : decline)({
-      baseUrl: MATCHMAKING_API_BASE_URL,
+      baseUrl: LIVE_API_BASE_URL,
       path: { matchId },
     });
 
@@ -3810,13 +3858,17 @@ function Client({
 
     if (decision === "decline") {
       if (!nextMatch) {
-        notifyLobbyError(t("match-decision-error"));
+        void cancelChampionPhaseDuplicate({
+          baseUrl: MATCHMAKING_API_BASE_URL,
+          path: { matchId },
+        }).catch(() => undefined);
       }
 
       setPendingMatch(undefined);
       setMatchFoundStartedAt(undefined);
       setMatchAutoDeclinedId(undefined);
       setLobbySearchStartedAt(undefined);
+      setLobbySearchAbortedLobbyId(undefined);
       setActiveLobby((currentLobby) =>
         currentLobby
           ? {
@@ -3831,6 +3883,7 @@ function Client({
   useEffect(() => {
     if (
       !pendingMatch ||
+      !pendingMatch.matchId ||
       !matchFoundStartedAt ||
       currentPlayerAccepted ||
       matchDecisionBusy ||
@@ -3841,7 +3894,52 @@ function Client({
     }
 
     setMatchAutoDeclinedId(pendingMatch.matchId);
-    void handleMatchDecision("decline");
+    const matchId = pendingMatch.matchId;
+    setPendingMatch(undefined);
+    setMatchFoundStartedAt(undefined);
+    setMatchDecisionBusy(undefined);
+    setLobbySearchStartedAt(undefined);
+    setLobbySearchAbortedLobbyId(undefined);
+    setActiveLobby((currentLobby) =>
+      currentLobby
+        ? {
+            ...currentLobby,
+            status: "OPEN",
+          }
+        : currentLobby,
+    );
+    void (async () => {
+      const declineResult = await decline({
+        baseUrl: LIVE_API_BASE_URL,
+        path: { matchId },
+      }).catch(() => undefined);
+
+      if (declineResult && !declineResult.error) {
+        return;
+      }
+
+      if (typeof profilePublicId === "number") {
+        const decideResult = await decide({
+          baseUrl: MATCHMAKING_API_BASE_URL,
+          body: {
+            playerPublicId: profilePublicId,
+            decision: "DECLINED",
+          },
+          path: { matchId },
+        }).catch(() => undefined);
+
+        if (decideResult && !decideResult.error) {
+          return;
+        }
+      }
+
+      if (activeLobbyRef.current?.id) {
+        await abortSearch({
+          baseUrl: MATCHMAKING_API_BASE_URL,
+          path: { lobbyId: activeLobbyRef.current.id },
+        }).catch(() => undefined);
+      }
+    })();
   }, [
     currentPlayerAccepted,
     matchAutoDeclinedId,
@@ -5351,17 +5449,29 @@ function Client({
           >
             <div
               className="match-found-countdown"
-              style={
-                {
-                  "--match-found-progress-angle": `${matchFoundProgress * 360}deg`,
-                } as CSSProperties
-              }
             >
+              <svg
+                aria-hidden="true"
+                className="match-found-border"
+                focusable="false"
+                viewBox="0 0 100 100"
+              >
+                <path
+                  className="match-found-border-ring match-found-border-ring-base"
+                  d="M 50 2 L 8.43 26 L 8.43 74 L 50 98 L 91.57 74 L 91.57 26 Z"
+                />
+                <path
+                  className="match-found-border-ring match-found-border-ring-overlay"
+                  d="M 50 5 L 11.03 27.5 L 11.03 72.5 L 50 95 L 88.97 72.5 L 88.97 27.5 Z"
+                  style={{ stroke: matchFoundOverlayStroke }}
+                />
+              </svg>
               <div className="match-found-countdown-core">
                 <h2 id="match-found-title">{t("match-found-title")}</h2>
+                <p>{t("match-found-mode-ranked")}</p>
                 <span>{matchFoundRemainingSeconds}</span>
                 <small>
-                  {matchFoundAcceptedCount}/{matchFoundMaxAcceptCount}
+                  {matchFoundAcceptedCount} / {matchFoundRequiredAcceptCount}
                 </small>
               </div>
             </div>
