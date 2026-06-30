@@ -189,11 +189,26 @@ pub(super) fn spawn_local_player_and_camera(
     commands.insert_resource(LiraWCastState::ready(w_settings.cooldown_seconds));
     commands.insert_resource(LiraECastState::ready(e_settings.cooldown_seconds));
 
+    let local_champion = ChampionId(LOCAL_CHAMPION_ID);
+    let local_model_root = commands
+        .spawn((
+            Name::new("LocalPlayerLiraModel"),
+            SceneRoot(
+                asset_server
+                    .load(GltfAssetLabel::Scene(0).from_asset(champion_model_asset.clone())),
+            ),
+            Transform::default(),
+        ))
+        .id();
+
     let player_entity = commands
         .spawn((
             Name::new("LocalPlayerLira"),
             PlayerBundle::new(PlayerId(1), TeamSpec::Light),
-            CurrentChampionVisual::default(),
+            CurrentChampionVisual {
+                champion: Some(local_champion),
+                model_root: Some(local_model_root),
+            },
             PlayerProfile {
                 display_name: "Player".to_string(),
             },
@@ -202,6 +217,8 @@ pub(super) fn spawn_local_player_and_camera(
             Transform::from_xyz(0.0, 0.0, 0.0),
         ))
         .id();
+    commands.entity(player_entity).add_child(local_model_root);
+
     healthbar::spawn_player_health_bar(
         &mut commands,
         &asset_server,

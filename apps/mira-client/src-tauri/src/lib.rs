@@ -195,6 +195,7 @@ fn launch_game(
     let asset_root = resolve_game_asset_root(&app, game_dir)?;
 
     let mut command = Command::new(&game_binary);
+    let launch_stage = launch_stage_for_base_url(&request.matchmaking_api_base_url);
     command
         .current_dir(game_dir)
         .env("MIRA_GAME_ASSET_ROOT", &asset_root)
@@ -215,7 +216,9 @@ fn launch_game(
         .arg("--port")
         .arg(request.port.to_string())
         .arg("--server-control-base-url")
-        .arg(&request.server_control_base_url);
+        .arg(&request.server_control_base_url)
+        .arg("--stage")
+        .arg(launch_stage);
 
     if !request.screen.trim().is_empty() {
         command.arg("--screen").arg(&request.screen);
@@ -424,7 +427,6 @@ fn start_oauth_window(
     let redirect_uri_for_navigation = redirect_uri.clone();
     let oauth_theme = oauth_theme_from_url(&auth_url);
     let auth_url_for_navigation = auth_url.clone();
-    let defer_oauth_window_show = request.visible && request.clear_session_before_login;
     let oauth_window_url = if request.visible {
         let start_url = if request.clear_session_before_login {
             let client_id = auth_url
@@ -529,7 +531,7 @@ fn start_oauth_window(
         .build()
         .map_err(|error| format!("OAuth-Fenster konnte nicht geoeffnet werden: {error}"))?;
 
-    if request.visible && !defer_oauth_window_show {
+    if request.visible {
         oauth_window
             .show()
             .map_err(|error| format!("OAuth-Fenster konnte nicht angezeigt werden: {error}"))?;
@@ -1578,6 +1580,27 @@ fn normalize_base_url(value: Option<&str>, default_value: &str) -> String {
     value_or_default(value, default_value)
         .trim_end_matches('/')
         .to_string()
+}
+
+fn launch_stage_for_base_url(base_url: &str) -> &'static str {
+    tauri::Url::parse(base_url)
+        .ok()
+        .and_then(|url| url.host_str().map(localhost_matches_stage))
+        .unwrap_or("Dev")
+}
+
+fn localhost_matches_stage(host: &str) -> &'static str {
+    let host = host.trim().trim_matches(['[', ']']).to_ascii_lowercase();
+
+    if host == "localhost"
+        || host == "::1"
+        || host == "0:0:0:0:0:0:0:1"
+        || host.starts_with("127.")
+    {
+        "Local"
+    } else {
+        "Dev"
+    }
 }
 
 fn value_or_default(value: Option<&str>, default_value: &str) -> String {

@@ -560,7 +560,13 @@ fn sync_main_hud(
         };
     }
 
-    let status = if hud_state.alive { "LIVE" } else { "DEAD" };
+    let status = if launch_settings.dev_preview {
+        "Dev"
+    } else if hud_state.alive {
+        "LIVE"
+    } else {
+        "DEAD"
+    };
     let health_text = format!("{}/{}", hud_state.health_current, hud_state.health_max);
     let match_time = match_time_text(time.elapsed_secs());
 

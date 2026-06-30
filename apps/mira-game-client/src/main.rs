@@ -16,6 +16,7 @@ fn main() -> ExitCode {
             }
         };
 
-    mira_game_client::app::run(launch_settings, network_settings);
+    let launch_gate = launch_settings.release_launch_gate();
+    mira_game_client::app::run(launch_settings, network_settings, launch_gate);
     ExitCode::SUCCESS
 }

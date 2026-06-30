@@ -8,7 +8,7 @@ pub mod states;
 use bevy::prelude::*;
 use loading_screen::loading_screen_state;
 use plugins::ClientAppPlugins;
-use settings::ClientLaunchSettings;
+use settings::{ClientLaunchGate, ClientLaunchSettings};
 
 use crate::network::ClientNetworkSettings;
 
@@ -18,9 +18,15 @@ use crate::network::ClientNetworkSettings;
 /// Params:
 /// - `launch_settings`: Matchmaking launch parameters parsed at startup.
 /// - `network_settings`: Client networking settings parsed at startup.
-pub fn run(launch_settings: ClientLaunchSettings, network_settings: ClientNetworkSettings) {
+/// - `launch_gate`: Startup validation result used to decide whether gameplay may load.
+pub fn run(
+    launch_settings: ClientLaunchSettings,
+    network_settings: ClientNetworkSettings,
+    launch_gate: ClientLaunchGate,
+) {
     App::new()
         .insert_resource(loading_screen_state(&launch_settings))
+        .insert_resource(launch_gate)
         .insert_resource(launch_settings)
         .insert_resource(network_settings)
         .add_plugins(ClientAppPlugins)

@@ -1,7 +1,9 @@
 use bevy::prelude::{Color, Resource};
 use std::path::PathBuf;
+use std::time::Duration;
 
 const DEFAULT_ACCENT_COLOR: &str = "#f2c45b";
+const AUTH_VALIDATION_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum ClientScreenMode {
@@ -9,6 +11,18 @@ pub enum ClientScreenMode {
     Window,
     #[default]
     Borderless,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClientLaunchStage {
+    Local,
+    Dev,
+}
+
+#[derive(Resource, Debug, Clone, PartialEq, Eq)]
+pub enum ClientLaunchGate {
+    Playable,
+    Blocked { message: String },
 }
 
 /// Description:
@@ -33,6 +47,10 @@ pub struct ClientAppSettings {
 /// - `champion`: Requested champion slug or id.
 /// - `matchmaking_api_base_url`: Base URL of the matchmaking API.
 /// - `server_control_base_url`: Base URL of the dedicated server control API.
+/// - `server_host`: Hostname or IP of the dedicated server.
+/// - `server_port`: UDP port of the dedicated server.
+/// - `stage`: API stage used for release auth validation.
+/// - `dev_preview`: Local development preview mode.
 #[derive(Resource, Debug, Default, Clone, PartialEq, Eq)]
 pub struct ClientLaunchSettings {
     pub access_token: Option<String>,
@@ -42,6 +60,10 @@ pub struct ClientLaunchSettings {
     pub champion: Option<String>,
     pub matchmaking_api_base_url: Option<String>,
     pub server_control_base_url: Option<String>,
+    pub server_host: Option<String>,
+    pub server_port: Option<u16>,
+    pub stage: Option<ClientLaunchStage>,
+    pub dev_preview: bool,
     pub screen_mode: ClientScreenMode,
 }
 
@@ -61,6 +83,50 @@ impl ClientLaunchSettings {
         let blue = parse_hex_pair(&color[5..7]);
 
         Color::srgb(red, green, blue)
+    }
+
+    pub fn release_launch_gate(&self) -> ClientLaunchGate {
+        if cfg!(debug_assertions) {
+            return ClientLaunchGate::Playable;
+        }
+
+        if self.dev_preview {
+            return blocked_launch_gate();
+        }
+
+        if self.access_token.as_deref().is_none_or(str::is_empty)
+            || self.match_id.as_deref().is_none_or(str::is_empty)
+            || self.player_public_id.as_deref().is_none_or(str::is_empty)
+            || self.champion.as_deref().is_none_or(str::is_empty)
+            || self
+                .matchmaking_api_base_url
+                .as_deref()
+                .is_none_or(str::is_empty)
+            || self
+                .server_control_base_url
+                .as_deref()
+                .is_none_or(str::is_empty)
+            || self.server_host.as_deref().is_none_or(str::is_empty)
+            || self.server_port.is_none()
+            || self.stage.is_none()
+        {
+            return blocked_launch_gate();
+        }
+
+        if !access_token_is_valid(self.stage.unwrap(), self.access_token.as_deref().unwrap()) {
+            return blocked_launch_gate();
+        }
+
+        ClientLaunchGate::Playable
+    }
+}
+
+impl ClientLaunchGate {
+    pub fn blocked_message(&self) -> Option<&str> {
+        match self {
+            ClientLaunchGate::Playable => None,
+            ClientLaunchGate::Blocked { message } => Some(message),
+        }
     }
 }
 
@@ -89,6 +155,38 @@ fn client_ui_enabled() -> bool {
 
 fn parse_hex_pair(value: &str) -> f32 {
     u8::from_str_radix(value, 16).unwrap_or(0) as f32 / 255.0
+}
+
+fn blocked_launch_gate() -> ClientLaunchGate {
+    ClientLaunchGate::Blocked {
+        message:
+            "Something goes wrong! Please close the client and start again via the desktop client!"
+                .to_string(),
+    }
+}
+
+fn access_token_is_valid(stage: ClientLaunchStage, access_token: &str) -> bool {
+    let url = format!("{}/api/me", auth_api_base_url(stage));
+    let Ok(client) = reqwest::blocking::Client::builder()
+        .timeout(AUTH_VALIDATION_TIMEOUT)
+        .build()
+    else {
+        return false;
+    };
+
+    client
+        .get(url)
+        .bearer_auth(access_token)
+        .send()
+        .map(|response| response.status().is_success())
+        .unwrap_or(false)
+}
+
+fn auth_api_base_url(stage: ClientLaunchStage) -> &'static str {
+    match stage {
+        ClientLaunchStage::Local => "http://localhost:8080",
+        ClientLaunchStage::Dev => "https://api.tilt-us.com/auth",
+    }
 }
 
 /// Description:

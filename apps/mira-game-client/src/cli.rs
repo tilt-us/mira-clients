@@ -1,4 +1,4 @@
-use crate::app::settings::{ClientLaunchSettings, ClientScreenMode};
+use crate::app::settings::{ClientLaunchSettings, ClientLaunchStage, ClientScreenMode};
 use crate::network::ClientNetworkSettings;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
 
@@ -44,6 +44,7 @@ where
             | "--server-control-base-url"
             | "--server-host"
             | "--screen"
+            | "--stage"
             | "--port"
             | "-p"
             | "--char"
@@ -52,11 +53,17 @@ where
             | "-t" => {
                 pending_key = Some(arg);
             }
+            "--dev-preview" => {
+                launch_settings.dev_preview = true;
+                network_settings.auto_connect = false;
+            }
             _ => {
                 if let Some((key, value)) = arg.split_once('=') {
                     apply_client_arg(&mut launch_settings, &mut network_settings, key, value)?;
                 } else if let Some(value) = arg.strip_prefix("-p") {
-                    network_settings.server_addr.set_port(parse_port(value)?);
+                    let port = parse_port(value)?;
+                    launch_settings.server_port = Some(port);
+                    network_settings.server_addr.set_port(port);
                 } else {
                     return Err(format!("Unknown argument: {arg}"));
                 }
@@ -76,7 +83,7 @@ where
 /// Description:
 /// Returns CLI usage text for the playable client.
 pub fn usage() -> &'static str {
-    "Usage: mira-game-client [OPTIONS]\n\nOptions:\n  --access-token <TOKEN>                 Matchmaking access token\n  --accent-color <HEX>                   Mira client accent color override\n  --match-id <MATCH_ID>                  Matchmaking match id\n  --player-public-id <PLAYER_PUBLIC_ID>  Public player id\n  --champion <CHAMPION>                  Champion slug or id\n  --matchmaking-api-base-url <URL>       Matchmaking API base URL\n  --server-control-base-url <URL>        Dedicated server REST control API base URL\n  --server-host <HOST>                   Hostname or IP of the dedicated server\n  --screen <full|window|borderless>      Game window mode\n  -p, --port <PORT>                      UDP port of the dedicated server\n  -h, --help                             Print help"
+    "Usage: mira-game-client [OPTIONS]\n\nOptions:\n  --access-token <TOKEN>                 Matchmaking access token\n  --accent-color <HEX>                   Mira client accent color override\n  --match-id <MATCH_ID>                  Matchmaking match id\n  --player-public-id <PLAYER_PUBLIC_ID>  Public player id\n  --champion <CHAMPION>                  Champion slug or id\n  --matchmaking-api-base-url <URL>       Matchmaking API base URL\n  --server-control-base-url <URL>        Dedicated server REST control API base URL\n  --server-host <HOST>                   Hostname or IP of the dedicated server\n  --stage <Local|Dev>                    API stage for release auth validation\n  --screen <full|window|borderless>      Game window mode\n  --dev-preview                          Development-only map and mechanics preview\n  -p, --port <PORT>                      UDP port of the dedicated server\n  -h, --help                             Print help"
 }
 
 fn apply_client_arg(
@@ -102,17 +109,31 @@ fn apply_client_arg(
         "server-control-base-url" => {
             launch_settings.server_control_base_url = Some(value.to_string());
         }
+        "stage" => launch_settings.stage = Some(parse_launch_stage(value)?),
         "screen" => launch_settings.screen_mode = parse_screen_mode(value)?,
         "server-host" => {
+            launch_settings.server_host = Some(value.to_string());
             network_settings.server_addr =
                 resolve_server_addr(value, network_settings.server_addr.port())?;
         }
-        "port" | "p" => network_settings.server_addr.set_port(parse_port(value)?),
+        "port" | "p" => {
+            let port = parse_port(value)?;
+            launch_settings.server_port = Some(port);
+            network_settings.server_addr.set_port(port);
+        }
         "team" | "t" => {}
         _ => return Err(format!("Unknown argument: {key}")),
     }
 
     Ok(())
+}
+
+fn parse_launch_stage(value: &str) -> Result<ClientLaunchStage, String> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "local" => Ok(ClientLaunchStage::Local),
+        "dev" => Ok(ClientLaunchStage::Dev),
+        _ => Err(format!("Invalid stage: {value}")),
+    }
 }
 
 fn parse_screen_mode(value: &str) -> Result<ClientScreenMode, String> {
