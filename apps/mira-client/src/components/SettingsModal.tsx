@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
-import { Gamepad2, Monitor, Search, Users } from "lucide-react";
+import { Gamepad2, MessageCircle, Monitor, Search, Users } from "lucide-react";
 import germanFlagUrl from "../../../../assets/icons/flags/de.svg";
 import unitedKingdomFlagUrl from "../../../../assets/icons/flags/gb.svg";
 import type { AppLocale } from "../i18n";
 import type {
   AppResolution,
   BackgroundChampion,
+  ChatPosition,
   ClientAnimation,
   FriendRequestPolicy,
   GameScreenMode,
@@ -16,6 +17,7 @@ import type { SettingsVision, Translate } from "../types/ui";
 type SettingsModalProps = {
   accentColor: string;
   backgroundChampion: BackgroundChampion;
+  chatPosition: ChatPosition;
   clientAnimation: ClientAnimation;
   friendRequestPolicy: FriendRequestPolicy;
   gameScreenMode: GameScreenMode;
@@ -26,6 +28,7 @@ type SettingsModalProps = {
   uiScale: UiScale;
   onAccentColorChange: (accentColor: string) => void;
   onBackgroundChampionChange: (backgroundChampion: BackgroundChampion) => void;
+  onChatPositionChange: (chatPosition: ChatPosition) => void;
   onClientAnimationChange: (clientAnimation: ClientAnimation) => void;
   onClose: () => void;
   onFriendRequestPolicyChange: (friendRequestPolicy: FriendRequestPolicy) => void;
@@ -114,9 +117,18 @@ const friendRequestPolicyOptions: Array<{
   { labelId: "settings-friend-request-vip", value: "vip" },
 ];
 
+const chatPositionOptions: Array<{
+  labelId: string;
+  value: ChatPosition;
+}> = [
+  { labelId: "settings-chat-position-right", value: "right" },
+  { labelId: "settings-chat-position-left", value: "left" },
+];
+
 function SettingsModal({
   accentColor,
   backgroundChampion,
+  chatPosition,
   clientAnimation,
   friendRequestPolicy,
   gameScreenMode,
@@ -127,6 +139,7 @@ function SettingsModal({
   uiScale,
   onAccentColorChange,
   onBackgroundChampionChange,
+  onChatPositionChange,
   onClientAnimationChange,
   onClose,
   onFriendRequestPolicyChange,
@@ -142,6 +155,7 @@ function SettingsModal({
   const [backgroundChampionDropdownOpen, setBackgroundChampionDropdownOpen] =
     useState(false);
   const [backgroundChampionSearch, setBackgroundChampionSearch] = useState("");
+  const [chatPositionDropdownOpen, setChatPositionDropdownOpen] = useState(false);
   const [clientAnimationDropdownOpen, setClientAnimationDropdownOpen] =
     useState(false);
   const [friendRequestPolicyDropdownOpen, setFriendRequestPolicyDropdownOpen] =
@@ -183,6 +197,9 @@ function SettingsModal({
   const selectedFriendRequestPolicy =
     friendRequestPolicyOptions.find((option) => option.value === friendRequestPolicy)
       ?.labelId ?? "settings-friend-request-allow";
+  const selectedChatPosition =
+    chatPositionOptions.find((option) => option.value === chatPosition)?.labelId ??
+    "settings-chat-position-right";
   const filteredBackgroundChampionOptions = backgroundChampionOptions.filter((option) =>
     option.label.toLowerCase().includes(backgroundChampionSearch.trim().toLowerCase()),
   );
@@ -195,6 +212,7 @@ function SettingsModal({
 
   function closeDropdowns() {
     setBackgroundChampionDropdownOpen(false);
+    setChatPositionDropdownOpen(false);
     setClientAnimationDropdownOpen(false);
     setFriendRequestPolicyDropdownOpen(false);
     setGameScreenModeDropdownOpen(false);
@@ -217,6 +235,11 @@ function SettingsModal({
     onBackgroundChampionChange(nextBackgroundChampion);
     setBackgroundChampionDropdownOpen(false);
     setBackgroundChampionSearch("");
+  }
+
+  function handleChatPositionSelect(nextChatPosition: ChatPosition) {
+    onChatPositionChange(nextChatPosition);
+    setChatPositionDropdownOpen(false);
   }
 
   function handleFriendRequestPolicySelect(nextFriendRequestPolicy: FriendRequestPolicy) {
@@ -527,6 +550,46 @@ function SettingsModal({
                     ) : null}
                   </div>
                 </div>
+
+                {vision === "Vision.ALL" ? (
+                  <div className="settings-row">
+                    <span>{t("settings-chat-position")}</span>
+                    <div
+                      className="settings-dropdown"
+                      onMouseDown={(event) => event.stopPropagation()}
+                    >
+                      <button
+                        aria-expanded={chatPositionDropdownOpen}
+                        aria-haspopup="listbox"
+                        className="settings-dropdown-trigger"
+                        type="button"
+                        onClick={() => {
+                          closeDropdowns();
+                          setChatPositionDropdownOpen((open) => !open);
+                        }}
+                      >
+                        <MessageCircle size={15} />
+                        <span>{t(selectedChatPosition)}</span>
+                      </button>
+
+                      {chatPositionDropdownOpen ? (
+                        <div className="settings-dropdown-menu" role="listbox">
+                          {chatPositionOptions.map((option) => (
+                            <button
+                              aria-selected={chatPosition === option.value}
+                              key={option.value}
+                              role="option"
+                              type="button"
+                              onClick={() => handleChatPositionSelect(option.value)}
+                            >
+                              <span>{t(option.labelId)}</span>
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : null}
               </>
             ) : null}
 

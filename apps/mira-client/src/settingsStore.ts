@@ -16,6 +16,7 @@ import yunaWallpaper from "../../../assets/wallpapers/yuna-wallpaper.png";
 import {
   defaultAccentColor,
   defaultBackgroundChampion,
+  defaultChatPosition,
   defaultClientAnimation,
   defaultFriendRequestPolicy,
   defaultGameScreenMode,
@@ -26,6 +27,7 @@ import {
   getResolutionSize,
   isAppResolution,
   isBackgroundChampion,
+  isChatPosition,
   isClientAnimation,
   isFriendRequestPolicy,
   isGameScreenMode,
@@ -35,6 +37,7 @@ import {
   readStoredSettings,
   type AppResolution,
   type BackgroundChampion,
+  type ChatPosition,
   type ClientAnimation,
   type FriendRequestPolicy,
   type GameScreenMode,
@@ -64,6 +67,12 @@ export function useClientSettings() {
     return isBackgroundChampion(storedSettings.backgroundChampion)
       ? storedSettings.backgroundChampion
       : defaultBackgroundChampion;
+  });
+  const [chatPosition, setChatPosition] = useState<ChatPosition>(() => {
+    const storedSettings = readStoredSettings();
+    return isChatPosition(storedSettings.chatPosition)
+      ? storedSettings.chatPosition
+      : defaultChatPosition;
   });
   const [locale, setLocale] = useState<AppLocale>(() => {
     const storedSettings = readStoredSettings();
@@ -168,6 +177,7 @@ export function useClientSettings() {
       accentColor,
       allowFriendRequests: friendRequestPolicy === "allow",
       backgroundChampion,
+      chatPosition,
       clientAnimation,
       friendRequestPolicy,
       gameScreenMode,
@@ -178,6 +188,7 @@ export function useClientSettings() {
   }, [
     accentColor,
     backgroundChampion,
+    chatPosition,
     clientAnimation,
     friendRequestPolicy,
     gameScreenMode,
@@ -241,6 +252,7 @@ export function useClientSettings() {
   return {
     accentColor,
     backgroundChampion,
+    chatPosition,
     clientAnimation,
     friendRequestPolicy,
     gameScreenMode,
@@ -252,6 +264,7 @@ export function useClientSettings() {
     uiScale,
     setAccentColor,
     setBackgroundChampion,
+    setChatPosition,
     setClientAnimation,
     setFriendRequestPolicy,
     setGameScreenMode,

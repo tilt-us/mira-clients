@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import {
   defaultAccentColor,
   defaultBackgroundChampion,
+  defaultChatPosition,
   defaultClientAnimation,
   defaultFriendRequestPolicy,
   defaultGameScreenMode,
@@ -12,6 +13,7 @@ import {
   getResolutionSize,
   isAppResolution,
   isBackgroundChampion,
+  isChatPosition,
   isClientAnimation,
   isFriendRequestPolicy,
   isGameScreenMode,
@@ -38,6 +40,7 @@ describe("settings validators", () => {
     expect(isGameScreenMode("borderless")).toBe(true);
     expect(isBackgroundChampion("yuna")).toBe(true);
     expect(isFriendRequestPolicy("vip")).toBe(true);
+    expect(isChatPosition("left")).toBe(true);
   });
 
   test("rejects unknown settings values", () => {
@@ -50,6 +53,7 @@ describe("settings validators", () => {
     expect(isGameScreenMode("desktop")).toBe(false);
     expect(isBackgroundChampion("unknown")).toBe(false);
     expect(isFriendRequestPolicy("friends-only")).toBe(false);
+    expect(isChatPosition("bottom")).toBe(false);
   });
 });
 
@@ -89,6 +93,7 @@ describe("stored settings", () => {
       accentColor: defaultAccentColor,
       allowFriendRequests: true,
       backgroundChampion: defaultBackgroundChampion,
+      chatPosition: defaultChatPosition,
       clientAnimation: defaultClientAnimation,
       friendRequestPolicy: defaultFriendRequestPolicy,
       gameScreenMode: defaultGameScreenMode,

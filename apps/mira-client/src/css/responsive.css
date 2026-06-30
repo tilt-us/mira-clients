@@ -15,6 +15,7 @@
 
 @media (max-width: 760px) {
   .app-shell-authenticated {
+    --sidebar-current-width: 0px;
     grid-template-columns: 1fr;
   }
 
