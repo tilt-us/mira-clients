@@ -713,7 +713,7 @@ function ChampionSelection({
                   const assignedRole = !isOpponentTeam
                     ? getPlayerAssignedRole(match, player)
                     : undefined;
-                  const championLabel = previewChampion ?? "-";
+                  const championLabel = previewChampion;
 
                   return (
                     <article
@@ -738,9 +738,11 @@ function ChampionSelection({
                         ) : null}
                       </div>
                       <div className="champion-selection-player-meta">
-                        <span className="champion-selection-player-champion">
-                          {championLabel}
-                        </span>
+                        {championLabel ? (
+                          <span className="champion-selection-player-champion">
+                            {championLabel}
+                          </span>
+                        ) : null}
                         {!isOpponentTeam && assignedRole ? (
                           <small className="champion-selection-player-role">
                             <LobbyRoleIcon role={assignedRole} />

@@ -10,7 +10,7 @@ import {
   setApiAccessToken,
   type UserProfileResponse,
 } from "../api/client";
-import { API_BASE_URL } from "../api/config";
+import { API_BASE_URL, LIVE_API_BASE_URL } from "../api/config";
 import { apiFetch } from "../api/http";
 import {
   assertAccessTokenIssuer,
@@ -55,6 +55,10 @@ class ProfileLoadError extends Error {
     this.status = status;
   }
 }
+
+type LoadProfileOptions = {
+  recoverDesktopConflict?: boolean;
+};
 
 /**
  * Description
@@ -174,6 +178,31 @@ async function releaseCurrentAuthServiceSession(accessToken: string) {
   }
 
   return false;
+}
+
+async function sendDesktopSessionHeartbeat() {
+  const accessToken = await getValidDesktopApiToken();
+
+  if (!accessToken) {
+    return;
+  }
+
+  await Promise.all([
+    apiFetch(`${API_BASE_URL}/api/auth/session/heartbeat`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "X-Device-Type": "Desktop",
+      },
+    }).catch(() => undefined),
+    apiFetch(`${LIVE_API_BASE_URL}/api/live/heartbeat`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "X-Device-Type": "Desktop",
+      },
+    }).catch(() => undefined),
+  ]);
 }
 
 function addUniqueToken(tokens: string[], token: string | undefined) {
@@ -360,12 +389,18 @@ function Authentication() {
    * Params
    * accessToken - API access token used for the profile request.
    */
-  async function loadProfile(accessToken: string) {
+  async function loadProfile(accessToken: string, options: LoadProfileOptions = {}) {
     const validAccessToken = (await getValidAccessToken()) ?? accessToken;
 
     assertAccessTokenIssuer(validAccessToken);
     setApiAccessToken(validAccessToken);
-    const result = await me();
+    let result = await me();
+
+    if (result.error && result.response?.status === 409 && options.recoverDesktopConflict) {
+      await releaseCurrentAuthServiceSession(validAccessToken);
+      setApiAccessToken(validAccessToken);
+      result = await me();
+    }
 
     if (result.error) {
       if (result.response?.status === 401) {
@@ -425,7 +460,9 @@ function Authentication() {
         }
 
         if (existingTokens?.accessToken) {
-          await loadProfile(existingTokens.accessToken);
+          await loadProfile(existingTokens.accessToken, {
+            recoverDesktopConflict: !redirectTokens,
+          });
         }
 
         if (redirectTokens) {
@@ -811,6 +848,21 @@ function Authentication() {
     return () => {
       document.documentElement.classList.remove(className);
       document.body.classList.remove(className);
+    };
+  }, [profile]);
+
+  useEffect(() => {
+    if (!profile) {
+      return;
+    }
+
+    void sendDesktopSessionHeartbeat();
+    const intervalId = window.setInterval(() => {
+      void sendDesktopSessionHeartbeat();
+    }, 3_000);
+
+    return () => {
+      window.clearInterval(intervalId);
     };
   }, [profile]);
 

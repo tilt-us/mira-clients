@@ -3,7 +3,7 @@ import type {
   MatchLobbyResponse,
   MatchPlayerResponse,
 } from "./api/client";
-import { MATCHMAKING_API_BASE_URL } from "./api/config";
+import { LIVE_API_BASE_URL, MATCHMAKING_API_BASE_URL } from "./api/config";
 import { readTokens } from "./auth/storage";
 import type { GameScreenMode } from "./settings";
 import { getPublicDisplayName } from "./utils/profile";
@@ -383,13 +383,15 @@ export function clearStoredGameSession() {
 export function sendCancelChampionPhaseKeepalive(matchId: string) {
   const accessToken = readTokens()?.accessToken;
 
-  void fetch(`${MATCHMAKING_API_BASE_URL}/api/matches/${matchId}/champion-phase`, {
-    headers: {
-      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-    },
-    keepalive: true,
-    method: "DELETE",
-  }).catch(() => undefined);
+  for (const baseUrl of [LIVE_API_BASE_URL, MATCHMAKING_API_BASE_URL]) {
+    void fetch(`${baseUrl}/api/matches/${matchId}/champion-phase`, {
+      headers: {
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+      },
+      keepalive: true,
+      method: "DELETE",
+    }).catch(() => undefined);
+  }
 }
 
 export function sendChampionSelectionLeaveKeepalive(
@@ -398,9 +400,8 @@ export function sendChampionSelectionLeaveKeepalive(
 ) {
   const accessToken = readTokens()?.accessToken;
 
-  void fetch(
-    `${MATCHMAKING_API_BASE_URL}/api/matches/${matchId}/champion-selection/leave`,
-    {
+  for (const baseUrl of [LIVE_API_BASE_URL, MATCHMAKING_API_BASE_URL]) {
+    void fetch(`${baseUrl}/api/matches/${matchId}/champion-selection/leave`, {
       body: JSON.stringify({ status }),
       headers: {
         "Content-Type": "application/json",
@@ -408,6 +409,6 @@ export function sendChampionSelectionLeaveKeepalive(
       },
       keepalive: true,
       method: "POST",
-    },
-  ).catch(() => undefined);
+    }).catch(() => undefined);
+  }
 }

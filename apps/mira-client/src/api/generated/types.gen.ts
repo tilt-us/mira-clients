@@ -606,6 +606,20 @@ export type LogoutResponses = {
     200: unknown;
 };
 
+export type HeartbeatData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/auth/session/heartbeat';
+};
+
+export type HeartbeatResponses = {
+    /**
+     * OK
+     */
+    200: unknown;
+};
+
 export type SearchData = {
     body?: never;
     path?: never;
@@ -1083,6 +1097,20 @@ export type SearchRankedResponses = {
 };
 
 export type SearchRankedResponse = SearchRankedResponses[keyof SearchRankedResponses];
+
+export type LiveHeartbeatData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/live/heartbeat';
+};
+
+export type LiveHeartbeatResponses = {
+    /**
+     * OK
+     */
+    200: unknown;
+};
 
 export type LiveSendRequestData = {
     body: FriendActionRequest;

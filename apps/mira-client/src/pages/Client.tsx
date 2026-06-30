@@ -3569,28 +3569,40 @@ function Client({
       return;
     }
 
-    sendChampionSelectionLeaveKeepalive(matchId, status);
-
-    const leaveResult = await notifyChampionSelectionLeft({
-      baseUrl: MATCHMAKING_API_BASE_URL,
+    const liveLeaveResult = await notifyChampionSelectionLeft({
+      baseUrl: LIVE_API_BASE_URL,
       body: { status },
       path: { matchId },
     }).catch(() => undefined);
+    const leaveResult =
+      liveLeaveResult && !liveLeaveResult.error
+        ? liveLeaveResult
+        : await notifyChampionSelectionLeft({
+            baseUrl: MATCHMAKING_API_BASE_URL,
+            body: { status },
+            path: { matchId },
+          }).catch(() => undefined);
 
     if (leaveResult && !leaveResult.error && leaveResult.data) {
       applyMatch(normalizeMatchResponse(leaveResult.data), {
         keepSearchingOnCancel: false,
       });
+
+      return;
     }
 
     sendCancelChampionPhaseKeepalive(matchId);
 
     const result = await cancelChampionPhase({
-      baseUrl: MATCHMAKING_API_BASE_URL,
+      baseUrl: LIVE_API_BASE_URL,
       path: { matchId },
     }).catch(() => undefined);
 
     if ((!leaveResult || leaveResult.error) && (!result || result.error)) {
+      await cancelChampionPhase({
+        baseUrl: MATCHMAKING_API_BASE_URL,
+        path: { matchId },
+      }).catch(() => undefined);
       await cancelChampionPhaseDuplicate({
         baseUrl: MATCHMAKING_API_BASE_URL,
         path: { matchId },
