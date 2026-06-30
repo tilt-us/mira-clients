@@ -348,6 +348,7 @@ function Authentication() {
   const {
     accentColor,
     backgroundChampion,
+    chatPosition,
     clientAnimation,
     friendRequestPolicy,
     gameScreenMode,
@@ -359,6 +360,7 @@ function Authentication() {
     uiScale,
     setAccentColor,
     setBackgroundChampion,
+    setChatPosition,
     setClientAnimation,
     setFriendRequestPolicy,
     setGameScreenMode,
@@ -881,6 +883,7 @@ function Authentication() {
         <Client
           accentColor={accentColor}
           backgroundChampion={backgroundChampion}
+          chatPosition={chatPosition}
           clientAnimation={clientAnimation}
           friendRequestPolicy={friendRequestPolicy}
           gameScreenMode={gameScreenMode}
@@ -897,6 +900,7 @@ function Authentication() {
           uiScale={uiScale}
           onAccentColorChange={setAccentColor}
           onBackgroundChampionChange={setBackgroundChampion}
+          onChatPositionChange={setChatPosition}
           onClientAnimationChange={setClientAnimation}
           onFriendRequestPolicyChange={setFriendRequestPolicy}
           onGameScreenModeChange={setGameScreenMode}
@@ -1060,6 +1064,7 @@ function Authentication() {
         <SettingsModal
           accentColor={accentColor}
           backgroundChampion={backgroundChampion}
+          chatPosition={chatPosition}
           clientAnimation={clientAnimation}
           friendRequestPolicy={friendRequestPolicy}
           gameScreenMode={gameScreenMode}
@@ -1072,6 +1077,7 @@ function Authentication() {
           vision="Vision.Auth"
           onAccentColorChange={setAccentColor}
           onBackgroundChampionChange={setBackgroundChampion}
+          onChatPositionChange={setChatPosition}
           onClientAnimationChange={setClientAnimation}
           onFriendRequestPolicyChange={setFriendRequestPolicy}
           onGameScreenModeChange={setGameScreenMode}

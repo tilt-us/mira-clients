@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import {
   ArrowLeft,
@@ -79,6 +79,7 @@ import { useNotifications } from "../notifications";
 import type {
   AppResolution,
   BackgroundChampion,
+  ChatPosition,
   ClientAnimation,
   FriendRequestPolicy,
   GameScreenMode,
@@ -126,6 +127,7 @@ import {
 type ClientProps = {
   accentColor: string;
   backgroundChampion: BackgroundChampion;
+  chatPosition: ChatPosition;
   clientAnimation: ClientAnimation;
   friendRequestPolicy: FriendRequestPolicy;
   closeDialogOpen: boolean;
@@ -133,6 +135,7 @@ type ClientProps = {
   locale: AppLocale;
   onAccentColorChange: (accentColor: string) => void;
   onBackgroundChampionChange: (backgroundChampion: BackgroundChampion) => void;
+  onChatPositionChange: (chatPosition: ChatPosition) => void;
   onClientAnimationChange: (clientAnimation: ClientAnimation) => void;
   onCloseDialogClose: () => void;
   onFriendRequestPolicyChange: (friendRequestPolicy: FriendRequestPolicy) => void;
@@ -198,6 +201,7 @@ type PresenceSnapshot = {
 
 const afkDelayMs = 5 * 60 * 1000;
 const matchAcceptTimeoutMs = 10_000;
+const matchFoundHexSpinDurationMs = 12_000;
 const matchFoundRequiredAcceptCount = 10;
 
 function getMatchFoundOverlayStroke(accentColor: string) {
@@ -224,6 +228,14 @@ function getMatchFoundOverlayStroke(accentColor: string) {
     Math.round(channel + (mixTarget - channel) * mixAmount);
 
   return `rgb(${mixChannel(red)} ${mixChannel(green)} ${mixChannel(blue)})`;
+}
+
+function getShortestRotationDegrees(rotationDegrees: number) {
+  const normalizedRotation = ((rotationDegrees % 360) + 360) % 360;
+
+  return normalizedRotation > 180
+    ? normalizedRotation - 360
+    : normalizedRotation;
 }
 
 function parseApiTimestamp(value?: string) {
@@ -1433,6 +1445,7 @@ function GameModeIcon({ question }: GameModeIconProps) {
 function Client({
   accentColor,
   backgroundChampion,
+  chatPosition,
   clientAnimation,
   friendRequestPolicy,
   closeDialogOpen,
@@ -1440,6 +1453,7 @@ function Client({
   locale,
   onAccentColorChange,
   onBackgroundChampionChange,
+  onChatPositionChange,
   onClientAnimationChange,
   onCloseDialogClose,
   onFriendRequestPolicyChange,
@@ -1504,6 +1518,7 @@ function Client({
   const [matchFoundNow, setMatchFoundNow] = useState(Date.now());
   const [matchFoundServerClockOffsetMs, setMatchFoundServerClockOffsetMs] =
     useState(0);
+  const [matchFoundHexAligned, setMatchFoundHexAligned] = useState(false);
   const [matchAutoDeclinedId, setMatchAutoDeclinedId] = useState<string>();
   const [championsReadyMarkedMatchId, setChampionsReadyMarkedMatchId] = useState<string>();
   const [forceOnlinePublicIds, setForceOnlinePublicIds] = useState<number[]>([]);
@@ -1576,6 +1591,32 @@ function Client({
     0,
     Math.ceil(matchFoundRemainingMs / 1_000),
   );
+  const matchFoundRemainingRatio = Math.min(
+    1,
+    Math.max(0, matchFoundRemainingMs / matchAcceptTimeoutMs),
+  );
+  const matchFoundAnimationElapsedMs = matchFoundStartedAt
+    ? Math.max(0, matchFoundNow - matchFoundStartedAt)
+    : Math.max(0, matchAcceptTimeoutMs - matchFoundRemainingMs);
+  const matchFoundSpinTurn =
+    (matchFoundAnimationElapsedMs % matchFoundHexSpinDurationMs) /
+    matchFoundHexSpinDurationMs;
+  const matchFoundCountdownClassName = [
+    "match-found-countdown",
+    currentPlayerAccepted ? "accepted" : "",
+    matchFoundHexAligned ? "aligned" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const matchFoundCountdownStyle = {
+    "--match-found-progress": matchFoundRemainingRatio.toString(),
+    "--match-found-base-rotation": `${getShortestRotationDegrees(
+      -360 * matchFoundSpinTurn,
+    )}deg`,
+    "--match-found-overlay-rotation": `${getShortestRotationDegrees(
+      360 * matchFoundSpinTurn,
+    )}deg`,
+  } as CSSProperties;
   const matchFoundAcceptedCount =
     pendingMatch?.acceptances?.filter((acceptance) => acceptance.status === "ACCEPTED")
       .length ?? 0;
@@ -2206,6 +2247,22 @@ function Client({
       window.cancelAnimationFrame(animationFrameId);
     };
   }, [matchFoundStartedAt, pendingMatch]);
+
+  useEffect(() => {
+    if (!pendingMatch?.matchId || !currentPlayerAccepted) {
+      setMatchFoundHexAligned(false);
+      return;
+    }
+
+    setMatchFoundHexAligned(false);
+    const animationFrameId = window.requestAnimationFrame(() => {
+      setMatchFoundHexAligned(true);
+    });
+
+    return () => {
+      window.cancelAnimationFrame(animationFrameId);
+    };
+  }, [currentPlayerAccepted, pendingMatch?.matchId]);
 
   useEffect(() => {
     const warmupMatch = championSelectionMatch;
@@ -4783,7 +4840,7 @@ function Client({
         profilePublicId={profilePublicId}
         t={t}
       />
-      <ChatDock t={t} />
+      <ChatDock chatPosition={chatPosition} t={t} />
 
       {!gameSelectorOpen && !activeLobby && !gameInProgress ? (
         <button
@@ -5460,7 +5517,8 @@ function Client({
             role="dialog"
           >
             <div
-              className="match-found-countdown"
+              className={matchFoundCountdownClassName}
+              style={matchFoundCountdownStyle}
             >
               <svg
                 aria-hidden="true"
@@ -5468,16 +5526,24 @@ function Client({
                 focusable="false"
                 viewBox="0 0 100 100"
               >
-                <path
-                  className="match-found-border-ring match-found-border-ring-base"
-                  d="M 50 2 L 8.43 26 L 8.43 74 L 50 98 L 91.57 74 L 91.57 26 Z"
-                />
-                <path
-                  className="match-found-border-ring match-found-border-ring-overlay"
-                  d="M 50 5 L 11.03 27.5 L 11.03 72.5 L 50 95 L 88.97 72.5 L 88.97 27.5 Z"
-                  style={{ stroke: matchFoundOverlayStroke }}
-                />
+                <g className="match-found-border-spinner match-found-border-spinner-base">
+                  <path
+                    className="match-found-border-ring match-found-border-ring-base"
+                    d="M 50 2 L 8.43 26 L 8.43 74 L 50 98 L 91.57 74 L 91.57 26 Z"
+                  />
+                </g>
+                <g className="match-found-border-spinner match-found-border-spinner-overlay">
+                  <path
+                    className="match-found-border-ring match-found-border-ring-overlay"
+                    d="M 50 5 L 11.03 27.5 L 11.03 72.5 L 50 95 L 88.97 72.5 L 88.97 27.5 Z"
+                    style={{ stroke: matchFoundOverlayStroke }}
+                  />
+                </g>
               </svg>
+              <div
+                aria-hidden="true"
+                className="match-found-timer-ring"
+              />
               <div className="match-found-countdown-core">
                 <h2 id="match-found-title">{t("match-found-title")}</h2>
                 <p>{t("match-found-mode-ranked")}</p>
@@ -5524,6 +5590,7 @@ function Client({
         <SettingsModal
           accentColor={accentColor}
           backgroundChampion={backgroundChampion}
+          chatPosition={chatPosition}
           clientAnimation={clientAnimation}
           friendRequestPolicy={friendRequestPolicy}
           gameScreenMode={gameScreenMode}
@@ -5536,6 +5603,7 @@ function Client({
           vision="Vision.ALL"
           onAccentColorChange={onAccentColorChange}
           onBackgroundChampionChange={onBackgroundChampionChange}
+          onChatPositionChange={onChatPositionChange}
           onClientAnimationChange={onClientAnimationChange}
           onClose={onSettingsClose}
           onFriendRequestPolicyChange={onFriendRequestPolicyChange}

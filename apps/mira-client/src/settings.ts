@@ -8,6 +8,7 @@ export const defaultUiScale = 0.9;
 export const defaultGameScreenMode = "borderless";
 export const defaultBackgroundChampion = "yuna";
 export const defaultFriendRequestPolicy = "allow";
+export const defaultChatPosition = "right";
 
 export type AppResolution =
   | "1270x720"
@@ -21,11 +22,13 @@ export type UiScale = 0.5 | 0.6 | 0.7 | 0.8 | 0.9 | 1 | 1.1 | 1.25 | 1.5;
 export type GameScreenMode = "full" | "window" | "borderless";
 export type BackgroundChampion = "lira" | "ignara" | "yuna" | "sophia";
 export type FriendRequestPolicy = "allow" | "disallow" | "vip";
+export type ChatPosition = "left" | "right";
 
 export type StoredSettings = {
   accentColor?: string;
   allowFriendRequests?: boolean;
   backgroundChampion?: BackgroundChampion;
+  chatPosition?: ChatPosition;
   clientAnimation?: ClientAnimation;
   friendRequestPolicy?: FriendRequestPolicy;
   gameScreenMode?: GameScreenMode;
@@ -119,6 +122,10 @@ export function isBackgroundChampion(value: unknown): value is BackgroundChampio
 
 export function isFriendRequestPolicy(value: unknown): value is FriendRequestPolicy {
   return value === "allow" || value === "disallow" || value === "vip";
+}
+
+export function isChatPosition(value: unknown): value is ChatPosition {
+  return value === "left" || value === "right";
 }
 
 export function getResolutionSize(resolution: AppResolution) {

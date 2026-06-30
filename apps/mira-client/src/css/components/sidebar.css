@@ -1,6 +1,6 @@
 .app-sidebar {
   position: relative;
-  z-index: 15;
+  z-index: 24;
   display: flex;
   flex-direction: column;
   gap: 9px;

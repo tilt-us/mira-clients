@@ -85,6 +85,8 @@ button {
 }
 
 .app-shell-authenticated {
+  --chat-window-width: min(475px, calc(100vw - 24px));
+  --sidebar-current-width: 295px;
   grid-template-columns: auto minmax(0, 1fr);
   align-items: stretch;
   place-items: stretch;
@@ -94,4 +96,8 @@ button {
   max-width: 100vw;
   overflow: hidden;
   padding: 0;
+}
+
+.app-shell-authenticated:has(.app-sidebar.collapsed) {
+  --sidebar-current-width: 84px;
 }
