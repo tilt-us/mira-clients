@@ -18,7 +18,7 @@ import {
   type LobbyRoleId,
 } from "../lobbyRoles";
 import type { Translate } from "../types/ui";
-import { getProfileInitials, getPublicDisplayName } from "../utils/profile";
+import { getPublicDisplayName } from "../utils/profile";
 
 type ChampionSelectionProps = {
   currentPlayerPublicId?: number;
@@ -256,6 +256,37 @@ function getPlayerAssignedRole(match: ApiMatchResponse, player: MatchPlayerRespo
     })?.assignedRole;
 
   return normalizeLobbyRoleId(assignedRole);
+}
+
+function ChampionSelectionHexRings({
+  className,
+  locked,
+}: {
+  className: string;
+  locked?: boolean;
+}) {
+  return (
+    <svg
+      aria-hidden="true"
+      className={[
+        "champion-selection-hex-rings",
+        locked
+          ? "champion-selection-hex-rings-locked"
+          : "champion-selection-hex-rings-active",
+        className,
+      ]
+        .filter(Boolean)
+        .join(" ")}
+      viewBox="0 0 72 72"
+    >
+      <g className="champion-selection-hex-ring-middle">
+        <polygon points="36 6 62 21 62 51 36 66 10 51 10 21" />
+      </g>
+      <g className="champion-selection-hex-ring-outer">
+        <polygon points="36 2 66 19 66 53 36 70 6 53 6 19" />
+      </g>
+    </svg>
+  );
 }
 
 function getPickGroups(teams: MatchLobbyResponse[]) {
@@ -703,6 +734,9 @@ function ChampionSelection({
                     playerSelection?.champion ?? visiblePlayerHoveredChampion;
                   const playerChampionImage = getChampionImage(previewChampion);
                   const isCurrentPick = activePickPublicIds.has(player.publicId ?? -1);
+                  const hasSelectedChampion = Boolean(playerSelection?.champion);
+                  const animatePlayerHexRings =
+                    activePhase === "pick" && isCurrentPick && !hasSelectedChampion;
                   const isCurrentPlayer = player.publicId === currentPlayerPublicId;
                   const playerLabel = isOpponentTeam
                     ? `${t("champion-select-opponent")} ${playerIndex + 1}`
@@ -710,9 +744,8 @@ function ChampionSelection({
                       ? t("champion-select-self")
                       : getPlayerName(player);
                   const userName = getPlayerName(player);
-                  const assignedRole = !isOpponentTeam
-                    ? getPlayerAssignedRole(match, player)
-                    : undefined;
+                  const playerAssignedRole = getPlayerAssignedRole(match, player);
+                  const assignedRole = !isOpponentTeam ? playerAssignedRole : undefined;
                   const championLabel = previewChampion;
 
                   return (
@@ -729,13 +762,17 @@ function ChampionSelection({
                       key={player.publicId}
                     >
                       <div className="champion-selection-player-avatar">
-                        {playerChampionImage ? (
-                          <img alt="" src={playerChampionImage} />
-                        ) : !isOpponentTeam && player.avatarUrl ? (
-                          <img alt="" src={player.avatarUrl} />
-                        ) : !isOpponentTeam ? (
-                          getProfileInitials(player.displayName ?? "?")
-                        ) : null}
+                        <ChampionSelectionHexRings
+                          className="champion-selection-player-avatar-hex"
+                          locked={!animatePlayerHexRings}
+                        />
+                        <span className="champion-selection-player-avatar-core">
+                          {playerChampionImage ? (
+                            <img alt="" src={playerChampionImage} />
+                          ) : !isOpponentTeam && playerAssignedRole ? (
+                            <LobbyRoleIcon role={playerAssignedRole} />
+                          ) : null}
+                        </span>
                       </div>
                       <div className="champion-selection-player-meta">
                         {championLabel ? (
@@ -786,6 +823,10 @@ function ChampionSelection({
               </span>
               {showSelectedChampionBubble ? (
                 <div className="champion-selection-opponent-bubble">
+                  <ChampionSelectionHexRings
+                    className="champion-selection-opponent-bubble-hex"
+                    locked={activePhase === "warmup"}
+                  />
                   {bubbleChampionWallpapers.length > 0 ? (
                     <div
                       className={

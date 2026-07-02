@@ -1,7 +1,7 @@
 .dialog-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 30;
+  z-index: 700;
   display: grid;
   place-items: center;
   padding: 24px;
@@ -10,7 +10,7 @@
 }
 
 .close-backdrop {
-  z-index: 60;
+  z-index: 700;
 }
 
 .close-dialog {

@@ -217,26 +217,99 @@
 }
 
 .champion-selection-player-avatar {
+  position: relative;
+  display: grid;
+  width: 60px;
+  height: 60px;
+  place-items: center;
+  color: var(--accent-foreground-color);
+  font-weight: 950;
+}
+
+.champion-selection-player-avatar-core {
+  position: relative;
+  z-index: 1;
   display: grid;
   width: 60px;
   height: 60px;
   place-items: center;
   overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--accent-color) 48%, rgba(255, 255, 255, 0.18));
   border-radius: 999px;
-  color: var(--accent-foreground-color);
-  background: var(--accent-color);
-  font-weight: 950;
+  background: rgba(7, 10, 16, 0.36);
 }
 
-.champion-selection-player.opponent .champion-selection-player-avatar {
-  border: 1px solid color-mix(in srgb, var(--accent-color) 48%, rgba(255, 255, 255, 0.18));
-  background: rgba(7, 10, 16, 0.36);
+.champion-selection-player.ally .champion-selection-player-avatar-core {
+  background:
+    radial-gradient(circle at 50% 42%, color-mix(in srgb, var(--accent-color) 20%, transparent), transparent 68%),
+    rgba(7, 10, 16, 0.46);
+}
+
+.champion-selection-player-avatar-core .lobby-role-icon {
+  width: 28px;
+  height: 28px;
+  color: color-mix(in srgb, var(--accent-color) 78%, #edf2f7);
+  filter: drop-shadow(0 0 12px color-mix(in srgb, var(--accent-color) 34%, transparent));
 }
 
 .champion-selection-player-avatar img {
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+
+.champion-selection-hex-rings {
+  position: absolute;
+  z-index: 0;
+  overflow: visible;
+  filter: drop-shadow(0 0 12px color-mix(in srgb, var(--accent-color) 34%, transparent));
+  pointer-events: none;
+}
+
+.champion-selection-player-avatar-hex {
+  inset: -8px;
+  width: 76px;
+  height: 76px;
+}
+
+.champion-selection-hex-rings g {
+  transform-box: view-box;
+  transform-origin: center;
+}
+
+.champion-selection-hex-rings polygon {
+  fill: transparent;
+  stroke-linejoin: round;
+  stroke-linecap: butt;
+  vector-effect: non-scaling-stroke;
+}
+
+.champion-selection-hex-rings-active .champion-selection-hex-ring-middle {
+  animation: champion-selection-avatar-hex-counter 5.6s linear infinite;
+}
+
+.champion-selection-hex-ring-middle polygon {
+  opacity: 0.76;
+  stroke: var(--accent-color);
+  stroke-width: 2.3px;
+}
+
+.champion-selection-hex-rings-active .champion-selection-hex-ring-outer {
+  animation: champion-selection-avatar-hex-clockwise 5.6s linear infinite;
+}
+
+.champion-selection-hex-ring-outer polygon {
+  opacity: 0.9;
+  stroke: color-mix(in srgb, var(--accent-color) 72%, #ffffff);
+  stroke-width: 1.6px;
+}
+
+.champion-selection-hex-rings-locked .champion-selection-hex-ring-middle {
+  transform: rotate(0deg);
+}
+
+.champion-selection-hex-rings-locked .champion-selection-hex-ring-outer {
+  transform: rotate(0deg);
 }
 
 .champion-selection-player-meta {
@@ -354,6 +427,7 @@
 
 .champion-selection-opponent-bubble {
   position: relative;
+  isolation: isolate;
   display: flex;
   width: min(546px, 64vw, calc(100vh - 210px));
   height: min(546px, 64vw, calc(100vh - 210px));
@@ -361,7 +435,7 @@
   justify-content: center;
   flex-wrap: wrap;
   gap: 10px;
-  overflow: hidden;
+  overflow: visible;
   border: 1px solid rgba(255, 255, 255, 0.28);
   border-radius: 999px;
   padding: 60px;
@@ -374,6 +448,34 @@
   backdrop-filter: blur(18px);
 }
 
+.champion-selection-opponent-bubble-hex {
+  inset: -13%;
+  z-index: 3;
+  width: 126%;
+  height: 126%;
+  filter: drop-shadow(0 0 26px color-mix(in srgb, var(--accent-color) 36%, transparent));
+}
+
+.champion-selection-opponent-bubble-hex .champion-selection-hex-ring-middle {
+  display: none;
+}
+
+.champion-selection-opponent-bubble-hex .champion-selection-hex-ring-outer {
+  transform: scale(1.08);
+}
+
+.champion-selection-opponent-bubble-hex.champion-selection-hex-rings-active .champion-selection-hex-ring-outer {
+  animation: champion-selection-bubble-hex-clockwise 5.6s linear infinite;
+}
+
+.champion-selection-opponent-bubble-hex.champion-selection-hex-rings-locked .champion-selection-hex-ring-outer {
+  transform: scale(1.08);
+}
+
+.champion-selection-opponent-bubble-hex .champion-selection-hex-ring-outer polygon {
+  stroke-width: 1.2px;
+}
+
 .champion-selection-picked-preview .champion-selection-opponent-bubble {
   width: clamp(150px, 18vw, 230px);
   height: clamp(150px, 18vw, 230px);
@@ -383,7 +485,7 @@
 .champion-selection-bubble-wallpapers {
   position: absolute;
   inset: 0;
-  z-index: 0;
+  z-index: 1;
   display: grid;
   overflow: hidden;
   border-radius: inherit;
@@ -417,6 +519,7 @@
 .champion-selection-opponent-bubble::after {
   position: absolute;
   inset: 18px;
+  z-index: 2;
   border: 1px solid rgba(255, 255, 255, 0.16);
   border-radius: inherit;
   content: "";
@@ -425,7 +528,7 @@
 
 .champion-selection-opponent {
   position: relative;
-  z-index: 2;
+  z-index: 4;
   display: grid;
   width: 72px;
   height: 72px;
@@ -707,6 +810,24 @@
     box-shadow:
       inset 0 0 28px color-mix(in srgb, var(--accent-color) 24%, transparent),
       0 0 34px color-mix(in srgb, var(--accent-color) 36%, transparent);
+  }
+}
+
+@keyframes champion-selection-avatar-hex-counter {
+  to {
+    transform: rotate(-360deg);
+  }
+}
+
+@keyframes champion-selection-avatar-hex-clockwise {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes champion-selection-bubble-hex-clockwise {
+  to {
+    transform: scale(1.08) rotate(360deg);
   }
 }
 
