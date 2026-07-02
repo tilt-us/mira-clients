@@ -11,7 +11,7 @@
   min-height: 0;
   overflow: visible;
   padding: 42px 18px 18px;
-  border-right: 1px solid rgba(255, 255, 255, 0.12);
+  border-right: 1px solid var(--accent-color);
   background: rgba(13, 16, 22, 0.9);
   backdrop-filter: blur(14px);
   transition:
@@ -301,14 +301,11 @@
 .user-avatar-button {
   border: 0;
   padding: 0;
+  cursor: pointer;
 }
 
 .app-sidebar.collapsed .user-avatar-button {
   cursor: pointer;
-}
-
-.app-sidebar:not(.collapsed) .user-avatar-button {
-  cursor: default;
 }
 
 .sidebar-profile-menu {
@@ -435,9 +432,13 @@
 }
 
 .sidebar-user-name {
+  max-width: 100%;
+  margin: 0;
   overflow: hidden;
   color: #edf2f7;
+  font-size: 0.92rem;
   font-weight: 900;
+  line-height: 1.15;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -506,6 +507,10 @@
   min-height: 0;
   gap: 9px;
   overflow: hidden;
+}
+
+.app-sidebar.collapsed .friend-panel {
+  overflow: visible;
 }
 
 .friend-list-tools {
@@ -598,6 +603,7 @@
 
 .app-sidebar.collapsed .friend-groups {
   gap: 8px;
+  overflow: visible;
   padding: 0 0 14px;
 }
 
@@ -614,8 +620,18 @@
 }
 
 .app-sidebar.collapsed .friend-folder-heading,
-.app-sidebar.collapsed .friend-folder-row {
+.app-sidebar.collapsed .friend-folder-menu-button {
   display: none;
+}
+
+.app-sidebar.collapsed .friend-folder-row {
+  display: grid;
+  width: 46px;
+  min-height: 46px;
+  grid-template-columns: 1fr;
+  justify-items: center;
+  border: 0;
+  padding: 0;
 }
 
 .friend-folder-heading,
@@ -674,6 +690,59 @@
   background: transparent;
   cursor: pointer;
   text-align: left;
+}
+
+.app-sidebar.collapsed .friend-folder-toggle {
+  position: relative;
+  display: grid;
+  width: 46px;
+  min-height: 46px;
+  grid-template-columns: 1fr;
+  place-items: center;
+  gap: 0;
+  border-radius: 8px;
+  padding: 0;
+  color: rgba(237, 242, 247, 0.78);
+}
+
+.app-sidebar.collapsed .friend-folder-toggle:hover,
+.app-sidebar.collapsed .friend-folder-row:has(.friend-folder-toggle:hover) {
+  color: #edf2f7;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.app-sidebar.collapsed .friend-folder-toggle > svg:first-child,
+.app-sidebar.collapsed .friend-folder-toggle span {
+  display: none;
+}
+
+.app-sidebar.collapsed .friend-folder-toggle > svg:nth-child(2) {
+  width: 25px;
+  height: 25px;
+  color: var(--accent-color);
+  filter: drop-shadow(0 0 12px color-mix(in srgb, var(--accent-color) 28%, transparent));
+}
+
+.app-sidebar.collapsed .friend-folder-toggle span:last-child {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  display: grid;
+  min-width: 17px;
+  height: 17px;
+  place-items: center;
+  border: 2px solid rgba(13, 16, 22, 0.96);
+  border-radius: 999px;
+  padding: 0 4px;
+  color: var(--accent-foreground-color);
+  background: var(--accent-color);
+  font-size: 0.62rem;
+  font-weight: 950;
+  line-height: 1;
+}
+
+.app-sidebar.collapsed .friend-folder-toggle .friend-folder-count[data-empty="true"] {
+  display: none;
 }
 
 .friend-folder-toggle span:first-of-type {
@@ -737,6 +806,7 @@
   min-height: 46px;
   padding: 6px;
   background: transparent;
+  cursor: pointer;
 }
 
 .app-sidebar.collapsed .friend-card:hover {
@@ -802,12 +872,24 @@
 }
 
 .friend-card-name {
+  max-width: 100%;
+  margin: 0;
   overflow: hidden;
   color: #edf2f7;
   font-size: 0.88rem;
   font-weight: 850;
+  line-height: 1.16;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.friend-card-name-compact {
+  font-size: 0.82rem;
+}
+
+.friend-card-name-condensed,
+.friend-card-name-overflow {
+  font-size: 0.74rem;
 }
 
 .friend-card-status {
@@ -853,6 +935,27 @@
   color: #edf2f7;
   background: rgba(16, 18, 22, 0.98);
   box-shadow: 0 16px 38px rgba(0, 0, 0, 0.46);
+}
+
+.app-sidebar.collapsed .friend-card > .friend-context-menu,
+.app-sidebar.collapsed .folder-context-menu {
+  top: 0;
+  right: auto;
+  left: calc(100% + 12px);
+}
+
+.app-sidebar.collapsed .friend-card > .friend-context-menu::before,
+.app-sidebar.collapsed .folder-context-menu::before {
+  position: absolute;
+  top: 16px;
+  left: -7px;
+  width: 12px;
+  height: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  border-left: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(16, 18, 22, 0.98);
+  content: "";
+  transform: rotate(45deg);
 }
 
 .folder-context-menu {
@@ -1094,6 +1197,16 @@
   white-space: nowrap;
 }
 
+.friend-tooltip-tag {
+  margin: -4px 0 0;
+  overflow: hidden;
+  color: color-mix(in srgb, var(--accent-color) 82%, #edf2f7);
+  font-size: 0.76rem;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .friend-rank-row {
   display: flex;
   align-items: center;
@@ -1320,6 +1433,7 @@
 .friend-add-row-copy {
   display: grid;
   min-width: 0;
+  max-width: 100%;
   gap: 1px;
 }
 
@@ -1331,8 +1445,9 @@
 
 .friend-add-row-copy span:first-child {
   color: #edf2f7;
-  font-size: 0.86rem;
+  font-size: 0.82rem;
   font-weight: 850;
+  line-height: 1.16;
 }
 
 .friend-add-row-copy span:last-child {

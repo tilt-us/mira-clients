@@ -59,9 +59,11 @@ import type {
 } from "../types/ui";
 import { presenceMessageIds } from "../types/ui";
 import {
+  formatTagId,
   getAvatarUrl,
   getProfileInitials,
   getPublicDisplayName,
+  normalizeTagId,
 } from "../utils/profile";
 import { useNotifications } from "../notifications";
 
@@ -82,8 +84,8 @@ const folderMoveRuleOptions: FriendFolderMoveRule[] = [
 
 const friendSidebarStorageKey = "mira-client-friend-sidebar-v2";
 const blockedFriendPublicIdsStorageKey = "mira-client-blocked-public-ids-v1";
-const activeFriendStatusCacheTtlMs = 2 * 60 * 1000;
-const transientFriendStatusCacheTtlMs = 15 * 1000;
+const activeFriendStatusCacheTtlMs = 10 * 1000;
+const transientFriendStatusCacheTtlMs = 10 * 1000;
 const lobbyPresenceFallbackMaxAgeMs = 15 * 1000;
 
 type DragState = {
@@ -153,10 +155,24 @@ type FriendUserAvatarFields = FriendUserItem & {
   profileImageUrl?: string;
 };
 
+type ProfileOpenTarget = {
+  avatarUrl?: string;
+  level?: number;
+  name: string;
+  publicId?: number;
+  tagId?: string;
+};
+
+type TaggedFriendUserItem = FriendUserItem & {
+  level?: unknown;
+  tagId?: unknown;
+};
+
 type SidebarProps = {
   activeLobbyId?: string;
   activeLobbyMemberPublicIds?: number[];
   forceOnlinePublicIds?: number[];
+  onProfileOpen?: (profile?: ProfileOpenTarget) => void;
   onLobbyFriendDrop?: (friend: FriendProfile) => void;
   onFriendPartyInvite?: (friend: FriendProfile) => void;
   onFriendPartyJoin?: (lobby: LobbySnapshot) => void;
@@ -232,7 +248,25 @@ function getFriendUserName(user: FriendUserItem) {
 }
 
 function getFriendUserSubtitle(user: FriendUserItem) {
-  return typeof user.publicId === "number" ? `#${user.publicId}` : undefined;
+  return formatTagId((user as TaggedFriendUserItem).tagId);
+}
+
+function getFriendUserTagId(user: FriendUserItem) {
+  return normalizeTagId((user as TaggedFriendUserItem).tagId);
+}
+
+function getFriendUserLevel(user: FriendUserItem) {
+  const level = (user as TaggedFriendUserItem).level;
+  const numericLevel =
+    typeof level === "number"
+      ? level
+      : typeof level === "string"
+        ? Number.parseInt(level, 10)
+      : Number.NaN;
+
+  return Number.isFinite(numericLevel) && numericLevel >= 0
+    ? Math.floor(numericLevel)
+    : undefined;
 }
 
 function formatNotificationTime(createdAt: number) {
@@ -594,8 +628,10 @@ function mapApiFriendsToProfiles(
       email: friend.email,
       folderId: folderIds.has(folderId ?? "") ? folderId : undefined,
       id,
+      level: getFriendUserLevel(friend),
       name: getFriendUserName(friend),
       publicId: friend.publicId,
+      tagId: getFriendUserTagId(friend),
       gameStartedAt: apiPresence === "ingame" ? userStatus?.updatedAt : undefined,
       queueStartedAt: lobbyInfo?.queueStartedAt ??
         (apiPresence === "inqueue" ? userStatus?.updatedAt : undefined),
@@ -614,6 +650,7 @@ function Sidebar({
   activeLobbyId,
   activeLobbyMemberPublicIds = [],
   forceOnlinePublicIds = [],
+  onProfileOpen,
   onFriendPartyInvite,
   onFriendPartyJoin,
   onLobbyFriendDrop,
@@ -718,7 +755,8 @@ function Sidebar({
     () =>
       normalizedSearch
         ? friends.filter((friend) =>
-            friend.name.toLowerCase().includes(normalizedSearch),
+            friend.name.toLowerCase().includes(normalizedSearch) ||
+            friend.tagId?.toLowerCase().includes(normalizedSearch),
           )
         : friends,
     [friends, normalizedSearch],
@@ -890,7 +928,7 @@ function Sidebar({
     void listenForLiveFriendEvents();
     const refreshIntervalId = window.setInterval(() => {
       void refreshLiveData();
-    }, 30_000);
+    }, 10_000);
 
     return () => {
       active = false;
@@ -1433,6 +1471,16 @@ function Sidebar({
   function handleViewProfile(friendId: string) {
     const friend = friends.find((currentFriend) => currentFriend.id === friendId);
 
+    if (friend) {
+      onProfileOpen?.({
+        avatarUrl: friend.avatarUrl,
+        level: friend.level ?? 1,
+        name: friend.name,
+        publicId: friend.publicId,
+        tagId: friend.tagId,
+      });
+    }
+
     window.dispatchEvent(
       new CustomEvent("mira:profile-request", {
         detail: { publicId: friend?.publicId },
@@ -1546,6 +1594,10 @@ function Sidebar({
     friendId: string,
     event: PointerEvent<HTMLElement>,
   ) {
+    if (sidebarCollapsed) {
+      return;
+    }
+
     if (queueActionsLocked) {
       return;
     }
@@ -1571,6 +1623,10 @@ function Sidebar({
     folderId: string,
     event: PointerEvent<HTMLElement>,
   ) {
+    if (sidebarCollapsed) {
+      return;
+    }
+
     if (event.button !== 0 || renamingFolderId === folderId) {
       return;
     }
@@ -1786,6 +1842,7 @@ function Sidebar({
           key={friend.id}
           menuOpen={openMenuFriendId === friend.id}
           queueActionsLocked={queueActionsLocked}
+          sidebarCollapsed={sidebarCollapsed}
           timedPresenceLabel={timedPresenceLabel}
           t={t}
           onChat={handleChat}
@@ -1915,6 +1972,9 @@ function Sidebar({
 	                      : ""}
                   </p>
                   <p className="friend-tooltip-name">{tooltipFriend.name}</p>
+                  {tooltipFriend.tagId ? (
+                    <p className="friend-tooltip-tag">{formatTagId(tooltipFriend.tagId)}</p>
+                  ) : null}
                   <div className="friend-rank-row">
                     <span className={`rank-emblem rank-${tooltipFriend.rank.name}`}>
                       {tooltipFriend.rank.tier}
@@ -2040,7 +2100,9 @@ function Sidebar({
                               >
                                 {renderFriendUserAvatar(user)}
                                 <span className="friend-add-row-copy">
-                                  <span>{getFriendUserName(user)}</span>
+                                  <span title={getFriendUserName(user)}>
+                                    {getFriendUserName(user)}
+                                  </span>
                                   <span>{getFriendUserSubtitle(user)}</span>
                                 </span>
                                 <span className="friend-add-row-actions">
@@ -2130,12 +2192,13 @@ function Sidebar({
                       {incomingFriendRequests.length > 0 ? (
                         incomingFriendRequests.map((request) => {
                           const requestUser = getRequestUser(request, "incoming");
+                          const requestUserName = getFriendUserName(requestUser ?? {});
 
                           return (
                             <div className="friend-add-row" key={request.id}>
                               {renderFriendUserAvatar(requestUser)}
                               <span className="friend-add-row-copy">
-                                <span>{getFriendUserName(requestUser ?? {})}</span>
+                                <span title={requestUserName}>{requestUserName}</span>
                                 <span>
                                   {getFriendUserSubtitle(requestUser ?? {})}
                                 </span>
@@ -2178,12 +2241,13 @@ function Sidebar({
                       {outgoingFriendRequests.length > 0 ? (
                         outgoingFriendRequests.map((request) => {
                           const requestUser = getRequestUser(request, "outgoing");
+                          const requestUserName = getFriendUserName(requestUser ?? {});
 
                           return (
                             <div className="friend-add-row" key={request.id}>
                               {renderFriendUserAvatar(requestUser)}
                               <span className="friend-add-row-copy">
-                                <span>{getFriendUserName(requestUser ?? {})}</span>
+                                <span title={requestUserName}>{requestUserName}</span>
                                 <span>
                                   {getFriendUserSubtitle(requestUser ?? {})}
                                 </span>
@@ -2402,17 +2466,30 @@ function Sidebar({
       <div className="sidebar-user-card">
         <div className="sidebar-profile-area" ref={profileMenuRef}>
           <button
-            aria-expanded={sidebarCollapsed ? profileMenuOpen : undefined}
-            aria-label={sidebarCollapsed ? t("profile-menu-open") : profileName}
+            aria-label={profileName}
             className="user-avatar user-avatar-button"
             type="button"
-            onClick={() => {
-              if (!sidebarCollapsed) {
+            onClick={(event) => {
+              if (sidebarCollapsed) {
+                event.stopPropagation();
+                setNotificationsOpen(false);
+                setProfileMenuOpen((open) => !open);
                 return;
               }
 
               setNotificationsOpen(false);
-              setProfileMenuOpen((open) => !open);
+              setProfileMenuOpen(false);
+              onProfileOpen?.();
+            }}
+            onContextMenu={(event) => {
+              if (!sidebarCollapsed) {
+                return;
+              }
+
+              event.preventDefault();
+              event.stopPropagation();
+              setNotificationsOpen(false);
+              setProfileMenuOpen(true);
             }}
           >
             {getProfileInitials(profileName)}
@@ -2439,6 +2516,16 @@ function Sidebar({
                 role="menuitem"
                 onClick={() => {
                   setProfileMenuOpen(false);
+                  onProfileOpen?.();
+                }}
+              >
+                {t("profile-menu-profile")}
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setProfileMenuOpen(false);
                   setNotificationsOpen(true);
                 }}
               >
@@ -2449,13 +2536,6 @@ function Sidebar({
                   </span>
                 ) : null}
               </button>
-              <button
-                type="button"
-                role="menuitem"
-                onClick={() => setProfileMenuOpen(false)}
-              >
-                {t("profile-menu-profile")}
-              </button>
             </div>
           ) : null}
 
@@ -2463,7 +2543,9 @@ function Sidebar({
         </div>
 
         <div className="sidebar-user-copy">
-          <p className="sidebar-user-name">{profileName}</p>
+          <p className="sidebar-user-name" title={profileName}>
+            {profileName}
+          </p>
           <p className={`sidebar-user-status presence-text-${presenceStatus}`}>
             {t(presenceMessageIds[presenceStatus])}
           </p>
@@ -2636,13 +2718,39 @@ function Sidebar({
                     ) : (
                       <button
                         className="friend-folder-toggle"
+                        title={folder.name}
                         type="button"
                         onPointerDown={(event) =>
                           handleFolderPointerDown(folder.id, event)
                         }
-                        onClick={() => toggleFolder(folder.id)}
+                        onClick={(event) => {
+                          if (sidebarCollapsed) {
+                            event.stopPropagation();
+                            setOpenMenuFolderId(undefined);
+                            toggleFolder(folder.id);
+                            return;
+                          }
+
+                          toggleFolder(folder.id);
+                        }}
+                        onContextMenu={(event) => {
+                          if (!sidebarCollapsed) {
+                            return;
+                          }
+
+                          event.preventDefault();
+                          event.stopPropagation();
+                          setOpenMenuFriendId(undefined);
+                          setOpenMenuFolderId((currentFolderId) =>
+                            currentFolderId === folder.id ? undefined : folder.id,
+                          );
+                        }}
                         onDoubleClick={(event) => {
                           event.stopPropagation();
+                          if (sidebarCollapsed) {
+                            return;
+                          }
+
                           startRenameFolder(folder.id);
                         }}
                       >
@@ -2657,7 +2765,12 @@ function Sidebar({
                           <Folder size={16} />
                         )}
                         <span>{folder.name}</span>
-                        <span>{folderFriends.length}</span>
+                        <span
+                          className="friend-folder-count"
+                          data-empty={folderFriends.length === 0 ? "true" : undefined}
+                        >
+                          {folderFriends.length}
+                        </span>
                       </button>
                     )}
 

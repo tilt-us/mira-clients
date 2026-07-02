@@ -4,6 +4,30 @@ export type ClientOptions = {
     baseUrl: 'http://localhost:8080' | 'http://localhost:8082' | 'http://localhost:8083' | (string & {});
 };
 
+export type UpdateUsernameRequest = {
+    username: string;
+};
+
+export type UserProfileResponse = {
+    subject?: string;
+    publicId?: number;
+    email?: string;
+    preferredUsername?: string;
+    displayName?: string;
+    tagId?: string;
+    level?: number;
+    avatarUrl?: string;
+    authorities?: Array<string>;
+};
+
+export type UpdateTagIdRequest = {
+    tagId: string;
+};
+
+export type UpdateLevelRequest = {
+    level: number;
+};
+
 export type RegistrationRequest = {
     email: string;
     password: string;
@@ -13,6 +37,10 @@ export type RegistrationRequest = {
 export type RegistrationResponse = {
     status?: string;
     message?: string;
+};
+
+export type IncreaseLevelRequest = {
+    amount: number;
 };
 
 export type FriendActionRequest = {
@@ -50,16 +78,6 @@ export type LoginOptionsResponse = {
 export type HealthResponse = {
     status?: string;
     service?: string;
-};
-
-export type UserProfileResponse = {
-    subject?: string;
-    publicId?: number;
-    email?: string;
-    preferredUsername?: string;
-    displayName?: string;
-    avatarUrl?: string;
-    authorities?: Array<string>;
 };
 
 export type FriendsResponse = {
@@ -492,6 +510,54 @@ export type ApiMatchChampionHoversResponse = {
     hovers?: Array<ChampionHoverResponse>;
 };
 
+export type UpdateUsernameData = {
+    body: UpdateUsernameRequest;
+    path?: never;
+    query?: never;
+    url: '/api/me/username';
+};
+
+export type UpdateUsernameResponses = {
+    /**
+     * OK
+     */
+    200: UserProfileResponse;
+};
+
+export type UpdateUsernameResponse = UpdateUsernameResponses[keyof UpdateUsernameResponses];
+
+export type UpdateTagIdData = {
+    body: UpdateTagIdRequest;
+    path?: never;
+    query?: never;
+    url: '/api/me/tag-id';
+};
+
+export type UpdateTagIdResponses = {
+    /**
+     * OK
+     */
+    200: UserProfileResponse;
+};
+
+export type UpdateTagIdResponse = UpdateTagIdResponses[keyof UpdateTagIdResponses];
+
+export type SetLevelData = {
+    body: UpdateLevelRequest;
+    path?: never;
+    query?: never;
+    url: '/api/me/level';
+};
+
+export type SetLevelResponses = {
+    /**
+     * OK
+     */
+    200: UserProfileResponse;
+};
+
+export type SetLevelResponse = SetLevelResponses[keyof SetLevelResponses];
+
 export type DeleteByEmailData = {
     body: DeleteUserRequest;
     path?: never;
@@ -523,6 +589,22 @@ export type RegisterResponses = {
 };
 
 export type RegisterResponse = RegisterResponses[keyof RegisterResponses];
+
+export type IncreaseLevelData = {
+    body: IncreaseLevelRequest;
+    path?: never;
+    query?: never;
+    url: '/api/me/level/increase';
+};
+
+export type IncreaseLevelResponses = {
+    /**
+     * OK
+     */
+    200: UserProfileResponse;
+};
+
+export type IncreaseLevelResponse = IncreaseLevelResponses[keyof IncreaseLevelResponses];
 
 export type ListRequestsData = {
     body?: never;

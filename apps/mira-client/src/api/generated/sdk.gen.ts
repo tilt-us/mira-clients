@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { AbortRankedSearchData, AbortRankedSearchResponses, AbortSearchData, AbortSearchResponses, AcceptData, AcceptRequestData, AcceptRequestResponses, AcceptResponses, AssignRolesData, AssignRolesResponses, BootstrapData, BootstrapResponses, CancelChampionPhaseData, CancelChampionPhaseDuplicateData, CancelChampionPhaseDuplicateResponses, CancelChampionPhaseResponses, ClearChampionHoverData, ClearChampionHoverDuplicateData, ClearChampionHoverDuplicateResponses, ClearChampionHoverResponses, CreateRankedLobbyData, CreateRankedLobbyResponses, DebugData, DebugResponses, DecideData, DecideResponses, DeclineData, DeclineRequestData, DeclineRequestResponses, DeclineResponses, DeleteByEmailData, DeleteByEmailResponses, EndMatchData, EndMatchDuplicateData, EndMatchDuplicateResponses, EndMatchResponses, EventsData, EventsResponses, FriendsData, FriendsResponses, GetData, GetResponses, HealthData, HealthResponses, HeartbeatData, HeartbeatResponses, HoverChampionData, HoverChampionDuplicateData, HoverChampionDuplicateResponses, HoverChampionResponses, InvitationsData, InvitationsResponses, InviteData, InviteResponses, JoinLobbyData, JoinLobbyResponses, KickMemberData, KickMemberResponses, LeaveLobbyData, LeaveLobbyResponses, ListFriendsData, ListFriendsResponses, ListRequestsData, ListRequestsResponses, LiveAcceptRequestData, LiveAcceptRequestResponses, LiveDeclineRequestData, LiveDeclineRequestResponses, LiveHeartbeatData, LiveHeartbeatResponses, LiveRemoveFriendData, LiveRemoveFriendResponses, LiveRevokeRequestData, LiveRevokeRequestResponses, LiveSendRequestData, LiveSendRequestResponses, LoginAttemptsData, LoginAttemptsResponses, LoginOptionsData, LoginOptionsResponses, LogoutData, LogoutResponses, MarkChampionsReadyData, MarkChampionsReadyDuplicateData, MarkChampionsReadyDuplicateResponses, MarkChampionsReadyResponses, MeData, MeResponses, NotifyChampionSelectionLeftData, NotifyChampionSelectionLeftResponses, OnlineData, OnlineResponses, RegisterData, RegisterResponses, RemoveFriendData, RemoveFriendResponses, RevokeRequestData, RevokeRequestResponses, RolesData, RolesResponses, RosterData, RosterResponses, SearchData, SearchRankedData, SearchRankedResponses, SearchResponses, SelectChampionData, SelectChampionDuplicateData, SelectChampionDuplicateResponses, SelectChampionResponses, SendRequestData, SendRequestResponses, SessionConflictData, SessionConflictResponses, StartSearchData, StartSearchResponses, TemporaryMatchesData, TemporaryMatchesResponses, TransferHostData, TransferHostResponses, UpdateMeData, UpdateMeResponses, UpdateRolesData, UpdateRolesResponses, UsersByPublicIdsData, UsersByPublicIdsResponses, UserStatusMeData, UserStatusMeResponses } from './types.gen';
+import type { AbortRankedSearchData, AbortRankedSearchResponses, AbortSearchData, AbortSearchResponses, AcceptData, AcceptRequestData, AcceptRequestResponses, AcceptResponses, AssignRolesData, AssignRolesResponses, BootstrapData, BootstrapResponses, CancelChampionPhaseData, CancelChampionPhaseDuplicateData, CancelChampionPhaseDuplicateResponses, CancelChampionPhaseResponses, ClearChampionHoverData, ClearChampionHoverDuplicateData, ClearChampionHoverDuplicateResponses, ClearChampionHoverResponses, CreateRankedLobbyData, CreateRankedLobbyResponses, DebugData, DebugResponses, DecideData, DecideResponses, DeclineData, DeclineRequestData, DeclineRequestResponses, DeclineResponses, DeleteByEmailData, DeleteByEmailResponses, EndMatchData, EndMatchDuplicateData, EndMatchDuplicateResponses, EndMatchResponses, EventsData, EventsResponses, FriendsData, FriendsResponses, GetData, GetResponses, HealthData, HealthResponses, HeartbeatData, HeartbeatResponses, HoverChampionData, HoverChampionDuplicateData, HoverChampionDuplicateResponses, HoverChampionResponses, IncreaseLevelData, IncreaseLevelResponses, InvitationsData, InvitationsResponses, InviteData, InviteResponses, JoinLobbyData, JoinLobbyResponses, KickMemberData, KickMemberResponses, LeaveLobbyData, LeaveLobbyResponses, ListFriendsData, ListFriendsResponses, ListRequestsData, ListRequestsResponses, LiveAcceptRequestData, LiveAcceptRequestResponses, LiveDeclineRequestData, LiveDeclineRequestResponses, LiveHeartbeatData, LiveHeartbeatResponses, LiveRemoveFriendData, LiveRemoveFriendResponses, LiveRevokeRequestData, LiveRevokeRequestResponses, LiveSendRequestData, LiveSendRequestResponses, LoginAttemptsData, LoginAttemptsResponses, LoginOptionsData, LoginOptionsResponses, LogoutData, LogoutResponses, MarkChampionsReadyData, MarkChampionsReadyDuplicateData, MarkChampionsReadyDuplicateResponses, MarkChampionsReadyResponses, MeData, MeResponses, NotifyChampionSelectionLeftData, NotifyChampionSelectionLeftResponses, OnlineData, OnlineResponses, RegisterData, RegisterResponses, RemoveFriendData, RemoveFriendResponses, RevokeRequestData, RevokeRequestResponses, RolesData, RolesResponses, RosterData, RosterResponses, SearchData, SearchRankedData, SearchRankedResponses, SearchResponses, SelectChampionData, SelectChampionDuplicateData, SelectChampionDuplicateResponses, SelectChampionResponses, SendRequestData, SendRequestResponses, SessionConflictData, SessionConflictResponses, SetLevelData, SetLevelResponses, StartSearchData, StartSearchResponses, TemporaryMatchesData, TemporaryMatchesResponses, TransferHostData, TransferHostResponses, UpdateMeData, UpdateMeResponses, UpdateRolesData, UpdateRolesResponses, UpdateTagIdData, UpdateTagIdResponses, UpdateUsernameData, UpdateUsernameResponses, UsersByPublicIdsData, UsersByPublicIdsResponses, UserStatusMeData, UserStatusMeResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -18,6 +18,33 @@ export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends 
     meta?: keyof ClientMeta extends never ? Record<string, unknown> : ClientMeta;
 };
 
+export const updateUsername = <ThrowOnError extends boolean = false>(options: Options<UpdateUsernameData, ThrowOnError>): RequestResult<UpdateUsernameResponses, unknown, ThrowOnError> => (options.client ?? client).put<UpdateUsernameResponses, unknown, ThrowOnError>({
+    url: '/api/me/username',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+export const updateTagId = <ThrowOnError extends boolean = false>(options: Options<UpdateTagIdData, ThrowOnError>): RequestResult<UpdateTagIdResponses, unknown, ThrowOnError> => (options.client ?? client).put<UpdateTagIdResponses, unknown, ThrowOnError>({
+    url: '/api/me/tag-id',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+export const setLevel = <ThrowOnError extends boolean = false>(options: Options<SetLevelData, ThrowOnError>): RequestResult<SetLevelResponses, unknown, ThrowOnError> => (options.client ?? client).put<SetLevelResponses, unknown, ThrowOnError>({
+    url: '/api/me/level',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
 export const deleteByEmail = <ThrowOnError extends boolean = false>(options: Options<DeleteByEmailData, ThrowOnError>): RequestResult<DeleteByEmailResponses, unknown, ThrowOnError> => (options.client ?? client).delete<DeleteByEmailResponses, unknown, ThrowOnError>({
     url: '/api/public/register',
     ...options,
@@ -29,6 +56,15 @@ export const deleteByEmail = <ThrowOnError extends boolean = false>(options: Opt
 
 export const register = <ThrowOnError extends boolean = false>(options: Options<RegisterData, ThrowOnError>): RequestResult<RegisterResponses, unknown, ThrowOnError> => (options.client ?? client).post<RegisterResponses, unknown, ThrowOnError>({
     url: '/api/public/register',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+export const increaseLevel = <ThrowOnError extends boolean = false>(options: Options<IncreaseLevelData, ThrowOnError>): RequestResult<IncreaseLevelResponses, unknown, ThrowOnError> => (options.client ?? client).post<IncreaseLevelResponses, unknown, ThrowOnError>({
+    url: '/api/me/level/increase',
     ...options,
     headers: {
         'Content-Type': 'application/json',

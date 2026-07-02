@@ -1,6 +1,6 @@
 import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Minus, Settings, Square, X } from "lucide-react";
+import { Minus, Settings, X } from "lucide-react";
 import { useEffect } from "react";
 
 function runWindowCommand(command: () => Promise<void>) {
@@ -26,10 +26,6 @@ function TitleBar() {
 
   function handleMinimize() {
     runWindowCommand(() => getCurrentWindow().minimize());
-  }
-
-  function handleMaximize() {
-    runWindowCommand(() => getCurrentWindow().toggleMaximize());
   }
 
   function handleClose() {
@@ -58,9 +54,6 @@ function TitleBar() {
         </button>
         <button aria-label="Minimieren" type="button" onClick={handleMinimize}>
           <Minus size={15} />
-        </button>
-        <button aria-label="Maximieren" type="button" onClick={handleMaximize}>
-          <Square size={13} />
         </button>
         <button
           aria-label="Schliessen"

@@ -18,7 +18,7 @@ import {
 import { createPortal } from "react-dom";
 import type { FriendFolder, FriendProfile, Translate } from "../types/ui";
 import { presenceMessageIds } from "../types/ui";
-import { getProfileInitials } from "../utils/profile";
+import { formatTagId, getProfileInitials } from "../utils/profile";
 
 type FriendCardProps = {
   folders: FriendFolder[];
@@ -27,6 +27,7 @@ type FriendCardProps = {
   friend: FriendProfile;
   isDragging?: boolean;
   menuOpen: boolean;
+  sidebarCollapsed?: boolean;
   queueActionsLocked?: boolean;
   timedPresenceLabel?: string;
   onChat: (friendId: string) => void;
@@ -51,6 +52,24 @@ type MoveSubmenuPosition = {
   top: number;
 };
 
+function getFriendCardNameClassName(name: string) {
+  const nameLength = Array.from(name.trim()).length;
+
+  if (nameLength > 20) {
+    return "friend-card-name friend-card-name-overflow";
+  }
+
+  if (nameLength > 14) {
+    return "friend-card-name friend-card-name-condensed";
+  }
+
+  if (nameLength > 10) {
+    return "friend-card-name friend-card-name-compact";
+  }
+
+  return "friend-card-name";
+}
+
 function FriendCard({
   folders,
   canInviteParty,
@@ -58,6 +77,7 @@ function FriendCard({
   friend,
   isDragging,
   menuOpen,
+  sidebarCollapsed = false,
   queueActionsLocked = false,
   timedPresenceLabel,
   onChat,
@@ -74,6 +94,7 @@ function FriendCard({
 }: FriendCardProps) {
   const initials = getProfileInitials(friend.name);
   const presenceLabel = t(presenceMessageIds[friend.status]);
+  const friendTagId = formatTagId(friend.tagId);
   const closeMoveSubmenuTimeoutRef = useRef<number | undefined>(undefined);
   const [moveSubmenuPosition, setMoveSubmenuPosition] =
     useState<MoveSubmenuPosition>();
@@ -179,11 +200,38 @@ function FriendCard({
     <article
       className={`friend-card rank-frame-${friend.rank.name}${
         menuOpen ? " menu-open" : ""
-      }${isDragging ? " dragging" : ""}`}
-      onDoubleClick={() => onChat(friend.id)}
+      }${isDragging ? " dragging" : ""}${sidebarCollapsed ? " friend-card-collapsed" : ""}`}
+      onClick={(event) => {
+        if (!sidebarCollapsed) {
+          return;
+        }
+
+        event.stopPropagation();
+        onMenuToggle(friend.id);
+      }}
+      onContextMenu={(event) => {
+        if (!sidebarCollapsed) {
+          return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+        onMenuToggle(friend.id);
+      }}
+      onDoubleClick={() => {
+        if (!sidebarCollapsed) {
+          onChat(friend.id);
+        }
+      }}
       onMouseEnter={(event) => onTooltipShow(friend.id, event.currentTarget)}
       onMouseLeave={onTooltipHide}
-      onPointerDown={(event) => onDragPointerDown(friend.id, event)}
+      onPointerDown={(event) => {
+        if (sidebarCollapsed) {
+          return;
+        }
+
+        onDragPointerDown(friend.id, event);
+      }}
     >
       <div className="friend-card-avatar" aria-hidden="true">
         {initials}
@@ -205,8 +253,11 @@ function FriendCard({
       </div>
 
       <div className="friend-card-copy">
-        <p className="friend-card-name">{friend.name}</p>
+        <p className={getFriendCardNameClassName(friend.name)} title={friend.name}>
+          {friend.name}
+        </p>
         <p className={`friend-card-status presence-text-${friend.status}`}>
+          {friendTagId ? `${friendTagId} · ` : ""}
           {timedPresenceLabel ?? presenceLabel}
           {friend.gameMode ? ` · ${friend.gameMode}` : ""}
         </p>

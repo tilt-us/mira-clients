@@ -28,7 +28,12 @@ import SettingsModal from "../components/SettingsModal";
 import { useNotifications } from "../notifications";
 import { useClientSettings } from "../settingsStore";
 import Client from "./Client";
-import { getProfileAvatarUrl, getProfileName } from "../utils/profile";
+import {
+  getProfileAvatarUrl,
+  getProfileLevel,
+  getProfileName,
+  getProfileTagId,
+} from "../utils/profile";
 
 /**
  * Description
@@ -871,6 +876,8 @@ function Authentication() {
   const busy = loadState === "loading";
   const clientVersion = `Client v${__CLIENT_VERSION__}`;
   const profileName = profile ? getProfileName(profile) : undefined;
+  const profileLevel = profile ? getProfileLevel(profile) : 0;
+  const profileTagId = profile ? getProfileTagId(profile) : undefined;
   const profileAvatarUrl = profile
     ? getProfileAvatarUrl(profile, readTokens()?.accessToken)
     : undefined;
@@ -890,8 +897,10 @@ function Authentication() {
           closeDialogOpen={closeDialogOpen}
           locale={locale}
           profileAvatarUrl={profileAvatarUrl}
+          profileLevel={profileLevel}
           profileName={profileName}
           profilePublicId={profile.publicId}
+          profileTagId={profileTagId}
           resolution={resolution}
           settingsOpen={settingsOpen}
           supportsFourKResolution={supportsFourKResolution}

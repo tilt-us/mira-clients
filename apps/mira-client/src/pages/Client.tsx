@@ -1,5 +1,14 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type MouseEvent,
+  type PointerEvent,
+} from "react";
 import { invoke, isTauri } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   ArrowLeft,
   Check,
@@ -8,8 +17,10 @@ import {
   Copy,
   Crown,
   Info,
+  Pencil,
   Plus,
   Search,
+  SlidersHorizontal,
   X,
 } from "lucide-react";
 import {
@@ -74,6 +85,7 @@ import ChatDock from "../components/ChatDock";
 import CloseDialog from "../components/CloseDialog";
 import SettingsModal from "../components/SettingsModal";
 import Sidebar from "../components/Sidebar";
+import liraWallpaper from "../../../../assets/wallpapers/lira-wallpaper.png";
 import type { AppLocale } from "../i18n";
 import { useNotifications } from "../notifications";
 import type {
@@ -87,9 +99,11 @@ import type {
 } from "../settings";
 import type { FriendProfile, PresenceStatus, Translate } from "../types/ui";
 import {
+  formatTagId,
   getAvatarUrl,
   getProfileInitials,
   getPublicDisplayName,
+  normalizeTagId,
 } from "../utils/profile";
 import {
   clearStoredGameSession,
@@ -147,8 +161,10 @@ type ClientProps = {
   onSettingsClose: () => void;
   onUiScaleChange: (uiScale: UiScale) => void;
   profileAvatarUrl?: string;
+  profileLevel: number;
   profileName: string;
   profilePublicId?: number;
+  profileTagId?: string;
   resolution: AppResolution;
   settingsOpen: boolean;
   supportsFourKResolution: boolean;
@@ -162,8 +178,15 @@ type GameModeIconProps = {
 };
 
 const PARTY_INVITE_ONLINE_LIMIT = 2;
+const userPageCategories = [
+  { id: "overview", label: "Overview" },
+  { id: "game-history", label: "Game History" },
+  { id: "champions", label: "Champions" },
+  { id: "stats", label: "Stats" },
+] as const;
 
 type ApiPresenceStatus = UpdateUserStatusRequest["status"];
+type UserPageCategory = (typeof userPageCategories)[number]["id"];
 
 type PartyInviteCandidate = {
   avatarUrl?: string;
@@ -171,7 +194,39 @@ type PartyInviteCandidate = {
   name: string;
   publicId?: number;
   source: "friend" | "user";
+  tagId?: string;
 };
+type UserPageProfile = {
+  avatarUrl?: string;
+  level: number;
+  name: string;
+  publicId?: number;
+  tagId?: string;
+};
+
+type TaggedFriendUser = FriendUserResponse & {
+  level?: unknown;
+  tagId?: unknown;
+};
+
+function getUserPageNameClassName(name: string) {
+  const nameLength = Array.from(name.trim()).length;
+
+  if (nameLength > 20) {
+    return "user-page-name user-page-name-overflow";
+  }
+
+  if (nameLength > 12) {
+    return "user-page-name user-page-name-condensed";
+  }
+
+  if (nameLength > 8) {
+    return "user-page-name user-page-name-compact";
+  }
+
+  return "user-page-name";
+}
+
 type OnlineInviteUser = OnlineUserStatusSnapshot & Partial<FriendUserResponse>;
 type CurrentMatchPlayerProfile = {
   avatarUrl?: string;
@@ -377,6 +432,49 @@ function getMemberName(member?: LobbyMember) {
   );
 }
 
+function getLobbyMemberTagId(member: LobbyMember) {
+  const runtimeMember = member as LobbyMember & { tagId?: unknown };
+  return normalizeTagId(runtimeMember.tagId);
+}
+
+function getLobbyMemberNameTag(member: LobbyMember) {
+  const tagId = getLobbyMemberTagId(member);
+  const identity = getLobbyMemberDisplayIdentity(member);
+
+  return tagId ? `${identity.name}#${tagId}` : identity.name;
+}
+
+function getLobbyMemberDisplayIdentity(member: LobbyMember) {
+  const name = getMemberName(member);
+  const tagId = getLobbyMemberTagId(member);
+
+  if (tagId) {
+    const tagSuffix = `#${tagId}`;
+
+    if (name.toLocaleLowerCase().endsWith(tagSuffix.toLocaleLowerCase())) {
+      return {
+        name: name.slice(0, -tagSuffix.length).trim() || name,
+        tagId: formatTagId(tagId),
+      };
+    }
+
+    return {
+      name,
+      tagId: formatTagId(tagId),
+    };
+  }
+
+  const parsedName = name.match(/^(.*?)#([A-Za-z0-9]{3,5})$/);
+  if (parsedName?.[1] && parsedName[2]) {
+    return {
+      name: parsedName[1].trim() || name,
+      tagId: `#${parsedName[2]}`,
+    };
+  }
+
+  return { name, tagId: undefined };
+}
+
 function normalizeLobbyIdentityName(name: string | undefined) {
   return getLobbyDisplayName(name ?? "").trim().toLocaleLowerCase();
 }
@@ -438,6 +536,21 @@ function getFriendUserName(user: FriendUserResponse) {
   );
 }
 
+function getFriendUserTagId(user: Partial<TaggedFriendUser>) {
+  return normalizeTagId(user.tagId);
+}
+
+function getFriendUserLevel(user: Partial<TaggedFriendUser>) {
+  const level =
+    typeof user.level === "number"
+      ? user.level
+      : typeof user.level === "string"
+        ? Number.parseInt(user.level, 10)
+        : Number.NaN;
+
+  return Number.isFinite(level) && level >= 0 ? Math.floor(level) : undefined;
+}
+
 function mapFriendToInviteCandidate(friend: FriendProfile): PartyInviteCandidate {
   return {
     avatarUrl: friend.avatarUrl,
@@ -445,6 +558,7 @@ function mapFriendToInviteCandidate(friend: FriendProfile): PartyInviteCandidate
     name: friend.name,
     publicId: friend.publicId,
     source: "friend",
+    tagId: friend.tagId,
   };
 }
 
@@ -461,6 +575,7 @@ function mapUserToInviteCandidate(user: FriendUserResponse): PartyInviteCandidat
     name: getFriendUserName(user),
     publicId,
     source: "user",
+    tagId: getFriendUserTagId(user),
   };
 }
 
@@ -476,6 +591,7 @@ function mapOnlineUserToInviteCandidate(user: OnlineInviteUser): PartyInviteCand
     ),
     publicId,
     source: "user",
+    tagId: getFriendUserTagId(user),
   };
 }
 
@@ -496,9 +612,11 @@ function mapFriendUserToProfile(
     avatarUrl: getAvatarUrl(user),
     email: user.email,
     id: String(publicId ?? user.email ?? user.displayName ?? "unknown-user"),
+    level: getFriendUserLevel(user),
     name: getFriendUserName(user),
     publicId,
     status,
+    tagId: getFriendUserTagId(user),
     rank: {
       name: "wood",
       label: "Wood",
@@ -512,9 +630,7 @@ function getInviteCandidateKey(candidate: PartyInviteCandidate) {
 }
 
 function getInviteCandidateSubtitle(candidate: PartyInviteCandidate) {
-  return typeof candidate.publicId === "number"
-    ? `#${candidate.publicId}`
-    : candidate.email;
+  return formatTagId(candidate.tagId) ?? candidate.email;
 }
 
 function getLobbyDisplayName(name: string) {
@@ -525,6 +641,29 @@ function getInvitationModeLabel(invitation: LobbyInvitation) {
   return invitation.mode === "RANKED" || invitation.lobby?.mode === "RANKED"
     ? "Ranked"
     : "Normal";
+}
+
+function getLobbyModeLabel(lobby: LobbySnapshot | undefined, t: Translate) {
+  return lobby?.mode === "RANKED" ? t("game-mode-ranked") : t("game-mode-normal");
+}
+
+function getLobbyLeaveColor(accentColor: string) {
+  const red = Number.parseInt(accentColor.slice(1, 3), 16) / 255;
+  const green = Number.parseInt(accentColor.slice(3, 5), 16) / 255;
+  const blue = Number.parseInt(accentColor.slice(5, 7), 16) / 255;
+  const max = Math.max(red, green, blue);
+  const min = Math.min(red, green, blue);
+  const delta = max - min;
+  const hue =
+    delta === 0
+      ? 0
+      : max === red
+        ? ((green - blue) / delta + (green < blue ? 6 : 0)) * 60
+        : max === green
+          ? ((blue - red) / delta + 2) * 60
+          : ((red - green) / delta + 4) * 60;
+
+  return hue <= 24 || hue >= 342 ? "#ff8a2a" : "#ff3f46";
 }
 
 function formatLobbySearchTime(totalSeconds: number) {
@@ -1465,8 +1604,10 @@ function Client({
   onSettingsClose,
   onUiScaleChange,
   profileAvatarUrl,
+  profileLevel,
   profileName,
   profilePublicId,
+  profileTagId,
   resolution,
   settingsOpen,
   supportsFourKResolution,
@@ -1475,6 +1616,13 @@ function Client({
   uiScale,
 }: ClientProps) {
   const [gameSelectorOpen, setGameSelectorOpen] = useState(false);
+  const [lobbyPageOpen, setLobbyPageOpen] = useState(false);
+  const [lobbyRosterOpen, setLobbyRosterOpen] = useState(false);
+  const [userPageOpen, setUserPageOpen] = useState(false);
+  const [viewedUserPageProfile, setViewedUserPageProfile] =
+    useState<UserPageProfile>();
+  const [activeUserPageCategory, setActiveUserPageCategory] =
+    useState<UserPageCategory>("overview");
   const [selectedGameMode, setSelectedGameMode] = useState<GameMode>("ranked");
   const [gameInProgress, setGameInProgress] = useState(false);
   const [activeLobby, setActiveLobby] = useState<LobbySnapshot>();
@@ -1531,6 +1679,8 @@ function Client({
   const hiddenSinceRef = useRef<number | undefined>(undefined);
   const remotePresenceRef = useRef<string | undefined>(undefined);
   const currentPresenceRef = useRef<PresenceSnapshot>({ status: "ONLINE" });
+  const topActionDragTimerRef = useRef<number | undefined>(undefined);
+  const topActionDraggingRef = useRef(false);
   const presenceInitializedRef = useRef(false);
   const championSelectionTimeoutInFlightRef = useRef(false);
   const requeueingLobbyIdsRef = useRef<Set<string>>(new Set());
@@ -1538,7 +1688,27 @@ function Client({
   const seenDesktopSessionConflictIdsRef = useRef<Set<string>>(new Set());
   const playButtonAnimated =
     clientAnimation === "all" || clientAnimation === "ui-elements";
+  const lobbyLeaveColor = getLobbyLeaveColor(accentColor);
   const { notify } = useNotifications();
+
+  useEffect(() => {
+    return () => {
+      clearTopActionDragTimer();
+    };
+  }, []);
+
+  const selfUserPageProfile = useMemo<UserPageProfile>(
+    () => ({
+      avatarUrl: profileAvatarUrl,
+      level: profileLevel,
+      name: profileName,
+      publicId: profilePublicId,
+      tagId: profileTagId,
+    }),
+    [profileAvatarUrl, profileLevel, profileName, profilePublicId, profileTagId],
+  );
+  const activeUserPageProfile = viewedUserPageProfile ?? selfUserPageProfile;
+  const userPageShowsSelf = !viewedUserPageProfile;
   const currentMatchPlayerProfile = useMemo<CurrentMatchPlayerProfile>(
     () => ({
       avatarUrl: profileAvatarUrl,
@@ -1549,6 +1719,9 @@ function Client({
   );
   const playerSlots = Array.from({ length: 5 }, (_, index) => index);
   const lobbySlotMembers = activeLobby ? getLobbySlotMembers(activeLobby) : [];
+  const lobbyRosterMembers = lobbySlotMembers.filter(
+    (member): member is LobbyMember => Boolean(member),
+  );
   const lobbyIsFull =
     lobbySlotMembers.filter((member): member is LobbyMember => Boolean(member)).length >=
     playerSlots.length;
@@ -1780,6 +1953,7 @@ function Client({
     const matchesQuery = (candidate: PartyInviteCandidate) => {
       return (
         candidate.name.toLowerCase().includes(query) ||
+        candidate.tagId?.toLowerCase().includes(query) ||
         candidate.email?.toLowerCase().includes(query) ||
         String(candidate.publicId ?? "").includes(query)
       );
@@ -3114,12 +3288,6 @@ function Client({
     void publishPresence(status, getSelectedPresenceMode(roles));
   }
 
-  function sendActivePresenceKeepalive(
-    status: Extract<ApiPresenceStatus, "IN_QUEUE" | "CHAMPION_SELECTION" | "IN_GAME">,
-  ) {
-    sendPresenceKeepalive(status, getSelectedPresenceMode());
-  }
-
   function getIdlePresenceStatus(): ApiPresenceStatus {
     const now = Date.now();
     const hiddenForMs = hiddenSinceRef.current ? now - hiddenSinceRef.current : 0;
@@ -3173,41 +3341,6 @@ function Client({
     void publishPresence(nextStatus);
   }
 
-  function sendCurrentPresenceKeepalive() {
-    if (gameInProgressRef.current) {
-      sendActivePresenceKeepalive("IN_GAME");
-      return;
-    }
-
-    if (isMatchGameStarted(championSelectionMatchRef.current)) {
-      sendActivePresenceKeepalive("IN_GAME");
-      return;
-    }
-
-    if (championSelectionMatchRef.current) {
-      sendActivePresenceKeepalive("CHAMPION_SELECTION");
-      return;
-    }
-
-    if (activeLobbyRef.current?.status === "SEARCHING") {
-      sendActivePresenceKeepalive("IN_QUEUE");
-      return;
-    }
-
-    if (activeLobbyRef.current) {
-      sendPresenceKeepalive(
-        "IN_LOBBY",
-        getLobbyPresenceMode(selectedGameMode, selectedLobbyRoles),
-      );
-      return;
-    }
-
-    sendPresenceKeepalive(
-      currentPresenceRef.current.status,
-      currentPresenceRef.current.mode,
-    );
-  }
-
   function suppressMatchLobbyInvitations(match?: ApiMatchResponse) {
     for (const lobby of match?.lobbies ?? []) {
       if (lobby.lobbyId) {
@@ -3235,6 +3368,7 @@ function Client({
     setLobbySearchStartedAt(undefined);
     setLobbySearchAbortedLobbyId(undefined);
     setActiveLobby(undefined);
+    setLobbyPageOpen(false);
     setGameSelectorOpen(false);
     setPresenceStatus("online");
     void publishPresence("ONLINE");
@@ -3249,6 +3383,7 @@ function Client({
     setLobbyIdContextMenuOpen(false);
     setPartyInviteOpen(false);
     setActiveLobby(undefined);
+    setLobbyPageOpen(false);
     setPresenceStatus("online");
     void publishPresence("ONLINE");
   }
@@ -3439,7 +3574,7 @@ function Client({
         }
       }
 
-      sendCurrentPresenceKeepalive();
+      sendPresenceKeepalive("OFFLINE");
     }
 
     window.addEventListener("pagehide", persistUnloadState);
@@ -3449,7 +3584,7 @@ function Client({
       window.removeEventListener("pagehide", persistUnloadState);
       window.removeEventListener("beforeunload", persistUnloadState);
     };
-  }, [selectedGameMode, selectedLobbyRoles]);
+  }, [profilePublicId]);
 
   async function leaveCurrentLobby() {
     const lobby = activeLobbyRef.current;
@@ -3464,6 +3599,8 @@ function Client({
     });
     activeLobbyRef.current = undefined;
     setActiveLobby(undefined);
+    setLobbyPageOpen(false);
+    setGameSelectorOpen(false);
     syncPresenceWithActivity();
   }
 
@@ -3609,14 +3746,108 @@ function Client({
     };
   }, [activeLobby?.id, notify, profilePublicId, t]);
 
-  async function handleTopButtonClick() {
-    if (activeLobby) {
-      await leaveCurrentLobby();
-      setGameSelectorOpen(true);
+  function handleTopButtonClick() {
+    if (userPageOpen) {
+      setUserPageOpen(false);
       return;
     }
 
-    setGameSelectorOpen((open) => !open);
+    if (lobbyPageOpen) {
+      setLobbyPageOpen(false);
+      return;
+    }
+
+    setGameSelectorOpen(false);
+  }
+
+  function handlePlayButtonClick() {
+    setUserPageOpen(false);
+
+    if (activeLobby) {
+      setGameSelectorOpen(false);
+      setLobbyPageOpen(true);
+      return;
+    }
+
+    setGameSelectorOpen(true);
+  }
+
+  function handleChangeModeClick() {
+    setUserPageOpen(false);
+    setLobbyPageOpen(false);
+    setGameSelectorOpen(true);
+  }
+
+  function handleGameModePrimaryAction() {
+    if (activeLobby) {
+      setGameSelectorOpen(false);
+      setLobbyPageOpen(true);
+      return;
+    }
+
+    void handleCreateLobby();
+  }
+
+  function clearTopActionDragTimer() {
+    if (topActionDragTimerRef.current !== undefined) {
+      window.clearTimeout(topActionDragTimerRef.current);
+      topActionDragTimerRef.current = undefined;
+    }
+  }
+
+  function handleTopActionPointerDown(event: PointerEvent<HTMLElement>) {
+    if (event.button !== 0) {
+      return;
+    }
+
+    topActionDraggingRef.current = false;
+    clearTopActionDragTimer();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    topActionDragTimerRef.current = window.setTimeout(() => {
+      topActionDragTimerRef.current = undefined;
+      topActionDraggingRef.current = true;
+
+      if (isTauri()) {
+        void getCurrentWindow().startDragging();
+      }
+    }, 500);
+  }
+
+  function handleTopActionPointerEnd(event: PointerEvent<HTMLElement>) {
+    clearTopActionDragTimer();
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  }
+
+  function consumeTopActionDragClick(event: MouseEvent<HTMLElement>) {
+    if (!topActionDraggingRef.current) {
+      return false;
+    }
+
+    topActionDraggingRef.current = false;
+    event.preventDefault();
+    event.stopPropagation();
+    return true;
+  }
+
+  function handleProfileOpen(profile?: Partial<UserPageProfile>) {
+    setLobbyIdContextMenuOpen(false);
+    setLobbyMemberContextMenu(undefined);
+    setPartyInviteOpen(false);
+    setViewedUserPageProfile(
+      profile?.name
+        ? {
+            avatarUrl: profile.avatarUrl,
+            level: profile.level ?? 1,
+            name: profile.name,
+            publicId: profile.publicId,
+            tagId: profile.tagId,
+          }
+        : undefined,
+    );
+    setActiveUserPageCategory("overview");
+    setUserPageOpen(true);
   }
 
   async function leaveActiveChampionSelection(status: ChampionSelectionLeaveStatus) {
@@ -3745,6 +3976,7 @@ function Client({
     setLobbySearchAbortedLobbyId(undefined);
     setLobbySearchStartedAt(undefined);
     setActiveLobby(result.data);
+    setLobbyPageOpen(true);
     setGameSelectorOpen(false);
   }
 
@@ -3880,6 +4112,28 @@ function Client({
 
     await navigator.clipboard.writeText(activeLobby.id);
     setLobbyIdContextMenuOpen(false);
+  }
+
+  function getUserPageNameTag(profile: UserPageProfile) {
+    const tagId = normalizeTagId(profile.tagId);
+
+    return tagId ? `${profile.name}#${tagId}` : profile.name;
+  }
+
+  async function handleCopyUserPageNameTag() {
+    await navigator.clipboard.writeText(getUserPageNameTag(activeUserPageProfile));
+  }
+
+  async function handleCopyUserPagePublicId() {
+    if (typeof activeUserPageProfile.publicId !== "number") {
+      return;
+    }
+
+    await navigator.clipboard.writeText(`#${activeUserPageProfile.publicId}`);
+  }
+
+  async function handleCopyLobbyRosterMember(member: LobbyMember) {
+    await navigator.clipboard.writeText(getLobbyMemberNameTag(member));
   }
 
   async function handleMatchDecision(decision: MatchDecision) {
@@ -4230,7 +4484,25 @@ function Client({
   }
 
   function handleViewLobbyMemberProfile() {
+    const member = lobbyMemberContextMenu?.member;
+
     setLobbyMemberContextMenu(undefined);
+
+    if (!member) {
+      return;
+    }
+
+    if (isSameLobbyMember(member, activeLobbyCurrentMember)) {
+      handleProfileOpen();
+      return;
+    }
+
+    handleProfileOpen({
+      avatarUrl: member.avatarUrl,
+      level: 0,
+      name: getMemberName(member),
+      publicId: member.publicId,
+    });
   }
 
   async function handleAddLobbyMemberFriend(member: LobbyMember) {
@@ -4339,6 +4611,7 @@ function Client({
     }
 
     setActiveLobby(result.data);
+    setLobbyPageOpen(true);
     setGameSelectorOpen(false);
   }
 
@@ -4360,6 +4633,7 @@ function Client({
     }
 
     setActiveLobby(result.data);
+    setLobbyPageOpen(true);
     setLobbyInvitations((currentInvitations) =>
       currentInvitations.filter(
         (currentInvitation) => currentInvitation.lobbyId !== invitation.lobbyId,
@@ -4747,6 +5021,7 @@ function Client({
     setLobbySearchStartedAt(undefined);
     setLobbySearchAbortedLobbyId(undefined);
     setActiveLobby(undefined);
+    setLobbyPageOpen(false);
     setGameSelectorOpen(false);
     setGameInProgress(true);
     setPresenceStatus("ingame");
@@ -4833,6 +5108,7 @@ function Client({
         onFriendPartyInvite={handleLobbyFriendDrop}
         onFriendPartyJoin={handleJoinFriendParty}
         onLobbyFriendDrop={handleLobbyFriendDrop}
+        onProfileOpen={handleProfileOpen}
         partyInviteEnabled={Boolean(activeLobby) && !partyInvitesLocked}
         presenceStatus={presenceStatus}
         profileAvatarUrl={profileAvatarUrl}
@@ -4842,16 +5118,82 @@ function Client({
       />
       <ChatDock chatPosition={chatPosition} t={t} />
 
-      {!gameSelectorOpen && !activeLobby && !gameInProgress ? (
-        <button
-          aria-pressed={gameSelectorOpen}
-          className="client-play-button"
-          data-animated={playButtonAnimated}
-          type="button"
-          onClick={handleTopButtonClick}
+      {!gameSelectorOpen &&
+      !gameInProgress &&
+      (!activeLobby || !lobbyPageOpen || userPageOpen) ? (
+        <div
+          className={
+            lobbyIsSearching
+              ? "client-top-action client-top-action-searching"
+              : "client-top-action"
+          }
         >
-          <span>{t("client-play")}</span>
-        </button>
+          <button
+            aria-pressed={gameSelectorOpen}
+            className="client-play-button"
+            data-animated={playButtonAnimated}
+            type="button"
+            onClick={(event) => {
+              if (consumeTopActionDragClick(event)) {
+                return;
+              }
+
+              handlePlayButtonClick();
+            }}
+            onPointerCancel={handleTopActionPointerEnd}
+            onPointerDown={handleTopActionPointerDown}
+            onPointerUp={handleTopActionPointerEnd}
+          >
+            <span>{activeLobby ? t("client-lobby") : t("client-play")}</span>
+            {activeLobby ? (
+              <span className="client-play-button-timer">{lobbySearchTime}</span>
+            ) : null}
+          </button>
+          {activeLobby ? (
+            <button
+              aria-expanded={lobbyRosterOpen}
+              aria-label={t("lobby-title")}
+              className={
+                lobbyRosterOpen
+                  ? "client-lobby-roster client-lobby-roster-open"
+                  : "client-lobby-roster"
+              }
+              type="button"
+              onClick={(event) => {
+                if (consumeTopActionDragClick(event)) {
+                  return;
+                }
+
+                setLobbyRosterOpen((open) => !open);
+              }}
+              onPointerCancel={handleTopActionPointerEnd}
+              onPointerDown={handleTopActionPointerDown}
+              onPointerUp={handleTopActionPointerEnd}
+            >
+              <span className="client-lobby-roster-avatars" aria-hidden="true">
+                {lobbyRosterMembers.map((member) => (
+                  <span
+                    className="client-lobby-roster-avatar"
+                    key={member.publicId}
+                    title={getLobbyMemberNameTag(member)}
+                    onContextMenu={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      void handleCopyLobbyRosterMember(member);
+                    }}
+                  >
+                    {member.avatarUrl ? (
+                      <img alt="" src={member.avatarUrl} />
+                    ) : (
+                      getMemberName(member).charAt(0).toUpperCase()
+                    )}
+                  </span>
+                ))}
+              </span>
+              <ChevronRight className="client-lobby-roster-chevron" size={18} />
+            </button>
+          ) : null}
+        </div>
       ) : null}
 
       <section className="dashboard-panel" aria-label="Dashboard">
@@ -4882,17 +5224,29 @@ function Client({
             ) : null}
           </div>
         ) : null}
-        {gameSelectorOpen || activeLobby ? (
-          <button
-            className="client-page-back-button"
-            type="button"
-            onClick={() => void handleTopButtonClick()}
-          >
-            <span className="client-page-back-arrow" aria-hidden="true">
-              <ArrowLeft size={20} />
-            </span>
-            <span>{t("client-back")}</span>
-          </button>
+        {gameSelectorOpen || lobbyPageOpen || userPageOpen ? (
+          <div className="client-page-actions">
+            <button
+              className="client-page-back-button"
+              type="button"
+              onClick={handleTopButtonClick}
+            >
+              <span className="client-page-back-arrow" aria-hidden="true">
+                <ArrowLeft size={20} />
+              </span>
+              <span>{t("client-back")}</span>
+            </button>
+            {lobbyPageOpen && !userPageOpen && isCurrentUserLobbyHost ? (
+              <button
+                className="client-page-change-mode-button"
+                type="button"
+                onClick={handleChangeModeClick}
+              >
+                <SlidersHorizontal size={18} />
+                <span>{t("client-change-mode")}</span>
+              </button>
+            ) : null}
+          </div>
         ) : null}
         {lobbyInvitations.length > 0 ? (
           <div className="lobby-invite-stack">
@@ -4985,9 +5339,9 @@ function Client({
                   className="game-mode-create-button"
                   tabIndex={gameSelectorOpen ? 0 : -1}
                   type="button"
-                  onClick={() => void handleCreateLobby()}
+                  onClick={handleGameModePrimaryAction}
                 >
-                  {t("game-mode-create")}
+                  {activeLobby ? t("game-mode-change") : t("game-mode-create")}
                 </button>
               </div>
             </div>
@@ -5004,12 +5358,122 @@ function Client({
           </div>
         </div>
 
-        {activeLobby ? (
+        <section
+          aria-hidden={!userPageOpen}
+          aria-label={activeUserPageProfile.name}
+          className={userPageOpen ? "user-page user-page-open" : "user-page"}
+        >
+          <div
+            className="user-page-wallpaper"
+            style={{ "--user-page-wallpaper": `url(${liraWallpaper})` } as CSSProperties}
+          >
+            <div className="user-page-profile-banner" aria-label="Profile summary">
+              <div
+                aria-label={
+                  userPageShowsSelf ? locale === "de" ? "Bearbeiten" : "Edit" : undefined
+                }
+                className="user-page-avatar"
+                title={userPageShowsSelf ? locale === "de" ? "Bearbeiten" : "Edit" : undefined}
+              >
+                {getProfileInitials(activeUserPageProfile.name)}
+                {activeUserPageProfile.avatarUrl ? (
+                  <img
+                    alt=""
+                    src={activeUserPageProfile.avatarUrl}
+                    onError={(event) => {
+                      event.currentTarget.hidden = true;
+                    }}
+                  />
+                ) : null}
+                {userPageShowsSelf ? (
+                  <span className="user-page-avatar-edit" aria-hidden="true">
+                    <Pencil size={34} />
+                  </span>
+                ) : null}
+              </div>
+              <span
+                className="user-page-banner-level"
+                aria-label={`Level ${activeUserPageProfile.level}`}
+              >
+                {activeUserPageProfile.level}
+              </span>
+              <div className="user-page-identity">
+                <div className="user-page-name-row">
+                  <h1
+                    className={getUserPageNameClassName(activeUserPageProfile.name)}
+                    title={activeUserPageProfile.name}
+                  >
+                    {activeUserPageProfile.name}
+                  </h1>
+                  {activeUserPageProfile.tagId ? (
+                    <>
+                      <span className="user-page-inline-tag">
+                        {formatTagId(activeUserPageProfile.tagId)}
+                      </span>
+                      <button
+                        aria-label={t("profile-copy-name-tag")}
+                        className="user-page-copy-id-button"
+                        title={t("profile-copy-name-tag")}
+                        type="button"
+                        onClick={() => void handleCopyUserPageNameTag()}
+                      >
+                        <Copy size={15} />
+                      </button>
+                    </>
+                  ) : null}
+                </div>
+                {typeof activeUserPageProfile.publicId === "number" ? (
+                  <div className="user-page-meta-row user-page-user-id-row">
+                    <span>{`#${activeUserPageProfile.publicId}`}</span>
+                    <button
+                      aria-label={t("profile-copy-user-id")}
+                      className="user-page-copy-id-button"
+                      title={t("profile-copy-user-id")}
+                      type="button"
+                      onClick={() => void handleCopyUserPagePublicId()}
+                    >
+                      <Copy size={15} />
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </div>
+          <div className="user-page-details" />
+          <nav className="user-page-categories" aria-label="Profile sections">
+            {userPageCategories.map((category) => (
+              <button
+                aria-current={activeUserPageCategory === category.id ? "page" : undefined}
+                className={
+                  activeUserPageCategory === category.id
+                    ? "user-page-category user-page-category-active"
+                    : "user-page-category"
+                }
+                key={category.id}
+                tabIndex={userPageOpen ? 0 : -1}
+                type="button"
+                onClick={() => setActiveUserPageCategory(category.id)}
+              >
+                <span>{category.label}</span>
+              </button>
+            ))}
+          </nav>
+        </section>
+
+        {activeLobby && lobbyPageOpen ? (
           <section
             className="lobby-page"
             aria-label={t("lobby-title")}
+            style={
+              {
+                "--lobby-leave-color": lobbyLeaveColor,
+              } as CSSProperties
+            }
             onMouseDown={() => setOpenLobbyRolePicker(undefined)}
           >
+            <div className="lobby-mode-label">
+              <span>{getLobbyModeLabel(activeLobby, t)}</span>
+            </div>
             <div className="lobby-id-info">
               <button
                 aria-label={t("lobby-id")}
@@ -5049,11 +5513,15 @@ function Client({
                 const isHost = isSameLobbyMember(member, lobbyHost);
                 const canInviteSlot = !member && !partyInvitesLocked;
                 const canOpenMemberMenu = Boolean(member);
+                const memberIdentity = member
+                  ? getLobbyMemberDisplayIdentity(member)
+                  : undefined;
                 const memberName = member
-                  ? getMemberName(member)
+                  ? memberIdentity?.name
                   : isCurrentUser
                     ? getLobbyDisplayName(profileName)
                     : undefined;
+                const memberTagId = memberIdentity?.tagId;
                 const memberLobbyRoles = isCurrentUser
                   ? selectedLobbyRoles
                   : getEffectiveLobbyMemberRoles(member);
@@ -5137,7 +5605,23 @@ function Client({
                       </span>
                     ) : null}
                     <div className="lobby-player-info">
-                      <span>{memberName ?? t("lobby-slot-open")}</span>
+                      <span
+                        className="lobby-player-name"
+                        title={
+                          memberName
+                            ? memberTagId
+                              ? `${memberName} ${memberTagId}`
+                              : memberName
+                            : t("lobby-slot-open")
+                        }
+                      >
+                        <span className="lobby-player-name-text">
+                          {memberName ?? t("lobby-slot-open")}
+                        </span>
+                        {memberTagId ? (
+                          <span className="lobby-player-tag-id">{memberTagId}</span>
+                        ) : null}
+                      </span>
                       <small>
                         {member
                           ? isHost
@@ -5289,14 +5773,24 @@ function Client({
               <div className="lobby-search-timer" aria-live="polite">
                 <span>{lobbySearchTime}</span>
               </div>
-              <button
-                className="lobby-search-button"
-                disabled={!isCurrentUserLobbyHost}
-                type="button"
-                onClick={() => void handleLobbySearch()}
-              >
-                {lobbyIsSearching ? t("lobby-search-abort") : t("lobby-search")}
-              </button>
+              <div className="lobby-search-actions">
+                <button
+                  aria-label={t("lobby-leave")}
+                  className="lobby-leave-button"
+                  type="button"
+                  onClick={() => void leaveCurrentLobby()}
+                >
+                  <X size={22} />
+                </button>
+                <button
+                  className="lobby-search-button"
+                  disabled={!isCurrentUserLobbyHost}
+                  type="button"
+                  onClick={() => void handleLobbySearch()}
+                >
+                  {lobbyIsSearching ? t("lobby-search-abort") : t("lobby-search")}
+                </button>
+              </div>
             </div>
 
           </section>
@@ -5442,7 +5936,7 @@ function Client({
                         ) : null}
                       </span>
                       <span className="friend-add-row-copy">
-                        <span>{candidate.name}</span>
+                        <span title={candidate.name}>{candidate.name}</span>
                         <span>
                           {candidateSubtitle}
                           {candidate.source === "friend" ? " · FL" : ""}

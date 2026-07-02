@@ -29,7 +29,7 @@
 }
 
 .titlebar-drag-right {
-  left: calc(50% + 150px);
+  left: calc(50% + 380px);
   right: 0;
 }
 
@@ -64,4 +64,3 @@
   color: #ffffff;
   background: #d94b4b;
 }
-

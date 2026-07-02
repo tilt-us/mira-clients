@@ -8,10 +8,32 @@ type AvatarFields = {
   profileImageUrl?: string;
 };
 
+type LevelFields = {
+  accountLevel?: unknown;
+  account_level?: unknown;
+  level?: unknown;
+  summonerLevel?: unknown;
+};
+
 export function getProfileName(profile: UserProfileResponse) {
   const displayName = profile.displayName ?? profile.preferredUsername;
 
   return getPublicDisplayName(displayName, "User");
+}
+
+export function getProfileLevel(profile: UserProfileResponse) {
+  const levelFields = profile as UserProfileResponse & LevelFields;
+  const level =
+    normalizeProfileLevel(levelFields.accountLevel) ??
+    normalizeProfileLevel(levelFields.account_level) ??
+    normalizeProfileLevel(levelFields.level) ??
+    normalizeProfileLevel(levelFields.summonerLevel);
+
+  return level ?? 1;
+}
+
+export function getProfileTagId(profile: UserProfileResponse) {
+  return normalizeTagId(profile.tagId);
 }
 
 export function getProfileAvatarUrl(
@@ -83,6 +105,35 @@ function getTokenPayload(accessToken?: string) {
   } catch {
     return undefined;
   }
+}
+
+function normalizeProfileLevel(value: unknown) {
+  const numericValue =
+    typeof value === "number"
+      ? value
+      : typeof value === "string"
+        ? Number.parseInt(value, 10)
+      : Number.NaN;
+
+  return Number.isFinite(numericValue) && numericValue >= 0
+    ? Math.floor(numericValue)
+    : undefined;
+}
+
+export function normalizeTagId(value: unknown) {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const tagId = value.trim();
+
+  return tagId ? tagId : undefined;
+}
+
+export function formatTagId(value: unknown) {
+  const tagId = normalizeTagId(value);
+
+  return tagId ? `#${tagId}` : undefined;
 }
 
 function base64UrlDecode(value: string) {

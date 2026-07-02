@@ -85,7 +85,7 @@ button {
 }
 
 .app-shell-authenticated {
-  --chat-window-width: min(475px, calc(100vw - 24px));
+  --chat-window-width: min(650px, calc(100vw - 24px));
   --sidebar-current-width: 295px;
   grid-template-columns: auto minmax(0, 1fr);
   align-items: stretch;

@@ -10,7 +10,7 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-use tauri::{Emitter, Manager};
+use tauri::{Emitter, LogicalPosition, LogicalSize, Manager, Position, Size};
 use tauri_plugin_opener::OpenerExt;
 
 const CONFIG_FILE_NAME: &str = "mira-client.toml";
@@ -422,11 +422,7 @@ fn start_oauth_window(
             .map_err(|error| format!("OAuth-Fenster konnte nicht ersetzt werden: {error}"))?;
     }
 
-    let app_for_navigation = app.clone();
-    let window_label_for_navigation = window_label.clone();
-    let redirect_uri_for_navigation = redirect_uri.clone();
     let oauth_theme = oauth_theme_from_url(&auth_url);
-    let auth_url_for_navigation = auth_url.clone();
     let oauth_window_url = if request.visible {
         let start_url = if request.clear_session_before_login {
             let client_id = auth_url
@@ -445,9 +441,13 @@ fn start_oauth_window(
 
         oauth_loading_url(start_url.as_str(), &oauth_theme)
     } else {
-        tauri::WebviewUrl::External(auth_url)
+        tauri::WebviewUrl::External(auth_url.clone())
     };
 
+    let app_for_navigation = app.clone();
+    let window_label_for_navigation = window_label.clone();
+    let redirect_uri_for_navigation = redirect_uri.clone();
+    let auth_url_for_navigation = auth_url.clone();
     let use_native_oauth_window_frame = cfg!(windows);
     let mut modal_width = OAUTH_MODAL_FALLBACK_WIDTH;
     let mut modal_height = OAUTH_MODAL_FALLBACK_HEIGHT;
@@ -547,6 +547,24 @@ fn start_oauth_window(
         }
     });
 
+    if request.visible {
+        if let Some(main_window) = app.get_webview_window("main") {
+            let app_for_main_window_event = app.clone();
+            let window_label_for_main_window_event = window_label.clone();
+            main_window.on_window_event(move |event| {
+                if matches!(
+                    event,
+                    tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_)
+                ) {
+                    let _ = sync_oauth_modal_to_main(
+                        &app_for_main_window_event,
+                        &window_label_for_main_window_event,
+                    );
+                }
+            });
+        }
+    }
+
     Ok(OAuthWindowResponse {
         modal: request.visible && !cfg!(windows),
         redirect_uri: None,
@@ -601,6 +619,31 @@ fn oauth_modal_geometry(main_window: &tauri::WebviewWindow) -> Result<OAuthModal
         x,
         y,
     })
+}
+
+fn sync_oauth_modal_to_main(app: &tauri::AppHandle, window_label: &str) -> Result<(), String> {
+    let Some(main_window) = app.get_webview_window("main") else {
+        return Ok(());
+    };
+    let Some(oauth_window) = app.get_webview_window(window_label) else {
+        return Ok(());
+    };
+
+    let geometry = oauth_modal_geometry(&main_window)?;
+    oauth_window
+        .set_position(Position::Logical(LogicalPosition {
+            x: geometry.x,
+            y: geometry.y,
+        }))
+        .map_err(|error| format!("OAuth-Modal konnte nicht verschoben werden: {error}"))?;
+    oauth_window
+        .set_size(Size::Logical(LogicalSize {
+            width: geometry.width,
+            height: geometry.height,
+        }))
+        .map_err(|error| format!("OAuth-Modal konnte nicht skaliert werden: {error}"))?;
+
+    Ok(())
 }
 
 fn is_oauth_redirect_url(target_url: &str, redirect_uri: &str) -> bool {
