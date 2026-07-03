@@ -4,6 +4,7 @@ import type {
   MatchLobbyResponse,
   MatchPlayerResponse,
 } from "../api/client";
+import { getChampionCatalog } from "../api/client";
 import ignaraImage from "../../../../assets/characters/ignara.png";
 import liraImage from "../../../../assets/characters/lira.png";
 import sophiaImage from "../../../../assets/characters/sophia.png";
@@ -18,7 +19,7 @@ import {
   type LobbyRoleId,
 } from "../lobbyRoles";
 import type { Translate } from "../types/ui";
-import { getProfileInitials, getPublicDisplayName } from "../utils/profile";
+import { getPublicDisplayName } from "../utils/profile";
 
 type ChampionSelectionProps = {
   currentPlayerPublicId?: number;
@@ -183,6 +184,63 @@ function getChampionImage(champion?: string) {
   return champion ? championImagesByName.get(champion.toLowerCase()) : undefined;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function getChampionCatalogItems(response: unknown): Array<Record<string, unknown>> {
+  const value = isRecord(response) && "data" in response ? response.data : response;
+
+  if (Array.isArray(value)) {
+    return value.filter(isRecord);
+  }
+
+  if (!isRecord(value)) {
+    return [];
+  }
+
+  for (const key of ["champions", "items", "content", "results"]) {
+    const items = value[key];
+
+    if (Array.isArray(items)) {
+      return items.filter(isRecord);
+    }
+  }
+
+  return [];
+}
+
+function getCatalogChampionName(champion: Record<string, unknown>): string | undefined {
+  const nestedChampion = champion.champion;
+
+  if (isRecord(nestedChampion)) {
+    const nestedName = getCatalogChampionName(nestedChampion);
+
+    if (nestedName) {
+      return nestedName;
+    }
+  }
+
+  for (const key of ["name", "displayName", "display_name", "champion", "championName", "champion_name"]) {
+    const value = champion[key];
+
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+
+  return undefined;
+}
+
+function getCatalogChampionNameSet(response: unknown) {
+  return new Set(
+    getChampionCatalogItems(response)
+      .map(getCatalogChampionName)
+      .filter((name): name is string => Boolean(name))
+      .map((name) => name.toLowerCase()),
+  );
+}
+
 function parseApiTimestamp(value?: string) {
   if (!value) {
     return undefined;
@@ -239,7 +297,9 @@ function getServerChampionPhase(match: ApiMatchResponse) {
 }
 
 function getPlayerName(player: MatchPlayerResponse) {
-  const playerName = getPublicDisplayName(player.displayName, "");
+  const playerName = getPublicDisplayName(player.displayName, "")
+    .replace(/\s*#[^\s#]+$/, "")
+    .trim();
 
   if (!playerName || /^(player|user)(?:\s+\d+)?$/i.test(playerName)) {
     return "User";
@@ -256,6 +316,37 @@ function getPlayerAssignedRole(match: ApiMatchResponse, player: MatchPlayerRespo
     })?.assignedRole;
 
   return normalizeLobbyRoleId(assignedRole);
+}
+
+function ChampionSelectionHexRings({
+  className,
+  locked,
+}: {
+  className: string;
+  locked?: boolean;
+}) {
+  return (
+    <svg
+      aria-hidden="true"
+      className={[
+        "champion-selection-hex-rings",
+        locked
+          ? "champion-selection-hex-rings-locked"
+          : "champion-selection-hex-rings-active",
+        className,
+      ]
+        .filter(Boolean)
+        .join(" ")}
+      viewBox="0 0 72 72"
+    >
+      <g className="champion-selection-hex-ring-middle">
+        <polygon points="36 6 62 21 62 51 36 66 10 51 10 21" />
+      </g>
+      <g className="champion-selection-hex-ring-outer">
+        <polygon points="36 2 66 19 66 53 36 70 6 53 6 19" />
+      </g>
+    </svg>
+  );
 }
 
 function getPickGroups(teams: MatchLobbyResponse[]) {
@@ -329,6 +420,7 @@ function ChampionSelection({
   const [gameClientStarting, setGameClientStarting] = useState(false);
   const [localSelectedChampion, setLocalSelectedChampion] = useState<string>();
   const [selectingChampion, setSelectingChampion] = useState<string>();
+  const [availableChampionNames, setAvailableChampionNames] = useState<Set<string>>();
   const teams = useMemo(() => getMatchTeams(match), [match]);
   const pickGroups = useMemo(() => getPickGroups(teams), [teams]);
   const selectedPublicIds = useMemo(() => getSelectedPublicIds(match), [match]);
@@ -484,10 +576,30 @@ function ChampionSelection({
     Math.min(1, visiblePhaseElapsedMs / visiblePhaseDurationMs),
   );
   const canCurrentPlayerPreselect = activePhase !== "ready" && !selectedChampion;
-  const confirmableChampion = canCurrentPlayerPick ? preselectedChampion : undefined;
+  const championAvailabilityLoaded = availableChampionNames !== undefined;
+  const selectableChampions = useMemo(
+    () =>
+      availableChampionNames
+        ? champions.filter((champion) =>
+            availableChampionNames.has(champion.name.toLowerCase()),
+          )
+        : champions,
+    [availableChampionNames],
+  );
+  const confirmableChampion =
+    canCurrentPlayerPick &&
+    preselectedChampion &&
+    (!championAvailabilityLoaded ||
+      availableChampionNames.has(preselectedChampion.toLowerCase()))
+      ? preselectedChampion
+      : undefined;
+
+  function isChampionAvailable(champion: string) {
+    return !championAvailabilityLoaded || availableChampionNames.has(champion.toLowerCase());
+  }
 
   async function handleChampionSelect(champion: string) {
-    if (!canCurrentPlayerPick || selectingChampion) {
+    if (!canCurrentPlayerPick || selectingChampion || !isChampionAvailable(champion)) {
       return;
     }
 
@@ -514,7 +626,7 @@ function ChampionSelection({
   }
 
   function handleChampionPreselect(champion: string) {
-    if (!canCurrentPlayerPreselect || selectingChampion) {
+    if (!canCurrentPlayerPreselect || selectingChampion || !isChampionAvailable(champion)) {
       return;
     }
 
@@ -546,6 +658,48 @@ function ChampionSelection({
       window.clearInterval(intervalId);
     };
   }, []);
+
+  useEffect(() => {
+    let ignore = false;
+
+    async function loadAvailableChampions() {
+      const [weeklyResult, ownedResult] = await Promise.all([
+        getChampionCatalog({ query: { weekly: true } }).catch(() => undefined),
+        typeof currentPlayerPublicId === "number"
+          ? getChampionCatalog({
+              query: { owned: true, userId: currentPlayerPublicId },
+            }).catch(() => undefined)
+          : Promise.resolve(undefined),
+      ]);
+
+      if (ignore) {
+        return;
+      }
+
+      const nextAvailableChampionNames = new Set([
+        ...getCatalogChampionNameSet(weeklyResult?.data),
+        ...getCatalogChampionNameSet(ownedResult?.data),
+      ]);
+
+      setAvailableChampionNames(nextAvailableChampionNames);
+    }
+
+    void loadAvailableChampions();
+
+    return () => {
+      ignore = true;
+    };
+  }, [currentPlayerPublicId]);
+
+  useEffect(() => {
+    if (!preselectedChampion || isChampionAvailable(preselectedChampion)) {
+      return;
+    }
+
+    setPreselectedChampion(undefined);
+    setPreselectedChampionWallpaper(undefined);
+    void onChampionHover(undefined, true);
+  }, [availableChampionNames, onChampionHover, preselectedChampion]);
 
   useEffect(() => {
     setPhaseStartedAt(Date.now());
@@ -703,6 +857,9 @@ function ChampionSelection({
                     playerSelection?.champion ?? visiblePlayerHoveredChampion;
                   const playerChampionImage = getChampionImage(previewChampion);
                   const isCurrentPick = activePickPublicIds.has(player.publicId ?? -1);
+                  const hasSelectedChampion = Boolean(playerSelection?.champion);
+                  const animatePlayerHexRings =
+                    activePhase === "pick" && isCurrentPick && !hasSelectedChampion;
                   const isCurrentPlayer = player.publicId === currentPlayerPublicId;
                   const playerLabel = isOpponentTeam
                     ? `${t("champion-select-opponent")} ${playerIndex + 1}`
@@ -710,9 +867,8 @@ function ChampionSelection({
                       ? t("champion-select-self")
                       : getPlayerName(player);
                   const userName = getPlayerName(player);
-                  const assignedRole = !isOpponentTeam
-                    ? getPlayerAssignedRole(match, player)
-                    : undefined;
+                  const playerAssignedRole = getPlayerAssignedRole(match, player);
+                  const assignedRole = !isOpponentTeam ? playerAssignedRole : undefined;
                   const championLabel = previewChampion;
 
                   return (
@@ -729,13 +885,17 @@ function ChampionSelection({
                       key={player.publicId}
                     >
                       <div className="champion-selection-player-avatar">
-                        {playerChampionImage ? (
-                          <img alt="" src={playerChampionImage} />
-                        ) : !isOpponentTeam && player.avatarUrl ? (
-                          <img alt="" src={player.avatarUrl} />
-                        ) : !isOpponentTeam ? (
-                          getProfileInitials(player.displayName ?? "?")
-                        ) : null}
+                        <ChampionSelectionHexRings
+                          className="champion-selection-player-avatar-hex"
+                          locked={!animatePlayerHexRings}
+                        />
+                        <span className="champion-selection-player-avatar-core">
+                          {playerChampionImage ? (
+                            <img alt="" src={playerChampionImage} />
+                          ) : !isOpponentTeam && playerAssignedRole ? (
+                            <LobbyRoleIcon role={playerAssignedRole} />
+                          ) : null}
+                        </span>
                       </div>
                       <div className="champion-selection-player-meta">
                         {championLabel ? (
@@ -751,7 +911,7 @@ function ChampionSelection({
                           </small>
                         ) : null}
                         <small className="champion-selection-player-name">
-                          {isOpponentTeam ? playerLabel : userName}
+                          {isOpponentTeam || isCurrentPlayer ? playerLabel : userName}
                         </small>
                       </div>
                     </article>
@@ -786,6 +946,10 @@ function ChampionSelection({
               </span>
               {showSelectedChampionBubble ? (
                 <div className="champion-selection-opponent-bubble">
+                  <ChampionSelectionHexRings
+                    className="champion-selection-opponent-bubble-hex"
+                    locked={activePhase === "warmup"}
+                  />
                   {bubbleChampionWallpapers.length > 0 ? (
                     <div
                       className={
@@ -816,7 +980,7 @@ function ChampionSelection({
               <span>{match.mode ?? "Ranked"}</span>
               <h1>{t("champion-select-title")}</h1>
               <div className="champion-selection-champions">
-                {champions.map((champion) => (
+                {selectableChampions.map((champion) => (
                   <button
                     className={
                       preselectedChampion === champion.name

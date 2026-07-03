@@ -83,6 +83,7 @@ import { readTokens } from "../auth/storage";
 import ChampionSelection from "./ChampionSelection";
 import ChatDock from "../components/ChatDock";
 import CloseDialog from "../components/CloseDialog";
+import ProfileChampionsTab from "../components/ProfileChampionsTab";
 import SettingsModal from "../components/SettingsModal";
 import Sidebar from "../components/Sidebar";
 import liraWallpaper from "../../../../assets/wallpapers/lira-wallpaper.png";
@@ -179,10 +180,11 @@ type GameModeIconProps = {
 
 const PARTY_INVITE_ONLINE_LIMIT = 2;
 const userPageCategories = [
-  { id: "overview", label: "Overview" },
-  { id: "game-history", label: "Game History" },
-  { id: "champions", label: "Champions" },
-  { id: "stats", label: "Stats" },
+  { disabled: false, id: "overview", labelKey: "profile-tab-overview" },
+  { disabled: false, id: "champions", labelKey: "profile-tab-champions" },
+  { disabled: true, id: "stats", labelKey: "profile-tab-stats" },
+  { disabled: true, id: "teams", labelKey: "profile-tab-teams" },
+  { disabled: true, id: "game-history", labelKey: "profile-tab-match-history" },
 ] as const;
 
 type ApiPresenceStatus = UpdateUserStatusRequest["status"];
@@ -836,11 +838,18 @@ function mapLobbyToMatchPlayers(
         const avatarUrl = isCurrentPlayer
           ? currentPlayerProfile?.avatarUrl ?? member.avatarUrl
           : member.avatarUrl;
+        const roles = getMemberLobbyRoles(member);
 
         return {
           publicId: member.publicId as number,
           displayName: getPublicDisplayName(displayName, "User"),
           avatarUrl,
+          ...(roles[0]
+            ? { primaryRole: toApiLobbyRole(roles[0]) }
+            : {}),
+          ...(roles[1]
+            ? { secondaryRole: toApiLobbyRole(roles[1]) }
+            : {}),
         };
       }) ?? []
   );
@@ -1623,6 +1632,8 @@ function Client({
     useState<UserPageProfile>();
   const [activeUserPageCategory, setActiveUserPageCategory] =
     useState<UserPageCategory>("overview");
+  const [championTabFocused, setChampionTabFocused] = useState(false);
+  const [championTabBackSignal, setChampionTabBackSignal] = useState(0);
   const [selectedGameMode, setSelectedGameMode] = useState<GameMode>("ranked");
   const [gameInProgress, setGameInProgress] = useState(false);
   const [activeLobby, setActiveLobby] = useState<LobbySnapshot>();
@@ -1697,6 +1708,32 @@ function Client({
     };
   }, []);
 
+  useEffect(() => {
+    function handleEscapeBack(event: globalThis.KeyboardEvent) {
+      if (event.key !== "Escape" || closeDialogOpen || settingsOpen) {
+        return;
+      }
+
+      if (championTabFocused || userPageOpen || lobbyPageOpen || gameSelectorOpen) {
+        event.preventDefault();
+        handleTopButtonClick();
+      }
+    }
+
+    window.addEventListener("keydown", handleEscapeBack);
+
+    return () => {
+      window.removeEventListener("keydown", handleEscapeBack);
+    };
+  }, [
+    closeDialogOpen,
+    championTabFocused,
+    gameSelectorOpen,
+    lobbyPageOpen,
+    settingsOpen,
+    userPageOpen,
+  ]);
+
   const selfUserPageProfile = useMemo<UserPageProfile>(
     () => ({
       avatarUrl: profileAvatarUrl,
@@ -1745,6 +1782,18 @@ function Client({
     ? Math.max(0, Math.floor((lobbySearchNow - lobbySearchStartedAt) / 1000))
     : 0;
   const lobbySearchTime = formatLobbySearchTime(lobbySearchSeconds);
+  const allLobbyMembersHaveRoles =
+    !activeLobby?.members?.length ||
+    activeLobby.members.every((member) => {
+      const roles = getEffectiveLobbyMemberRoles(member);
+
+      return Boolean(roles[0] && (lobbyIsFull || roles[1]));
+    });
+  const lobbySearchDisabledByRoles =
+    Boolean(activeLobby?.id) &&
+    isCurrentUserLobbyHost &&
+    !lobbyIsSearching &&
+    !allLobbyMembersHaveRoles;
   const currentPlayerAcceptance = pendingMatch?.acceptances?.find((acceptance) => {
     return acceptance.playerPublicId === profilePublicId;
   });
@@ -2691,6 +2740,10 @@ function Client({
     }
 
     requeueingLobbyIdsRef.current.add(lobby.id);
+    const lobbyWithCachedRoles =
+      lobby.id === activeLobbyRef.current?.id
+        ? getActiveLobbyWithCachedRoles() ?? lobby
+        : lobby;
 
     try {
       await searchRanked({
@@ -2703,7 +2756,7 @@ function Client({
         body: {
           lobbyId: lobby.id,
           mode: "RANKED",
-          players: mapLobbyToMatchPlayers(lobby, currentMatchPlayerProfile),
+          players: mapLobbyToMatchPlayers(lobbyWithCachedRoles, currentMatchPlayerProfile),
         },
       });
 
@@ -3747,6 +3800,11 @@ function Client({
   }, [activeLobby?.id, notify, profilePublicId, t]);
 
   function handleTopButtonClick() {
+    if (championTabFocused) {
+      setChampionTabBackSignal((signal) => signal + 1);
+      return;
+    }
+
     if (userPageOpen) {
       setUserPageOpen(false);
       return;
@@ -3847,6 +3905,7 @@ function Client({
         : undefined,
     );
     setActiveUserPageCategory("overview");
+    setChampionTabFocused(false);
     setUserPageOpen(true);
   }
 
@@ -4024,6 +4083,11 @@ function Client({
 
     setLobbyError(undefined);
 
+    if (!allLobbyMembersHaveRoles) {
+      notifyLobbyError(t("lobby-roles-required"));
+      return;
+    }
+
     const roleLimitError = getLobbyRoleLimitError(
       getActiveLobbyWithCachedRoles() ?? activeLobby,
     );
@@ -4035,6 +4099,7 @@ function Client({
 
     const wasLocallyAborted = activeLobby.id === lobbySearchAbortedLobbyId;
     setLobbySearchAbortedLobbyId(undefined);
+    const activeLobbyWithCachedRoles = getActiveLobbyWithCachedRoles() ?? activeLobby;
 
     if (!wasLocallyAborted && activeLobby.status === "SEARCHING") {
       const startedAt = activeLobby.updatedAt ? Date.parse(activeLobby.updatedAt) : Date.now();
@@ -4049,7 +4114,10 @@ function Client({
         body: {
           lobbyId: activeLobby.id,
           mode: "RANKED",
-          players: mapLobbyToMatchPlayers(activeLobby, currentMatchPlayerProfile),
+          players: mapLobbyToMatchPlayers(
+            activeLobbyWithCachedRoles,
+            currentMatchPlayerProfile,
+          ),
         },
       });
 
@@ -4073,7 +4141,10 @@ function Client({
         body: {
           lobbyId: activeLobby.id,
           mode: "RANKED",
-          players: mapLobbyToMatchPlayers(activeLobby, currentMatchPlayerProfile),
+          players: mapLobbyToMatchPlayers(
+            activeLobbyWithCachedRoles,
+            currentMatchPlayerProfile,
+          ),
         },
       }),
     ]);
@@ -5361,102 +5432,135 @@ function Client({
         <section
           aria-hidden={!userPageOpen}
           aria-label={activeUserPageProfile.name}
-          className={userPageOpen ? "user-page user-page-open" : "user-page"}
+          className={[
+            "user-page",
+            userPageOpen ? "user-page-open" : "",
+            activeUserPageCategory === "overview" ? "" : "user-page-fullscreen",
+          ]
+            .filter(Boolean)
+            .join(" ")}
         >
           <div
             className="user-page-wallpaper"
             style={{ "--user-page-wallpaper": `url(${liraWallpaper})` } as CSSProperties}
           >
-            <div className="user-page-profile-banner" aria-label="Profile summary">
-              <div
-                aria-label={
-                  userPageShowsSelf ? locale === "de" ? "Bearbeiten" : "Edit" : undefined
-                }
-                className="user-page-avatar"
-                title={userPageShowsSelf ? locale === "de" ? "Bearbeiten" : "Edit" : undefined}
-              >
-                {getProfileInitials(activeUserPageProfile.name)}
-                {activeUserPageProfile.avatarUrl ? (
-                  <img
-                    alt=""
-                    src={activeUserPageProfile.avatarUrl}
-                    onError={(event) => {
-                      event.currentTarget.hidden = true;
-                    }}
-                  />
-                ) : null}
-                {userPageShowsSelf ? (
-                  <span className="user-page-avatar-edit" aria-hidden="true">
-                    <Pencil size={34} />
-                  </span>
-                ) : null}
-              </div>
-              <span
-                className="user-page-banner-level"
-                aria-label={`Level ${activeUserPageProfile.level}`}
-              >
-                {activeUserPageProfile.level}
-              </span>
-              <div className="user-page-identity">
-                <div className="user-page-name-row">
-                  <h1
-                    className={getUserPageNameClassName(activeUserPageProfile.name)}
-                    title={activeUserPageProfile.name}
-                  >
-                    {activeUserPageProfile.name}
-                  </h1>
-                  {activeUserPageProfile.tagId ? (
-                    <>
-                      <span className="user-page-inline-tag">
-                        {formatTagId(activeUserPageProfile.tagId)}
-                      </span>
+            <div className="user-page-wallpaper-content">
+              <div className="user-page-profile-banner" aria-label="Profile summary">
+                <div
+                  aria-label={
+                    userPageShowsSelf ? locale === "de" ? "Bearbeiten" : "Edit" : undefined
+                  }
+                  className="user-page-avatar"
+                  title={userPageShowsSelf ? locale === "de" ? "Bearbeiten" : "Edit" : undefined}
+                >
+                  {getProfileInitials(activeUserPageProfile.name)}
+                  {activeUserPageProfile.avatarUrl ? (
+                    <img
+                      alt=""
+                      src={activeUserPageProfile.avatarUrl}
+                      onError={(event) => {
+                        event.currentTarget.hidden = true;
+                      }}
+                    />
+                  ) : null}
+                  {userPageShowsSelf ? (
+                    <span className="user-page-avatar-edit" aria-hidden="true">
+                      <Pencil size={34} />
+                    </span>
+                  ) : null}
+                </div>
+                <span
+                  className="user-page-banner-level"
+                  aria-label={`Level ${activeUserPageProfile.level}`}
+                >
+                  {activeUserPageProfile.level}
+                </span>
+                <div className="user-page-identity">
+                  <div className="user-page-name-row">
+                    <h1
+                      className={getUserPageNameClassName(activeUserPageProfile.name)}
+                      title={activeUserPageProfile.name}
+                    >
+                      {activeUserPageProfile.name}
+                    </h1>
+                    {activeUserPageProfile.tagId ? (
+                      <>
+                        <span className="user-page-inline-tag">
+                          {formatTagId(activeUserPageProfile.tagId)}
+                        </span>
+                        <button
+                          aria-label={t("profile-copy-name-tag")}
+                          className="user-page-copy-id-button"
+                          title={t("profile-copy-name-tag")}
+                          type="button"
+                          onClick={() => void handleCopyUserPageNameTag()}
+                        >
+                          <Copy size={15} />
+                        </button>
+                      </>
+                    ) : null}
+                  </div>
+                  {typeof activeUserPageProfile.publicId === "number" ? (
+                    <div className="user-page-meta-row user-page-user-id-row">
+                      <span>{`#${activeUserPageProfile.publicId}`}</span>
                       <button
-                        aria-label={t("profile-copy-name-tag")}
+                        aria-label={t("profile-copy-user-id")}
                         className="user-page-copy-id-button"
-                        title={t("profile-copy-name-tag")}
+                        title={t("profile-copy-user-id")}
                         type="button"
-                        onClick={() => void handleCopyUserPageNameTag()}
+                        onClick={() => void handleCopyUserPagePublicId()}
                       >
                         <Copy size={15} />
                       </button>
-                    </>
+                    </div>
                   ) : null}
                 </div>
-                {typeof activeUserPageProfile.publicId === "number" ? (
-                  <div className="user-page-meta-row user-page-user-id-row">
-                    <span>{`#${activeUserPageProfile.publicId}`}</span>
-                    <button
-                      aria-label={t("profile-copy-user-id")}
-                      className="user-page-copy-id-button"
-                      title={t("profile-copy-user-id")}
-                      type="button"
-                      onClick={() => void handleCopyUserPagePublicId()}
-                    >
-                      <Copy size={15} />
-                    </button>
-                  </div>
-                ) : null}
               </div>
             </div>
           </div>
+          {userPageShowsSelf && activeUserPageCategory === "champions" ? (
+            <ProfileChampionsTab
+              backSignal={championTabBackSignal}
+              onFocusChange={setChampionTabFocused}
+              t={t}
+              userId={profilePublicId}
+            />
+          ) : null}
           <div className="user-page-details" />
           <nav className="user-page-categories" aria-label="Profile sections">
-            {userPageCategories.map((category) => (
-              <button
-                aria-current={activeUserPageCategory === category.id ? "page" : undefined}
-                className={
-                  activeUserPageCategory === category.id
-                    ? "user-page-category user-page-category-active"
-                    : "user-page-category"
-                }
-                key={category.id}
-                tabIndex={userPageOpen ? 0 : -1}
-                type="button"
-                onClick={() => setActiveUserPageCategory(category.id)}
-              >
-                <span>{category.label}</span>
-              </button>
-            ))}
+            {userPageCategories
+              .filter((category) => userPageShowsSelf || category.id !== "champions")
+              .map((category) => (
+                <button
+                  aria-current={activeUserPageCategory === category.id ? "page" : undefined}
+                  aria-disabled={category.disabled ? true : undefined}
+                  className={
+                    [
+                      "user-page-category",
+                      activeUserPageCategory === category.id
+                        ? "user-page-category-active"
+                        : "",
+                      category.disabled ? "user-page-category-disabled" : "",
+                    ]
+                      .filter(Boolean)
+                      .join(" ")
+                  }
+                  disabled={category.disabled}
+                  key={category.id}
+                  tabIndex={userPageOpen && !category.disabled ? 0 : -1}
+                  type="button"
+                  onClick={() => {
+                    if (category.disabled) {
+                      return;
+                    }
+
+                    setChampionTabFocused(false);
+                    setActiveUserPageCategory(category.id);
+                  }}
+                >
+                  <span>{t(category.labelKey)}</span>
+                </button>
+              ))}
           </nav>
         </section>
 
@@ -5773,6 +5877,11 @@ function Client({
               <div className="lobby-search-timer" aria-live="polite">
                 <span>{lobbySearchTime}</span>
               </div>
+              {lobbySearchDisabledByRoles ? (
+                <p className="lobby-search-role-warning">
+                  {t("lobby-roles-required")}
+                </p>
+              ) : null}
               <div className="lobby-search-actions">
                 <button
                   aria-label={t("lobby-leave")}
@@ -5784,7 +5893,7 @@ function Client({
                 </button>
                 <button
                   className="lobby-search-button"
-                  disabled={!isCurrentUserLobbyHost}
+                  disabled={!isCurrentUserLobbyHost || lobbySearchDisabledByRoles}
                   type="button"
                   onClick={() => void handleLobbySearch()}
                 >

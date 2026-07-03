@@ -1,5 +1,5 @@
 import { client } from "./generated/client.gen";
-import { API_BASE_URL } from "./config";
+import { API_BASE_URL, CHAMPION_API_BASE_URL } from "./config";
 import { apiFetch, getClientDeviceType } from "./http";
 import { getValidAccessToken, getValidDesktopApiToken } from "../auth/keycloak";
 
@@ -35,6 +35,21 @@ type GetLobbyRolesOptions = {
   fallbackBaseUrls?: string[];
   path: {
     lobbyId: string;
+  };
+};
+
+type GetChampionCatalogOptions = {
+  query?: {
+    owned?: boolean;
+    userId?: number;
+    weekly?: boolean;
+  };
+};
+
+type SetOwnedChampionOptions = {
+  body: {
+    champion: number | string;
+    userId: number;
   };
 };
 
@@ -125,6 +140,25 @@ export function getLobbyRoles(options: GetLobbyRolesOptions) {
     }
 
     return result;
+  });
+}
+
+export function getChampionCatalog(options?: GetChampionCatalogOptions) {
+  return client.get<{ 200: unknown }, unknown, false>({
+    url: "/api/champions",
+    baseUrl: CHAMPION_API_BASE_URL,
+    query: options?.query,
+  });
+}
+
+export function setOwnedChampion(options: SetOwnedChampionOptions) {
+  return client.post<{ 200: unknown; 201: unknown }, unknown, false>({
+    url: "/api/champions/owned",
+    baseUrl: CHAMPION_API_BASE_URL,
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+    },
   });
 }
 

@@ -2,6 +2,7 @@
 api_base_url = "http://localhost:8080"
 live_api_base_url = "http://localhost:8082"
 matchmaking_api_base_url = "http://localhost:8083"
+champion_api_base_url = "http://localhost:8084"
 
 [keycloak]
 base_url = "http://localhost:8081"
