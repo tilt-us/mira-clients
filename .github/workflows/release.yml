@@ -795,8 +795,8 @@ jobs:
       DEPLOY_HOST: ${{ secrets.DOWNLOAD_DEPLOY_HOST || secrets.DEPLOY_HOST }}
       DEPLOY_USER: ${{ secrets.DOWNLOAD_DEPLOY_USER || secrets.DEPLOY_USER }}
       DEPLOY_PORT: ${{ secrets.DOWNLOAD_DEPLOY_PORT || secrets.DEPLOY_PORT || '22' }}
-      DOWNLOAD_DEPLOY_PATH: ${{ secrets.DOWNLOAD_DEPLOY_PATH || '/srv/mira/downloads/mira/game-sources' }}
-      PUBLIC_DOWNLOAD_BASE_URL: ${{ secrets.PUBLIC_DOWNLOAD_BASE_URL || 'https://api.tilt-us.com/downloads/mira/game-sources' }}
+      DOWNLOAD_DEPLOY_PATH: ${{ secrets.DOWNLOAD_DEPLOY_PATH || '/srv/mira/downloads/game-sources' }}
+      PUBLIC_DOWNLOAD_BASE_URL: ${{ secrets.PUBLIC_DOWNLOAD_BASE_URL || 'https://api.tilt-us.com/downloads/game-sources' }}
 
     steps:
       - name: Checkout
@@ -822,14 +822,15 @@ jobs:
         run: |
           set -euo pipefail
 
-          release_dir="download-host/releases/${TAG}"
-          installer_dir="download-host/installer/releases/${TAG}"
+          client_dir="download-host/client"
+          installer_dir="download-host/installer"
           rm -rf download-host
-          mkdir -p "${release_dir}/mira-client" "${release_dir}/mira-game-client" "${release_dir}/assets"
+          mkdir -p "${client_dir}/mira-client" "${client_dir}/mira-game-client" "${client_dir}/assets"
           mkdir -p "${installer_dir}"
-          cp scripts/install-macos.sh "${release_dir}/install-macos.sh"
+          cp scripts/install-macos.sh "${client_dir}/install-macos.sh"
           cp scripts/install-macos.sh "${installer_dir}/install-macos.sh"
 
+          installer_package_count=0
           while IFS= read -r -d '' asset; do
             artifact_group="${asset#release-artifacts/}"
             artifact_group="${artifact_group%%/*}"
@@ -840,14 +841,14 @@ jobs:
                   *.deb|*.AppImage|*.exe|*.dmg|*.rpm) ;;
                   *) continue ;;
                 esac
-                cp "${asset}" "${release_dir}/mira-client/${name}"
+                cp "${asset}" "${client_dir}/mira-client/${name}"
                 ;;
               mira-game-client-*)
                 case "${name}" in
                   mira-game-client*) ;;
                   *) continue ;;
                 esac
-                cp "${asset}" "${release_dir}/mira-game-client/${name}"
+                cp "${asset}" "${client_dir}/mira-game-client/${name}"
                 ;;
               mira-installer-*)
                 case "${name}" in
@@ -855,38 +856,39 @@ jobs:
                   *) continue ;;
                 esac
                 cp "${asset}" "${installer_dir}/${name}"
+                installer_package_count=$((installer_package_count + 1))
                 ;;
             esac
           done < <(find release-artifacts -type f -print0)
 
-          rsync -a assets/ "${release_dir}/assets/"
+          rsync -a assets/ "${client_dir}/assets/"
 
           for required_dir in mira-client mira-game-client assets; do
-            if [[ -z "$(find "${release_dir}/${required_dir}" -type f -print -quit)" ]]; then
+            if [[ -z "$(find "${client_dir}/${required_dir}" -type f -print -quit)" ]]; then
               echo "${required_dir} has no files."
               exit 1
             fi
           done
 
-          if [[ -z "$(find "${installer_dir}" -type f -print -quit)" ]]; then
-            echo "installer has no files."
+          if (( installer_package_count == 0 )); then
+            echo "installer has no package files."
             exit 1
           fi
 
           (
-            cd "${release_dir}/mira-client"
+            cd "${client_dir}/mira-client"
             zip -qr "../mira-client-${TAG}.zip" .
           )
           (
-            cd "${release_dir}/mira-game-client"
+            cd "${client_dir}/mira-game-client"
             zip -qr "../mira-game-client-${TAG}.zip" .
           )
           (
-            cd "${release_dir}/assets"
+            cd "${client_dir}/assets"
             zip -qr "../assets-${TAG}.zip" .
           )
           (
-            cd "${release_dir}"
+            cd "${client_dir}"
             zip -qr "mira-${TAG}.zip" mira-client mira-game-client assets
           )
           (
@@ -904,8 +906,8 @@ jobs:
           const commit = process.env.HEAD_SHA;
           const baseUrl = process.env.PUBLIC_DOWNLOAD_BASE_URL.replace(/\/$/, '');
           const deployRoot = 'download-host';
-          const releaseRoot = path.join(deployRoot, 'releases', tag);
-          const installerRoot = path.join(deployRoot, 'installer', 'releases', tag);
+          const clientRoot = path.join(deployRoot, 'client');
+          const installerRoot = path.join(deployRoot, 'installer');
 
           function walk(dir) {
             return fs.readdirSync(dir, { withFileTypes: true }).flatMap(entry => {
@@ -944,11 +946,11 @@ jobs:
             };
           }
 
-          const manifest = createManifest(releaseRoot, baseUrl);
+          const manifest = createManifest(clientRoot, baseUrl);
           const installerManifest = createManifest(installerRoot, baseUrl);
 
           fs.writeFileSync(
-            path.join(releaseRoot, 'manifest.json'),
+            path.join(clientRoot, 'manifest.json'),
             `${JSON.stringify(manifest, null, 2)}\n`,
           );
 
@@ -958,7 +960,9 @@ jobs:
               version,
               tag,
               commit,
-              manifestUrl: `${baseUrl}/releases/${tag}/manifest.json`,
+              manifestUrl: `${baseUrl}/client/manifest.json`,
+              clientManifestUrl: `${baseUrl}/client/manifest.json`,
+              installerManifestUrl: `${baseUrl}/installer/manifest.json`,
             }, null, 2)}\n`,
           );
 
@@ -967,15 +971,6 @@ jobs:
             `${JSON.stringify(installerManifest, null, 2)}\n`,
           );
 
-          fs.writeFileSync(
-            path.join(deployRoot, 'installer', 'latest.json'),
-            `${JSON.stringify({
-              version,
-              tag,
-              commit,
-              manifestUrl: `${baseUrl}/installer/releases/${tag}/manifest.json`,
-            }, null, 2)}\n`,
-          );
           NODE
 
       - name: Prepare SSH
@@ -995,30 +990,28 @@ jobs:
           ssh-keyscan -p "${DEPLOY_PORT}" -H "${DEPLOY_HOST}" >> ~/.ssh/known_hosts
 
       - name: Upload download files
-        env:
-          TAG: ${{ needs.prepare.outputs.tag }}
         run: |
           set -euo pipefail
 
           ssh -p "${DEPLOY_PORT}" "${DEPLOY_USER}@${DEPLOY_HOST}" \
-            "DOWNLOAD_DEPLOY_PATH='${DOWNLOAD_DEPLOY_PATH}' DEPLOY_USER='${DEPLOY_USER}' TAG='${TAG}' bash -se" <<'REMOTE'
+            "DOWNLOAD_DEPLOY_PATH='${DOWNLOAD_DEPLOY_PATH}' DEPLOY_USER='${DEPLOY_USER}' bash -se" <<'REMOTE'
           set -euo pipefail
 
-          release_path="${DOWNLOAD_DEPLOY_PATH}/releases/${TAG}"
-          installer_path="${DOWNLOAD_DEPLOY_PATH}/installer/releases/${TAG}"
-          if mkdir -p "${release_path}" "${installer_path}" 2>/dev/null; then
+          client_path="${DOWNLOAD_DEPLOY_PATH}/client"
+          installer_path="${DOWNLOAD_DEPLOY_PATH}/installer"
+          if mkdir -p "${client_path}" "${installer_path}" 2>/dev/null; then
             exit 0
           fi
 
           if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
             sudo install -d -o "${DEPLOY_USER}" -g "${DEPLOY_USER}" \
               "${DOWNLOAD_DEPLOY_PATH}" \
-              "${release_path}" \
+              "${client_path}" \
               "${installer_path}"
             exit 0
           fi
 
-          echo "Cannot create ${release_path} as ${DEPLOY_USER}."
+          echo "Cannot create ${client_path} as ${DEPLOY_USER}."
           echo "Run once on the server:"
           echo "  sudo mkdir -p '${DOWNLOAD_DEPLOY_PATH}'"
           echo "  sudo chown -R '${DEPLOY_USER}:${DEPLOY_USER}' '${DOWNLOAD_DEPLOY_PATH}'"
@@ -1027,23 +1020,18 @@ jobs:
 
           rsync -az --delete \
             -e "ssh -p ${DEPLOY_PORT} -o StrictHostKeyChecking=yes" \
-            "download-host/releases/${TAG}/" \
-            "${DEPLOY_USER}@${DEPLOY_HOST}:${DOWNLOAD_DEPLOY_PATH}/releases/${TAG}/"
+            "download-host/client/" \
+            "${DEPLOY_USER}@${DEPLOY_HOST}:${DOWNLOAD_DEPLOY_PATH}/client/"
 
           rsync -az --delete \
             -e "ssh -p ${DEPLOY_PORT} -o StrictHostKeyChecking=yes" \
-            "download-host/installer/releases/${TAG}/" \
-            "${DEPLOY_USER}@${DEPLOY_HOST}:${DOWNLOAD_DEPLOY_PATH}/installer/releases/${TAG}/"
+            "download-host/installer/" \
+            "${DEPLOY_USER}@${DEPLOY_HOST}:${DOWNLOAD_DEPLOY_PATH}/installer/"
 
           rsync -az \
             -e "ssh -p ${DEPLOY_PORT} -o StrictHostKeyChecking=yes" \
             "download-host/latest.json" \
             "${DEPLOY_USER}@${DEPLOY_HOST}:${DOWNLOAD_DEPLOY_PATH}/latest.json.tmp"
 
-          rsync -az \
-            -e "ssh -p ${DEPLOY_PORT} -o StrictHostKeyChecking=yes" \
-            "download-host/installer/latest.json" \
-            "${DEPLOY_USER}@${DEPLOY_HOST}:${DOWNLOAD_DEPLOY_PATH}/installer/latest.json.tmp"
-
           ssh -p "${DEPLOY_PORT}" "${DEPLOY_USER}@${DEPLOY_HOST}" \
-            "mv '${DOWNLOAD_DEPLOY_PATH}/latest.json.tmp' '${DOWNLOAD_DEPLOY_PATH}/latest.json' && mv '${DOWNLOAD_DEPLOY_PATH}/installer/latest.json.tmp' '${DOWNLOAD_DEPLOY_PATH}/installer/latest.json' && chmod -R a+rX '${DOWNLOAD_DEPLOY_PATH}'"
+            "rm -rf '${DOWNLOAD_DEPLOY_PATH}/releases' && mv '${DOWNLOAD_DEPLOY_PATH}/latest.json.tmp' '${DOWNLOAD_DEPLOY_PATH}/latest.json' && chmod -R a+rX '${DOWNLOAD_DEPLOY_PATH}'"

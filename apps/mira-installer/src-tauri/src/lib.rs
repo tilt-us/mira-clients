@@ -13,7 +13,7 @@ use zip::ZipArchive;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
-const LATEST_MANIFEST_URL: &str = "https://api.tilt-us.com/downloads/mira/game-sources/latest.json";
+const LATEST_MANIFEST_URL: &str = "https://api.tilt-us.com/downloads/game-sources/latest.json";
 const ERROR_CODE_GAME_DATA: &str = "465";
 const ERROR_CODE_SERVER_NO_RESPONSE: &str = "19145";
 const WINDOWS_PROGRAM_FILES_FALLBACK: &str = r"C:\Program Files";
