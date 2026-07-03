@@ -2,12 +2,14 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { LogIn, UserPlus } from "lucide-react";
+import { Check, LogIn, UserPlus } from "lucide-react";
 import {
+  confirmAvatarRights,
   loginOptions,
   me,
   register,
   setApiAccessToken,
+  updateUsername,
   type UserProfileResponse,
 } from "../api/client";
 import { API_BASE_URL, LIVE_API_BASE_URL } from "../api/config";
@@ -64,6 +66,21 @@ class ProfileLoadError extends Error {
 type LoadProfileOptions = {
   recoverDesktopConflict?: boolean;
 };
+
+type OAuthProfileSetupState = {
+  avatarUrl?: string;
+  profileKey: string;
+  submitting: boolean;
+  useAvatar: boolean;
+  username: string;
+};
+
+type OAuthProfileSetupPreference = {
+  completed: boolean;
+  useAvatar: boolean;
+};
+
+const OAUTH_PROFILE_SETUP_STORAGE_KEY = "mira.oauthProfileSetup";
 
 /**
  * Description
@@ -259,6 +276,59 @@ function cleanupRejectedLoginSession() {
   setApiAccessToken(undefined);
 }
 
+function getProfileSetupKey(profile: UserProfileResponse) {
+  if (profile.subject?.trim()) {
+    return `subject:${profile.subject.trim()}`;
+  }
+
+  if (typeof profile.publicId === "number") {
+    return `public:${profile.publicId}`;
+  }
+
+  if (profile.email?.trim()) {
+    return `email:${profile.email.trim().toLowerCase()}`;
+  }
+
+  return undefined;
+}
+
+function readOAuthProfileSetupPreferences() {
+  const rawPreferences = localStorage.getItem(OAUTH_PROFILE_SETUP_STORAGE_KEY);
+
+  if (!rawPreferences) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(rawPreferences) as Record<
+      string,
+      OAuthProfileSetupPreference
+    >;
+  } catch {
+    localStorage.removeItem(OAUTH_PROFILE_SETUP_STORAGE_KEY);
+    return {};
+  }
+}
+
+function readOAuthProfileSetupPreference(profile: UserProfileResponse) {
+  const profileKey = getProfileSetupKey(profile);
+
+  return profileKey ? readOAuthProfileSetupPreferences()[profileKey] : undefined;
+}
+
+function saveOAuthProfileSetupPreference(
+  profileKey: string,
+  preference: OAuthProfileSetupPreference,
+) {
+  const preferences = readOAuthProfileSetupPreferences();
+
+  preferences[profileKey] = preference;
+  localStorage.setItem(
+    OAUTH_PROFILE_SETUP_STORAGE_KEY,
+    JSON.stringify(preferences),
+  );
+}
+
 /**
  * Description
  * Renders the Google brand mark used by the Google sign-in button.
@@ -348,6 +418,8 @@ function Authentication() {
   const [registerPassword, setRegisterPassword] = useState("");
   const [loadState, setLoadState] = useState<LoadState>("idle");
   const [oauthModalOpen, setOauthModalOpen] = useState(false);
+  const [oauthProfileSetup, setOauthProfileSetup] =
+    useState<OAuthProfileSetupState>();
   const [closeDialogOpen, setCloseDialogOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const {
@@ -437,6 +509,29 @@ function Authentication() {
     }
 
     setProfile(result.data);
+    return result.data;
+  }
+
+  function prepareOAuthProfileSetup(nextProfile: UserProfileResponse) {
+    const profileKey = getProfileSetupKey(nextProfile);
+    const profileSetupPreference = readOAuthProfileSetupPreference(nextProfile);
+
+    if (
+      !profileKey ||
+      nextProfile.avatarRightsConsented ||
+      (profileSetupPreference?.completed && !profileSetupPreference.useAvatar)
+    ) {
+      setOauthProfileSetup(undefined);
+      return;
+    }
+
+    setOauthProfileSetup({
+      avatarUrl: getProfileAvatarUrl(nextProfile, readTokens()?.accessToken),
+      profileKey,
+      submitting: false,
+      useAvatar: false,
+      username: getProfileName(nextProfile),
+    });
   }
 
   useEffect(() => {
@@ -467,9 +562,13 @@ function Authentication() {
         }
 
         if (existingTokens?.accessToken) {
-          await loadProfile(existingTokens.accessToken, {
+          const loadedProfile = await loadProfile(existingTokens.accessToken, {
             recoverDesktopConflict: !redirectTokens,
           });
+
+          if (redirectTokens) {
+            prepareOAuthProfileSetup(loadedProfile);
+          }
         }
 
         if (redirectTokens) {
@@ -517,7 +616,8 @@ function Authentication() {
         }
 
         saveTokens(tokens);
-        await loadProfile(tokens.accessToken);
+        const loadedProfile = await loadProfile(tokens.accessToken);
+        prepareOAuthProfileSetup(loadedProfile);
 
         if (!cancelled) {
           notify({
@@ -587,6 +687,11 @@ function Authentication() {
       }
 
       event.preventDefault();
+
+      if (oauthProfileSetup) {
+        return;
+      }
+
       setCloseDialogOpen(true);
     }
 
@@ -595,7 +700,7 @@ function Authentication() {
     return () => {
       window.removeEventListener("mira:close-request", handleCloseRequest);
     };
-  }, [profile]);
+  }, [oauthProfileSetup, profile]);
 
   useEffect(() => {
     /**
@@ -603,6 +708,10 @@ function Authentication() {
      * Opens the settings modal when the titlebar settings button emits a request.
      */
     function handleSettingsRequest() {
+      if (oauthProfileSetup) {
+        return;
+      }
+
       setSettingsOpen(true);
     }
 
@@ -611,7 +720,7 @@ function Authentication() {
     return () => {
       window.removeEventListener("mira:settings-request", handleSettingsRequest);
     };
-  }, []);
+  }, [oauthProfileSetup]);
 
   useEffect(() => {
     let cancelled = false;
@@ -720,6 +829,87 @@ function Authentication() {
     }
   }
 
+  async function handleOAuthProfileSetupSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!oauthProfileSetup) {
+      return;
+    }
+
+    const username = oauthProfileSetup.username.trim();
+
+    if (!username) {
+      notify({
+        type: "warning",
+        message: t("auth-display-name-required"),
+      });
+      return;
+    }
+
+    setOauthProfileSetup({
+      ...oauthProfileSetup,
+      submitting: true,
+    });
+
+    try {
+      const result = await updateUsername({
+        body: { username },
+      });
+
+      if (result.error) {
+        throw result.error;
+      }
+
+      const avatarRightsResult = oauthProfileSetup.useAvatar
+        ? await confirmAvatarRights()
+        : undefined;
+
+      if (avatarRightsResult?.error) {
+        throw avatarRightsResult.error;
+      }
+
+      saveOAuthProfileSetupPreference(oauthProfileSetup.profileKey, {
+        completed: true,
+        useAvatar: oauthProfileSetup.useAvatar,
+      });
+
+      const updatedProfile = result.data ?? profile;
+
+      if (result.data) {
+        setProfile({
+          ...result.data,
+          avatarRightsConsented:
+            result.data.avatarRightsConsented || oauthProfileSetup.useAvatar,
+          avatarRightsConsentedAt:
+            avatarRightsResult?.data?.consentedAt ??
+            result.data.avatarRightsConsentedAt,
+        });
+      } else if (updatedProfile) {
+        setProfile({
+          ...updatedProfile,
+          avatarRightsConsented:
+            updatedProfile.avatarRightsConsented || oauthProfileSetup.useAvatar,
+          avatarRightsConsentedAt:
+            avatarRightsResult?.data?.consentedAt ??
+            updatedProfile.avatarRightsConsentedAt,
+          displayName: username,
+          preferredUsername: username,
+        });
+      }
+
+      setOauthProfileSetup(undefined);
+    } catch (caughtError) {
+      notify({
+        type: "error",
+        message: getErrorMessage(caughtError, t("auth-profile-setup-failed")),
+      });
+      setOauthProfileSetup({
+        ...oauthProfileSetup,
+        submitting: false,
+      });
+    }
+  }
+
   /**
    * Description
    * Starts the Google OAuth sign-in flow.
@@ -813,6 +1003,7 @@ function Authentication() {
     setCloseDialogOpen(false);
     setSettingsOpen(false);
     setOauthModalOpen(false);
+    setOauthProfileSetup(undefined);
 
     try {
       await releaseStoredAuthServiceSession();
@@ -878,13 +1069,90 @@ function Authentication() {
   const profileName = profile ? getProfileName(profile) : undefined;
   const profileLevel = profile ? getProfileLevel(profile) : 0;
   const profileTagId = profile ? getProfileTagId(profile) : undefined;
+  const profileAvatarAllowed = oauthProfileSetup
+    ? oauthProfileSetup.useAvatar
+    : Boolean(profile?.avatarRightsConsented);
   const profileAvatarUrl = profile
-    ? getProfileAvatarUrl(profile, readTokens()?.accessToken)
+    ? profileAvatarAllowed
+      ? getProfileAvatarUrl(profile, readTokens()?.accessToken)
+      : undefined
     : undefined;
 
   return (
     <main className={profile ? "app-shell app-shell-authenticated" : "app-shell"}>
       {oauthModalOpen ? <div className="oauth-modal-backdrop" aria-hidden="true" /> : null}
+      {oauthProfileSetup ? (
+        <div className="oauth-profile-setup-backdrop">
+          <form
+            aria-labelledby="oauth-profile-setup-title"
+            aria-modal="true"
+            className="oauth-profile-setup-modal"
+            role="dialog"
+            onSubmit={handleOAuthProfileSetupSubmit}
+          >
+            <div className="oauth-profile-setup-header">
+              <span className="oauth-profile-setup-avatar" aria-hidden="true">
+                {oauthProfileSetup.avatarUrl ? (
+                  <img alt="" src={oauthProfileSetup.avatarUrl} />
+                ) : (
+                  <span>{profileName?.[0]?.toUpperCase() ?? "U"}</span>
+                )}
+              </span>
+              <div>
+                <h2 id="oauth-profile-setup-title">
+                  {t("auth-profile-setup-title")}
+                </h2>
+                <p>{t("auth-profile-setup-subtitle")}</p>
+              </div>
+            </div>
+
+            <label>
+              {t("auth-profile-setup-username")}
+              <input
+                autoComplete="name"
+                disabled={oauthProfileSetup.submitting}
+                placeholder={t("auth-display-name-placeholder")}
+                required
+                value={oauthProfileSetup.username}
+                onChange={(event) =>
+                  setOauthProfileSetup({
+                    ...oauthProfileSetup,
+                    username: event.target.value,
+                  })
+                }
+              />
+            </label>
+
+            <label className="oauth-profile-setup-checkbox">
+              <input
+                checked={oauthProfileSetup.useAvatar}
+                disabled={
+                  oauthProfileSetup.submitting || !oauthProfileSetup.avatarUrl
+                }
+                type="checkbox"
+                onChange={(event) =>
+                  setOauthProfileSetup({
+                    ...oauthProfileSetup,
+                    useAvatar: event.target.checked,
+                  })
+                }
+              />
+              <span>{t("auth-profile-setup-avatar-consent")}</span>
+            </label>
+
+            <button
+              className="login-button oauth-profile-setup-confirm"
+              disabled={oauthProfileSetup.submitting}
+              type="submit"
+            >
+              <Check size={18} />
+              {oauthProfileSetup.submitting
+                ? t("auth-profile-setup-saving")
+                : t("auth-profile-setup-confirm")}
+            </button>
+          </form>
+        </div>
+      ) : null}
 
       {profile && profileName ? (
         <Client
