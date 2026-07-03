@@ -74,6 +74,7 @@ TOML config file; production desktop builds use compiled defaults:
 api_base_url = "https://api.tilt-us.com/auth"
 live_api_base_url = "https://api.tilt-us.com/live"
 matchmaking_api_base_url = "https://api.tilt-us.com/match"
+champion_api_base_url = "https://api.tilt-us.com/game"
 
 [keycloak]
 base_url = "https://api.tilt-us.com/keycloak"

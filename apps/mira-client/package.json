@@ -15,9 +15,9 @@
     "preview": "vite preview",
     "test:unit": "vitest run --config vitest.config.ts",
     "test:unit:coverage": "vitest run --config vitest.config.ts --coverage",
-    "test:e2e": "node scripts/with-env.mjs E2E_TARGET=dev VITE_API_BASE_URL=https://api.tilt-us.com/auth VITE_LIVE_API_BASE_URL=https://api.tilt-us.com/live VITE_MATCHMAKING_API_BASE_URL=https://api.tilt-us.com/match VITE_KEYCLOAK_BASE_URL=https://api.tilt-us.com/keycloak -- playwright test",
+    "test:e2e": "node scripts/with-env.mjs E2E_TARGET=dev VITE_API_BASE_URL=https://api.tilt-us.com/auth VITE_LIVE_API_BASE_URL=https://api.tilt-us.com/live VITE_MATCHMAKING_API_BASE_URL=https://api.tilt-us.com/match VITE_CHAMPION_API_BASE_URL=https://api.tilt-us.com/game VITE_KEYCLOAK_BASE_URL=https://api.tilt-us.com/keycloak -- playwright test",
     "test:e2e-local": "node scripts/with-env.mjs E2E_TARGET=local -- playwright test",
-    "test:e2e:ui": "node scripts/with-env.mjs E2E_TARGET=dev VITE_API_BASE_URL=https://api.tilt-us.com/auth VITE_LIVE_API_BASE_URL=https://api.tilt-us.com/live VITE_MATCHMAKING_API_BASE_URL=https://api.tilt-us.com/match VITE_KEYCLOAK_BASE_URL=https://api.tilt-us.com/keycloak -- playwright test --ui",
+    "test:e2e:ui": "node scripts/with-env.mjs E2E_TARGET=dev VITE_API_BASE_URL=https://api.tilt-us.com/auth VITE_LIVE_API_BASE_URL=https://api.tilt-us.com/live VITE_MATCHMAKING_API_BASE_URL=https://api.tilt-us.com/match VITE_CHAMPION_API_BASE_URL=https://api.tilt-us.com/game VITE_KEYCLOAK_BASE_URL=https://api.tilt-us.com/keycloak -- playwright test --ui",
     "tauri": "tauri"
   },
   "dependencies": {
