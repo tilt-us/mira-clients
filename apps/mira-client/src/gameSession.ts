@@ -273,7 +273,7 @@ function getLobbySeed(lobby: MatchLobbyResponse) {
   return `${lobby.lobbyId ?? ""}:${players ?? ""}`;
 }
 
-function getMatchTeams(match: ApiMatchResponse): MatchLobbyResponse[] {
+export function getMatchTeams(match: ApiMatchResponse): MatchLobbyResponse[] {
   const backendTeams: MatchLobbyResponse[] = [{ players: [] }, { players: [] }];
   let hasBackendTeams = false;
 

@@ -1,19 +1,26 @@
 import { MessageCircle, Send, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Translate } from "../types/ui";
 import { getProfileInitials } from "../utils/profile";
 import type { ChatPosition } from "../settings";
 
 type ChatDockProps = {
+  autoRooms?: ChatRoom[];
   chatPosition: ChatPosition;
+  placement?: "default" | "fullscreen";
   t: Translate;
 };
 
-type ChatContact = {
+export type ChatRoom = {
   avatarUrl?: string;
   id: string;
+  locked?: boolean;
   name: string;
+  subtitle?: string;
+  type?: "direct" | "lobby" | "team";
 };
+
+type ChatContact = ChatRoom;
 
 type ChatRequestEvent = CustomEvent<{
   avatarUrl?: string;
@@ -21,15 +28,47 @@ type ChatRequestEvent = CustomEvent<{
   name?: string;
 }>;
 
+const emptyChatRooms: ChatRoom[] = [];
+
 function isChatRequestEvent(event: Event): event is ChatRequestEvent {
   return event.type === "mira:chat-request";
 }
 
-function ChatDock({ chatPosition, t }: ChatDockProps) {
+function isAutoChatRoomId(contactId: string) {
+  return contactId.startsWith("lobby:") || contactId.startsWith("team:");
+}
+
+function areChatContactsEqual(left: ChatContact[], right: ChatContact[]) {
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  return left.every((leftContact, index) => {
+    const rightContact = right[index];
+
+    return (
+      leftContact.avatarUrl === rightContact.avatarUrl &&
+      leftContact.id === rightContact.id &&
+      leftContact.locked === rightContact.locked &&
+      leftContact.name === rightContact.name &&
+      leftContact.subtitle === rightContact.subtitle &&
+      leftContact.type === rightContact.type
+    );
+  });
+}
+
+function ChatDock({
+  autoRooms: autoRoomsProp,
+  chatPosition,
+  placement = "default",
+  t,
+}: ChatDockProps) {
+  const autoRooms = autoRoomsProp ?? emptyChatRooms;
   const [open, setOpen] = useState(false);
   const [contacts, setContacts] = useState<ChatContact[]>([]);
   const [activeContactId, setActiveContactId] = useState<string>();
   const [draftMessage, setDraftMessage] = useState("");
+  const previousAutoRoomIdsRef = useRef<Set<string>>(new Set());
   const activeContact = useMemo(
     () => contacts.find((contact) => contact.id === activeContactId),
     [activeContactId, contacts],
@@ -78,6 +117,51 @@ function ChatDock({ chatPosition, t }: ChatDockProps) {
     };
   }, [t]);
 
+  useEffect(() => {
+    const autoRoomIds = new Set(autoRooms.map((room) => room.id));
+    const hasNewAutoRoom = autoRooms.some((room) => {
+      return !previousAutoRoomIdsRef.current.has(room.id);
+    });
+
+    previousAutoRoomIdsRef.current = autoRoomIds;
+
+    if (hasNewAutoRoom) {
+      setOpen(true);
+    }
+
+    setContacts((currentContacts) => {
+      const manualContacts = currentContacts.filter(
+        (contact) => !contact.locked && !autoRoomIds.has(contact.id),
+      );
+      const currentContactsById = new Map(
+        currentContacts.map((contact) => [contact.id, contact]),
+      );
+      const nextContacts = autoRooms.map((room) => ({
+          ...currentContactsById.get(room.id),
+          ...room,
+          locked: true,
+        }));
+
+      const orderedContacts = [...nextContacts, ...manualContacts];
+
+      return areChatContactsEqual(currentContacts, orderedContacts)
+        ? currentContacts
+        : orderedContacts;
+    });
+
+    setActiveContactId((currentActiveContactId) => {
+      if (currentActiveContactId && autoRoomIds.has(currentActiveContactId)) {
+        return currentActiveContactId;
+      }
+
+      if (currentActiveContactId && !isAutoChatRoomId(currentActiveContactId)) {
+        return currentActiveContactId;
+      }
+
+      return autoRooms[0]?.id;
+    });
+  }, [autoRooms]);
+
   function submitDraftMessage() {
     const message = draftMessage.trim();
 
@@ -89,6 +173,10 @@ function ChatDock({ chatPosition, t }: ChatDockProps) {
   }
 
   function closeContact(contactId: string) {
+    if (contacts.find((contact) => contact.id === contactId)?.locked) {
+      return;
+    }
+
     const remainingContacts = contacts.filter((contact) => contact.id !== contactId);
 
     setContacts(remainingContacts);
@@ -109,6 +197,7 @@ function ChatDock({ chatPosition, t }: ChatDockProps) {
           ? "chat-dock-tab chat-dock-tab-left"
           : "chat-dock-tab"
       }
+      data-placement={placement}
       type="button"
       onClick={() => setOpen((currentOpen) => !currentOpen)}
     >
@@ -122,6 +211,7 @@ function ChatDock({ chatPosition, t }: ChatDockProps) {
       <section
         aria-label={t("chat-title")}
         className={open ? "chat-dock open" : "chat-dock"}
+        data-placement={placement}
         data-position={chatPosition}
       >
         {chatPosition === "right" ? toggleButton : null}
@@ -158,14 +248,24 @@ function ChatDock({ chatPosition, t }: ChatDockProps) {
                       </span>
                       <span>{contact.name}</span>
                     </button>
-                    <button
-                      className="chat-contact-close"
-                      type="button"
-                      aria-label={t("chat-close-card")}
-                      onClick={() => closeContact(contact.id)}
-                    >
-                      <X size={13} />
-                    </button>
+                    {contact.locked ? (
+                      <span
+                        aria-hidden="true"
+                        className="chat-contact-room-marker"
+                        title={contact.subtitle}
+                      >
+                        {contact.type === "team" ? "5" : "L"}
+                      </span>
+                    ) : (
+                      <button
+                        className="chat-contact-close"
+                        type="button"
+                        aria-label={t("chat-close-card")}
+                        onClick={() => closeContact(contact.id)}
+                      >
+                        <X size={13} />
+                      </button>
+                    )}
                   </div>
                 ))
               ) : (
