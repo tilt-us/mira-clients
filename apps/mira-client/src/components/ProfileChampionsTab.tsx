@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -11,6 +12,7 @@ import ignaraWallpaper from "../../../../assets/wallpapers/ignara-wallpaper.png"
 import liraWallpaper from "../../../../assets/wallpapers/lira-wallpaper.png";
 import sophiaWallpaper from "../../../../assets/wallpapers/sophia-wallpaper.png";
 import yunaWallpaper from "../../../../assets/wallpapers/yuna-wallpaper.png";
+import { getChampionCatalog, setOwnedChampion } from "../api/client";
 import type { Translate } from "../types/ui";
 
 type ChampionOwnershipStatus = "owned" | "weekly" | "unowned";
@@ -68,6 +70,7 @@ type ProfileChampionsTabProps = {
   backSignal: number;
   onFocusChange: (focused: boolean) => void;
   t: Translate;
+  userId?: number;
 };
 
 const championOwnershipFilterOptions: Array<{
@@ -96,12 +99,24 @@ const championRadarStats: Array<{ id: ChampionRadarStatId; labelKey: string }> =
   { id: "defense", labelKey: "profile-champions-radar-defense" },
 ];
 
-const userPageChampions: UserPageChampion[] = [
+const championDefaultPrice = {
+  gems: 900,
+  tuc: 250,
+};
+
+const championSynergyByKey: Record<string, string[]> = {
+  ignara: ["Yuna", "Sophia"],
+  lira: ["Yuna", "Ignara"],
+  sophia: ["Ignara", "Yuna"],
+  yuna: ["Lira", "Ignara"],
+};
+
+const fallbackUserPageChampions: UserPageChampion[] = [
   {
     categories: ["fighter"],
     id: "ignara",
     name: "Ignara",
-    ownershipStatus: "weekly",
+    ownershipStatus: "unowned",
     rank: 0,
     abilities: [
       {
@@ -152,7 +167,7 @@ const userPageChampions: UserPageChampion[] = [
     categories: ["assassin"],
     id: "lira",
     name: "Lira",
-    ownershipStatus: "weekly",
+    ownershipStatus: "unowned",
     rank: 0,
     abilities: [
       {
@@ -203,7 +218,7 @@ const userPageChampions: UserPageChampion[] = [
     categories: ["mage"],
     id: "sophia",
     name: "Sophia",
-    ownershipStatus: "weekly",
+    ownershipStatus: "unowned",
     rank: 0,
     abilities: [
       {
@@ -254,7 +269,7 @@ const userPageChampions: UserPageChampion[] = [
     categories: ["guardian"],
     id: "yuna",
     name: "Yuna",
-    ownershipStatus: "weekly",
+    ownershipStatus: "unowned",
     rank: 0,
     abilities: [
       {
@@ -303,6 +318,328 @@ const userPageChampions: UserPageChampion[] = [
   },
 ];
 
+type ApiChampionRecord = Record<string, unknown>;
+
+const fallbackChampionByKey = new Map(
+  fallbackUserPageChampions.flatMap((champion) => [
+    [normalizeChampionKey(champion.id), champion],
+    [normalizeChampionKey(champion.name), champion],
+  ]),
+);
+
+function normalizeChampionKey(value: unknown) {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+function isSameUserPageChampion(left: UserPageChampion, right: UserPageChampion) {
+  const leftKeys = [left.id, left.name].map(normalizeChampionKey).filter(Boolean);
+  const rightKeys = new Set(
+    [right.id, right.name].map(normalizeChampionKey).filter(Boolean),
+  );
+
+  return leftKeys.some((key) => rightKeys.has(key));
+}
+
+function isRecord(value: unknown): value is ApiChampionRecord {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function getRecord(value: unknown, key: string) {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  return value[key];
+}
+
+function getStringValue(record: ApiChampionRecord, keys: string[]) {
+  for (const key of keys) {
+    const value = record[key];
+
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return String(value);
+    }
+  }
+
+  return undefined;
+}
+
+function getNumberValue(record: unknown, keys: string[]) {
+  if (!isRecord(record)) {
+    return undefined;
+  }
+
+  for (const key of keys) {
+    const value = record[key];
+
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value;
+    }
+
+    if (typeof value === "string") {
+      const parsedValue = Number(value);
+
+      if (Number.isFinite(parsedValue)) {
+        return parsedValue;
+      }
+    }
+  }
+
+  return undefined;
+}
+
+function getChampionCatalogItems(response: unknown): ApiChampionRecord[] {
+  const value = isRecord(response) && "data" in response ? response.data : response;
+
+  if (Array.isArray(value)) {
+    return value.filter(isRecord);
+  }
+
+  if (!isRecord(value)) {
+    return [];
+  }
+
+  for (const key of ["champions", "items", "content", "results"]) {
+    const items = value[key];
+
+    if (Array.isArray(items)) {
+      return items.filter(isRecord);
+    }
+  }
+
+  return [];
+}
+
+function getApiChampionKey(champion: ApiChampionRecord): string {
+  const nestedChampion = champion.champion;
+
+  if (isRecord(nestedChampion)) {
+    const nestedKey: string = getApiChampionKey(nestedChampion);
+
+    if (nestedKey) {
+      return nestedKey;
+    }
+  }
+
+  const name = getStringValue(champion, [
+    "name",
+    "displayName",
+    "display_name",
+    "fullName",
+    "full_name",
+    "localizedName",
+    "localized_name",
+    "id",
+    "champion",
+    "championId",
+    "champion_id",
+    "championName",
+    "champion_name",
+  ]);
+
+  return normalizeChampionKey(name);
+}
+
+function getApiChampionKeys(champion: ApiChampionRecord): string[] {
+  const nestedChampion = champion.champion;
+  const keys = [
+    getApiChampionKey(champion),
+    getStringValue(champion, ["id", "_id"]),
+    getStringValue(champion, ["name", "displayName", "display_name"]),
+    getStringValue(champion, ["champion", "championId", "champion_id", "championName", "champion_name"]),
+  ];
+
+  if (isRecord(nestedChampion)) {
+    keys.push(getApiChampionKey(nestedChampion));
+    keys.push(getStringValue(nestedChampion, ["id", "_id"]));
+    keys.push(getStringValue(nestedChampion, ["name", "displayName", "display_name"]));
+  }
+
+  return Array.from(new Set(keys.map(normalizeChampionKey).filter(Boolean)));
+}
+
+function getApiChampionName(champion: ApiChampionRecord, fallback?: UserPageChampion) {
+  return (
+    getStringValue(champion, ["name", "displayName", "display_name", "fullName", "full_name"]) ??
+    fallback?.name ??
+    "Champion"
+  );
+}
+
+function normalizeCategoryId(value: unknown): ChampionCategoryId | undefined {
+  const normalizedValue = normalizeChampionKey(value).replace(/[^a-z]/g, "");
+
+  if (normalizedValue === "assassin" || normalizedValue === "assasin") {
+    return "assassin";
+  }
+
+  if (normalizedValue === "tank") {
+    return "tank";
+  }
+
+  if (normalizedValue === "fighter" || normalizedValue === "kaempfer" || normalizedValue === "kampfer") {
+    return "fighter";
+  }
+
+  if (normalizedValue === "guardian" || normalizedValue === "waechter" || normalizedValue === "wachter") {
+    return "guardian";
+  }
+
+  if (normalizedValue === "caster" || normalizedValue === "wirker") {
+    return "caster";
+  }
+
+  if (normalizedValue === "mage") {
+    return "mage";
+  }
+
+  return undefined;
+}
+
+function getChampionCategories(champion: ApiChampionRecord, fallback: UserPageChampion) {
+  const sourceCategories = champion.categories ?? champion.category ?? champion.role ?? champion.roles;
+  const rawCategories = Array.isArray(sourceCategories) ? sourceCategories : [sourceCategories];
+  const categories = rawCategories
+    .map(normalizeCategoryId)
+    .filter((category): category is ChampionCategoryId => Boolean(category));
+
+  return categories.length > 0 ? categories : fallback.categories;
+}
+
+function getNestedStats(champion: ApiChampionRecord) {
+  const stats = getRecord(champion, "stats") ?? getRecord(champion, "serverStats");
+  const baseStats = getRecord(stats, "baseStats") ?? getRecord(stats, "base_stats");
+
+  return { baseStats, stats };
+}
+
+function getChampionServerStats(champion: ApiChampionRecord, fallback: UserPageChampion) {
+  const { baseStats, stats } = getNestedStats(champion);
+  const source = isRecord(baseStats) ? baseStats : stats;
+  const radar = isRecord(getRecord(stats, "radar"))
+    ? getRecord(stats, "radar")
+    : getRecord(champion, "radar");
+
+  return {
+    armor: getNumberValue(source, ["armor", "armour"]) ?? fallback.serverStats.armor,
+    attackDamage:
+      getNumberValue(source, ["attackDamage", "attack_damage", "ad"]) ??
+      fallback.serverStats.attackDamage,
+    cooldown:
+      getNumberValue(source, ["cooldown", "avgCooldown", "averageCooldown", "cooldown_seconds"]) ??
+      fallback.serverStats.cooldown,
+    control: getNumberValue(source, ["control", "crowdControl", "crowd_control"]) ?? fallback.serverStats.control,
+    health:
+      getNumberValue(source, ["health", "maxHealth", "max_health", "hp"]) ??
+      fallback.serverStats.health,
+    healthRegen:
+      getNumberValue(source, ["healthRegen", "health_regen", "healthRegenPerSecond"]) ??
+      fallback.serverStats.healthRegen,
+    manaRegen:
+      getNumberValue(source, ["manaRegen", "mana_regen", "manaRegenPerSecond"]) ??
+      fallback.serverStats.manaRegen,
+    radar: {
+      damage: getNumberValue(radar, ["damage"]) ?? fallback.serverStats.radar.damage,
+      utility: getNumberValue(radar, ["utility"]) ?? fallback.serverStats.radar.utility,
+      control:
+        getNumberValue(radar, ["control", "crowdControl", "crowd_control"]) ??
+        fallback.serverStats.radar.control,
+      engage: getNumberValue(radar, ["engage"]) ?? fallback.serverStats.radar.engage,
+      defense:
+        getNumberValue(radar, ["defense", "defence"]) ?? fallback.serverStats.radar.defense,
+    },
+    resistance:
+      getNumberValue(source, ["resistance", "magicResistance", "magic_resistance", "mr"]) ??
+      fallback.serverStats.resistance,
+  };
+}
+
+function getChampionAbilities(
+  champion: ApiChampionRecord,
+  fallback: UserPageChampion,
+): ChampionAbility[] {
+  const stats = getRecord(champion, "stats");
+  const sourceAbilities = champion.abilities ?? getRecord(stats, "abilities");
+
+  if (!sourceAbilities) {
+    return fallback.abilities;
+  }
+
+  const abilityRecords: ApiChampionRecord[] = Array.isArray(sourceAbilities)
+    ? sourceAbilities.filter(isRecord)
+    : ["q", "w", "e"].reduce<ApiChampionRecord[]>((records, slot) => {
+        const ability =
+          getRecord(sourceAbilities, slot) ?? getRecord(sourceAbilities, slot.toUpperCase());
+
+        if (isRecord(ability)) {
+          records.push({ ...ability, slot });
+        }
+
+        return records;
+      }, []);
+
+  if (abilityRecords.length === 0) {
+    return fallback.abilities;
+  }
+
+  return abilityRecords.slice(0, 3).map((ability, index) => {
+    const fallbackAbility = fallback.abilities[index] ?? fallback.abilities[0];
+    const damage = getRecord(ability, "damage");
+    const damageType: ChampionScalingStat =
+      normalizeChampionKey(ability.damageType ?? ability.scaling) === "ad" ? "ad" : "ap";
+
+    return {
+      cooldown:
+        getNumberValue(ability, ["cooldown", "cooldownSeconds", "cooldown_seconds"]) ??
+        fallbackAbility.cooldown,
+      damageType,
+      directDamage:
+        getNumberValue(ability, ["directDamage", "direct_damage"]) ??
+        getNumberValue(damage, ["directHit", "direct_hit", "direct"]) ??
+        fallbackAbility.directDamage,
+      directScaling:
+        getNumberValue(ability, ["directScaling", "direct_scaling"]) ??
+        fallbackAbility.directScaling,
+      explosionDamage:
+        getNumberValue(ability, ["explosionDamage", "explosion_damage", "areaDamage", "area_damage"]) ??
+        getNumberValue(damage, ["area", "explosion"]) ??
+        fallbackAbility.explosionDamage,
+      explosionScaling:
+        getNumberValue(ability, ["explosionScaling", "explosion_scaling", "areaScaling", "area_scaling"]) ??
+        fallbackAbility.explosionScaling,
+      name: getStringValue(ability, ["name", "displayName", "display_name"]) ?? fallbackAbility.name,
+      slot: (getStringValue(ability, ["slot"]) ?? fallbackAbility.slot).toUpperCase(),
+    };
+  });
+}
+
+function mergeApiChampion(
+  champion: ApiChampionRecord,
+  ownershipStatus: ChampionOwnershipStatus,
+) {
+  const championKey = getApiChampionKey(champion);
+  const fallback =
+    fallbackChampionByKey.get(championKey) ??
+    fallbackUserPageChampions.find((candidate) => candidate.name === "Lira") ??
+    fallbackUserPageChampions[0];
+  const name = getApiChampionName(champion, fallback);
+
+  return {
+    abilities: getChampionAbilities(champion, fallback),
+    categories: getChampionCategories(champion, fallback),
+    id: getStringValue(champion, ["id", "localizedName", "localized_name"]) ?? normalizeChampionKey(name),
+    name,
+    ownershipStatus,
+    rank: getNumberValue(champion, ["rank", "championRank", "champion_rank"]) ?? fallback.rank,
+    serverStats: getChampionServerStats(champion, fallback),
+    wallpaper: fallback.wallpaper,
+  };
+}
+
 function UserPageChampionCard({
   champion,
   onSelect,
@@ -313,9 +650,16 @@ function UserPageChampionCard({
     event: KeyboardEvent<HTMLElement> | MouseEvent<HTMLElement>,
   ) => void;
 }) {
+  const showsPrice = champion.ownershipStatus !== "owned";
+  const isUnavailable = champion.ownershipStatus === "unowned";
+
   return (
     <article
-      className="user-page-champion-card"
+      className={
+        isUnavailable
+          ? "user-page-champion-card user-page-champion-card-not-owned"
+          : "user-page-champion-card"
+      }
       role="button"
       style={{ "--champion-card-wallpaper": `url(${champion.wallpaper})` } as CSSProperties}
       tabIndex={0}
@@ -329,8 +673,22 @@ function UserPageChampionCard({
     >
       <div className="user-page-champion-card-name">
         <span>{champion.name}</span>
+        {showsPrice ? <ChampionPrice /> : null}
       </div>
     </article>
+  );
+}
+
+function ChampionPrice() {
+  return (
+    <div className="user-page-champion-card-price" aria-label="Champion price">
+      <strong className="user-page-champion-card-price-gems">
+        {championDefaultPrice.gems} Gems
+      </strong>
+      <strong className="user-page-champion-card-price-tuc">
+        {championDefaultPrice.tuc} TUC
+      </strong>
+    </div>
   );
 }
 
@@ -549,6 +907,58 @@ function ChampionBaseStats({ champion, t }: { champion: UserPageChampion; t: Tra
   );
 }
 
+function getChampionSynergies(champion: UserPageChampion) {
+  const championKeys = [champion.id, champion.name].map(normalizeChampionKey);
+  const synergyKeys = Array.from(
+    new Set(
+      championKeys
+        .flatMap((key) => championSynergyByKey[key] ?? [])
+        .map(normalizeChampionKey)
+        .filter(Boolean),
+    ),
+  );
+  const synergies = synergyKeys
+    .map((key) => fallbackChampionByKey.get(key))
+    .filter((candidate): candidate is UserPageChampion => Boolean(candidate))
+    .filter((candidate) => !isSameUserPageChampion(candidate, champion));
+
+  if (synergies.length > 0) {
+    return synergies;
+  }
+
+  return fallbackUserPageChampions
+    .filter((candidate) => !isSameUserPageChampion(candidate, champion))
+    .slice(0, 2);
+}
+
+function ChampionSynergies({ champion, t }: { champion: UserPageChampion; t: Translate }) {
+  const synergies = getChampionSynergies(champion);
+
+  return (
+    <section
+      className="user-page-champion-synergies"
+      aria-label={t("profile-champions-synergies")}
+    >
+      <h3>{t("profile-champions-synergies")}</h3>
+      <div className="user-page-champion-synergy-list">
+        {synergies.map((synergy) => (
+          <article
+            className="user-page-champion-synergy-card"
+            key={synergy.id}
+            style={
+              {
+                "--champion-synergy-wallpaper": `url(${synergy.wallpaper})`,
+              } as CSSProperties
+            }
+          >
+            <strong>{synergy.name}</strong>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function ChampionFocusDetails({ champion, t }: { champion: UserPageChampion; t: Translate }) {
   return (
     <section className="user-page-champion-focus-details" aria-label={champion.name}>
@@ -560,12 +970,85 @@ function ChampionFocusDetails({ champion, t }: { champion: UserPageChampion; t: 
         </div>
         <ChampionAbilities champion={champion} t={t} />
       </div>
-      <ChampionRadar champion={champion} t={t} />
+      <div className="user-page-champion-focus-side">
+        <ChampionRadar champion={champion} t={t} />
+        <ChampionSynergies champion={champion} t={t} />
+      </div>
     </section>
   );
 }
 
-function ProfileChampionsTab({ backSignal, onFocusChange, t }: ProfileChampionsTabProps) {
+function ChampionPurchaseModal({
+  busy,
+  champion,
+  error,
+  onClose,
+  onPurchase,
+  t,
+}: {
+  busy?: boolean;
+  champion: UserPageChampion;
+  error?: string;
+  onClose: () => void;
+  onPurchase: () => void;
+  t: Translate;
+}) {
+  return (
+    <div
+      className="user-page-champion-purchase-backdrop"
+      role="presentation"
+      onMouseDown={busy ? undefined : onClose}
+    >
+      <section
+        aria-label={t("profile-champions-purchase-title")}
+        aria-modal="true"
+        className="user-page-champion-purchase-modal"
+        role="dialog"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <span>{t("profile-champions-unowned-badge")}</span>
+        <h2>{champion.name}</h2>
+        <p>{t("profile-champions-purchase-body")}</p>
+        <ChampionPrice />
+        {error ? (
+          <p className="user-page-champion-purchase-error">{error}</p>
+        ) : null}
+        <div className="user-page-champion-purchase-actions">
+          <button
+            className="user-page-champion-purchase-button user-page-champion-purchase-button-gems"
+            disabled={busy}
+            type="button"
+            onClick={onPurchase}
+          >
+            {busy
+              ? t("profile-champions-purchase-processing")
+              : t("profile-champions-purchase-gems")}
+          </button>
+          <button
+            className="user-page-champion-purchase-button user-page-champion-purchase-button-tuc"
+            disabled={busy}
+            type="button"
+            onClick={onPurchase}
+          >
+            {busy
+              ? t("profile-champions-purchase-processing")
+              : t("profile-champions-purchase-tuc")}
+          </button>
+          <button
+            className="user-page-champion-purchase-cancel"
+            disabled={busy}
+            type="button"
+            onClick={onClose}
+          >
+            {t("profile-champions-purchase-cancel")}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function ProfileChampionsTab({ backSignal, onFocusChange, t, userId }: ProfileChampionsTabProps) {
   const [championOwnershipFilters, setChampionOwnershipFilters] = useState<
     ChampionOwnershipStatus[]
   >(["owned", "weekly", "unowned"]);
@@ -575,29 +1058,38 @@ function ProfileChampionsTab({ backSignal, onFocusChange, t }: ProfileChampionsT
     ChampionCategoryId[]
   >(championCategoryFilterOptions.map((category) => category.id));
   const [focusedChampion, setFocusedChampion] = useState<ChampionFocusState>();
+  const [purchaseChampion, setPurchaseChampion] = useState<UserPageChampion>();
+  const [purchaseError, setPurchaseError] = useState<string>();
+  const [purchasingChampionId, setPurchasingChampionId] = useState<string>();
+  const [userPageChampions, setUserPageChampions] =
+    useState<UserPageChampion[]>(fallbackUserPageChampions);
   const championFocusCloseTimerRef = useRef<number | undefined>(undefined);
   const lastHandledBackSignalRef = useRef(backSignal);
 
-  const filteredUserPageChampions = userPageChampions
-    .filter((champion) => championOwnershipFilters.includes(champion.ownershipStatus))
-    .filter((champion) => {
-      return champion.categories.some((category) =>
-        championCategoryFilters.includes(category),
-      );
-    })
-    .slice()
-    .sort((left, right) => {
-      const rankDifference =
-        championRankSort === "highest"
-          ? right.rank - left.rank
-          : left.rank - right.rank;
+  const filteredUserPageChampions = useMemo(
+    () =>
+      userPageChampions
+        .filter((champion) => championOwnershipFilters.includes(champion.ownershipStatus))
+        .filter((champion) => {
+          return champion.categories.some((category) =>
+            championCategoryFilters.includes(category),
+          );
+        })
+        .slice()
+        .sort((left, right) => {
+          const rankDifference =
+            championRankSort === "highest"
+              ? right.rank - left.rank
+              : left.rank - right.rank;
 
-      if (rankDifference !== 0) {
-        return rankDifference;
-      }
+          if (rankDifference !== 0) {
+            return rankDifference;
+          }
 
-      return left.name.localeCompare(right.name);
-    });
+          return left.name.localeCompare(right.name);
+        }),
+    [championCategoryFilters, championOwnershipFilters, championRankSort, userPageChampions],
+  );
   const weeklyUserPageChampions = filteredUserPageChampions.filter(
     (champion) => champion.ownershipStatus === "weekly",
   );
@@ -608,6 +1100,83 @@ function ProfileChampionsTab({ backSignal, onFocusChange, t }: ProfileChampionsT
     (champion) => champion.ownershipStatus === "unowned",
   );
 
+  useEffect(() => {
+    let ignore = false;
+
+    async function loadChampions() {
+      const [allResult, weeklyResult, ownedResult] = await Promise.all([
+        getChampionCatalog().catch(() => undefined),
+        getChampionCatalog({ query: { weekly: true } }).catch(() => undefined),
+        userId !== undefined
+          ? getChampionCatalog({ query: { owned: true, userId } }).catch(() => undefined)
+          : Promise.resolve(undefined),
+      ]);
+
+      if (ignore) {
+        return;
+      }
+
+      const allRecords = getChampionCatalogItems(allResult?.data);
+      const weeklyRecords = getChampionCatalogItems(weeklyResult?.data);
+      const ownedRecords = getChampionCatalogItems(ownedResult?.data);
+      const allByKey = new Map<string, ApiChampionRecord>();
+      const canonicalKeyByAlias = new Map<string, string>();
+
+      for (const champion of [...allRecords, ...weeklyRecords, ...ownedRecords]) {
+        const championKeys = getApiChampionKeys(champion);
+        const knownAlias = championKeys.find((candidate) =>
+          canonicalKeyByAlias.has(candidate),
+        );
+        const key = knownAlias ? canonicalKeyByAlias.get(knownAlias) : championKeys[0];
+
+        if (key) {
+          allByKey.set(key, {
+            ...(allByKey.get(key) ?? {}),
+            ...champion,
+          });
+          for (const alias of championKeys) {
+            canonicalKeyByAlias.set(alias, key);
+          }
+        }
+      }
+
+      if (allByKey.size === 0) {
+        setUserPageChampions(fallbackUserPageChampions);
+        return;
+      }
+
+      const weeklyKeys = new Set(
+        weeklyRecords
+          .flatMap(getApiChampionKeys)
+          .map((key) => canonicalKeyByAlias.get(key) ?? key)
+          .filter(Boolean),
+      );
+      const ownedKeys = new Set(
+        ownedRecords
+          .flatMap(getApiChampionKeys)
+          .map((key) => canonicalKeyByAlias.get(key) ?? key)
+          .filter(Boolean),
+      );
+      const nextChampions = Array.from(allByKey.entries()).map(([key, champion]) => {
+        const ownershipStatus: ChampionOwnershipStatus = ownedKeys.has(key)
+          ? "owned"
+          : weeklyKeys.has(key)
+            ? "weekly"
+            : "unowned";
+
+        return mergeApiChampion(champion, ownershipStatus);
+      });
+
+      setUserPageChampions(nextChampions);
+    }
+
+    void loadChampions();
+
+    return () => {
+      ignore = true;
+    };
+  }, [userId]);
+
   function clearChampionFocusCloseTimer() {
     if (championFocusCloseTimerRef.current !== undefined) {
       window.clearTimeout(championFocusCloseTimerRef.current);
@@ -616,6 +1185,8 @@ function ProfileChampionsTab({ backSignal, onFocusChange, t }: ProfileChampionsT
   }
 
   function closeFocusedChampion() {
+    setPurchaseChampion(undefined);
+    setPurchaseError(undefined);
     setFocusedChampion((current) => {
       if (!current || current.closing) {
         return current;
@@ -629,6 +1200,41 @@ function ProfileChampionsTab({ backSignal, onFocusChange, t }: ProfileChampionsT
 
       return { ...current, closing: true };
     });
+  }
+
+  async function handleChampionPurchase(champion: UserPageChampion) {
+    if (userId === undefined) {
+      setPurchaseError(t("profile-champions-purchase-user-missing"));
+      return;
+    }
+
+    setPurchaseError(undefined);
+    setPurchasingChampionId(champion.id);
+
+    const result = await setOwnedChampion({
+      body: {
+        champion: champion.name,
+        userId,
+      },
+    }).catch(() => undefined);
+
+    setPurchasingChampionId(undefined);
+
+    if (!result || result.error || (result.response?.status ?? 500) >= 400) {
+      setPurchaseError(t("profile-champions-purchase-error"));
+      return;
+    }
+
+    const markChampionOwned = (candidate: UserPageChampion): UserPageChampion =>
+      isSameUserPageChampion(candidate, champion)
+        ? { ...candidate, ownershipStatus: "owned" }
+        : candidate;
+
+    setUserPageChampions((current) => current.map(markChampionOwned));
+    setFocusedChampion((current) =>
+      current ? { ...current, champion: markChampionOwned(current.champion) } : current,
+    );
+    setPurchaseChampion(undefined);
   }
 
   function handleChampionFocusOpen(
@@ -664,8 +1270,14 @@ function ProfileChampionsTab({ backSignal, onFocusChange, t }: ProfileChampionsT
     }
 
     lastHandledBackSignalRef.current = backSignal;
+    if (purchaseChampion) {
+      setPurchaseChampion(undefined);
+      setPurchaseError(undefined);
+      return;
+    }
+
     closeFocusedChampion();
-  }, [backSignal]);
+  }, [backSignal, purchaseChampion]);
 
   return (
     <div
@@ -740,21 +1352,27 @@ function ProfileChampionsTab({ backSignal, onFocusChange, t }: ProfileChampionsT
         </details>
       </aside>
       <div className="user-page-champion-sections">
-        <UserPageChampionSection
-          champions={weeklyUserPageChampions}
-          onChampionSelect={handleChampionFocusOpen}
-          title={t("profile-champions-weekly")}
-        />
-        <UserPageChampionSection
-          champions={ownedUserPageChampions}
-          onChampionSelect={handleChampionFocusOpen}
-          title={t("profile-champions-owned")}
-        />
-        <UserPageChampionSection
-          champions={unownedUserPageChampions}
-          onChampionSelect={handleChampionFocusOpen}
-          title={t("profile-champions-unowned")}
-        />
+        {championOwnershipFilters.includes("weekly") ? (
+          <UserPageChampionSection
+            champions={weeklyUserPageChampions}
+            onChampionSelect={handleChampionFocusOpen}
+            title={t("profile-champions-weekly")}
+          />
+        ) : null}
+        {championOwnershipFilters.includes("owned") ? (
+          <UserPageChampionSection
+            champions={ownedUserPageChampions}
+            onChampionSelect={handleChampionFocusOpen}
+            title={t("profile-champions-owned")}
+          />
+        ) : null}
+        {championOwnershipFilters.includes("unowned") ? (
+          <UserPageChampionSection
+            champions={unownedUserPageChampions}
+            onChampionSelect={handleChampionFocusOpen}
+            title={t("profile-champions-unowned")}
+          />
+        ) : null}
       </div>
       {focusedChampion ? (
         <div
@@ -764,9 +1382,19 @@ function ProfileChampionsTab({ backSignal, onFocusChange, t }: ProfileChampionsT
               : "user-page-champion-focus"
           }
           role="presentation"
+          style={
+            {
+              "--champion-card-wallpaper": `url(${focusedChampion.champion.wallpaper})`,
+            } as CSSProperties
+          }
         >
           <article
-            className="user-page-champion-focus-card"
+            className={
+              focusedChampion.champion.ownershipStatus !== "owned"
+                ? "user-page-champion-focus-card user-page-champion-focus-card-purchaseable"
+                : "user-page-champion-focus-card"
+            }
+            role={focusedChampion.champion.ownershipStatus !== "owned" ? "button" : undefined}
             style={
               {
                 "--champion-card-wallpaper": `url(${focusedChampion.champion.wallpaper})`,
@@ -774,13 +1402,54 @@ function ProfileChampionsTab({ backSignal, onFocusChange, t }: ProfileChampionsT
                 "--champion-focus-start-top": `${focusedChampion.startTop}px`,
               } as CSSProperties
             }
+            tabIndex={focusedChampion.champion.ownershipStatus !== "owned" ? 0 : undefined}
+            title={
+              focusedChampion.champion.ownershipStatus !== "owned"
+                ? t("profile-champions-purchase-tooltip")
+                : undefined
+            }
+            onClick={() => {
+              if (focusedChampion.champion.ownershipStatus !== "owned") {
+                setPurchaseError(undefined);
+                setPurchaseChampion(focusedChampion.champion);
+              }
+            }}
+            onKeyDown={(event) => {
+              if (
+                focusedChampion.champion.ownershipStatus !== "owned" &&
+                (event.key === "Enter" || event.key === " ")
+              ) {
+                event.preventDefault();
+                setPurchaseError(undefined);
+                setPurchaseChampion(focusedChampion.champion);
+              }
+            }}
           >
+            {focusedChampion.champion.ownershipStatus !== "owned" ? (
+              <div className="user-page-champion-unowned-badge">
+                {t("profile-champions-unowned-badge")}
+              </div>
+            ) : null}
             <div className="user-page-champion-card-name">
               <span>{focusedChampion.champion.name}</span>
+              {focusedChampion.champion.ownershipStatus !== "owned" ? <ChampionPrice /> : null}
             </div>
           </article>
           <ChampionBaseStats champion={focusedChampion.champion} t={t} />
           <ChampionFocusDetails champion={focusedChampion.champion} t={t} />
+          {purchaseChampion ? (
+            <ChampionPurchaseModal
+              busy={purchasingChampionId === purchaseChampion.id}
+              champion={purchaseChampion}
+              error={purchaseError}
+              onClose={() => {
+                setPurchaseChampion(undefined);
+                setPurchaseError(undefined);
+              }}
+              onPurchase={() => void handleChampionPurchase(purchaseChampion)}
+              t={t}
+            />
+          ) : null}
         </div>
       ) : null}
     </div>

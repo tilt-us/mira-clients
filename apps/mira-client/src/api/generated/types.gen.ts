@@ -343,6 +343,7 @@ export type AuthUser = {
     email?: string;
     preferredUsername?: string;
     displayName?: string;
+    tagId?: string;
     avatarUrl?: string;
 };
 

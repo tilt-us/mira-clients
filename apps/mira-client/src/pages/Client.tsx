@@ -838,11 +838,18 @@ function mapLobbyToMatchPlayers(
         const avatarUrl = isCurrentPlayer
           ? currentPlayerProfile?.avatarUrl ?? member.avatarUrl
           : member.avatarUrl;
+        const roles = getMemberLobbyRoles(member);
 
         return {
           publicId: member.publicId as number,
           displayName: getPublicDisplayName(displayName, "User"),
           avatarUrl,
+          ...(roles[0]
+            ? { primaryRole: toApiLobbyRole(roles[0]) }
+            : {}),
+          ...(roles[1]
+            ? { secondaryRole: toApiLobbyRole(roles[1]) }
+            : {}),
         };
       }) ?? []
   );
@@ -1775,6 +1782,18 @@ function Client({
     ? Math.max(0, Math.floor((lobbySearchNow - lobbySearchStartedAt) / 1000))
     : 0;
   const lobbySearchTime = formatLobbySearchTime(lobbySearchSeconds);
+  const allLobbyMembersHaveRoles =
+    !activeLobby?.members?.length ||
+    activeLobby.members.every((member) => {
+      const roles = getEffectiveLobbyMemberRoles(member);
+
+      return Boolean(roles[0] && (lobbyIsFull || roles[1]));
+    });
+  const lobbySearchDisabledByRoles =
+    Boolean(activeLobby?.id) &&
+    isCurrentUserLobbyHost &&
+    !lobbyIsSearching &&
+    !allLobbyMembersHaveRoles;
   const currentPlayerAcceptance = pendingMatch?.acceptances?.find((acceptance) => {
     return acceptance.playerPublicId === profilePublicId;
   });
@@ -2721,6 +2740,10 @@ function Client({
     }
 
     requeueingLobbyIdsRef.current.add(lobby.id);
+    const lobbyWithCachedRoles =
+      lobby.id === activeLobbyRef.current?.id
+        ? getActiveLobbyWithCachedRoles() ?? lobby
+        : lobby;
 
     try {
       await searchRanked({
@@ -2733,7 +2756,7 @@ function Client({
         body: {
           lobbyId: lobby.id,
           mode: "RANKED",
-          players: mapLobbyToMatchPlayers(lobby, currentMatchPlayerProfile),
+          players: mapLobbyToMatchPlayers(lobbyWithCachedRoles, currentMatchPlayerProfile),
         },
       });
 
@@ -4060,6 +4083,11 @@ function Client({
 
     setLobbyError(undefined);
 
+    if (!allLobbyMembersHaveRoles) {
+      notifyLobbyError(t("lobby-roles-required"));
+      return;
+    }
+
     const roleLimitError = getLobbyRoleLimitError(
       getActiveLobbyWithCachedRoles() ?? activeLobby,
     );
@@ -4071,6 +4099,7 @@ function Client({
 
     const wasLocallyAborted = activeLobby.id === lobbySearchAbortedLobbyId;
     setLobbySearchAbortedLobbyId(undefined);
+    const activeLobbyWithCachedRoles = getActiveLobbyWithCachedRoles() ?? activeLobby;
 
     if (!wasLocallyAborted && activeLobby.status === "SEARCHING") {
       const startedAt = activeLobby.updatedAt ? Date.parse(activeLobby.updatedAt) : Date.now();
@@ -4085,7 +4114,10 @@ function Client({
         body: {
           lobbyId: activeLobby.id,
           mode: "RANKED",
-          players: mapLobbyToMatchPlayers(activeLobby, currentMatchPlayerProfile),
+          players: mapLobbyToMatchPlayers(
+            activeLobbyWithCachedRoles,
+            currentMatchPlayerProfile,
+          ),
         },
       });
 
@@ -4109,7 +4141,10 @@ function Client({
         body: {
           lobbyId: activeLobby.id,
           mode: "RANKED",
-          players: mapLobbyToMatchPlayers(activeLobby, currentMatchPlayerProfile),
+          players: mapLobbyToMatchPlayers(
+            activeLobbyWithCachedRoles,
+            currentMatchPlayerProfile,
+          ),
         },
       }),
     ]);
@@ -5488,6 +5523,7 @@ function Client({
               backSignal={championTabBackSignal}
               onFocusChange={setChampionTabFocused}
               t={t}
+              userId={profilePublicId}
             />
           ) : null}
           <div className="user-page-details" />
@@ -5841,6 +5877,11 @@ function Client({
               <div className="lobby-search-timer" aria-live="polite">
                 <span>{lobbySearchTime}</span>
               </div>
+              {lobbySearchDisabledByRoles ? (
+                <p className="lobby-search-role-warning">
+                  {t("lobby-roles-required")}
+                </p>
+              ) : null}
               <div className="lobby-search-actions">
                 <button
                   aria-label={t("lobby-leave")}
@@ -5852,7 +5893,7 @@ function Client({
                 </button>
                 <button
                   className="lobby-search-button"
-                  disabled={!isCurrentUserLobbyHost}
+                  disabled={!isCurrentUserLobbyHost || lobbySearchDisabledByRoles}
                   type="button"
                   onClick={() => void handleLobbySearch()}
                 >
