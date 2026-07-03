@@ -33,7 +33,7 @@ const DEFAULT_MATCHMAKING_API_BASE_URL: &str = "https://api.tilt-us.com/match";
 #[cfg(debug_assertions)]
 const DEFAULT_CHAMPION_API_BASE_URL: &str = "http://localhost:8084";
 #[cfg(not(debug_assertions))]
-const DEFAULT_CHAMPION_API_BASE_URL: &str = "https://api.tilt-us.com/champions";
+const DEFAULT_CHAMPION_API_BASE_URL: &str = "https://api.tilt-us.com/game";
 const DEFAULT_KEYCLOAK_REALM: &str = "mira";
 const DEFAULT_KEYCLOAK_CLIENT_ID: &str = "mira-bevy";
 const DEFAULT_KEYCLOAK_PASSWORD_CLIENT_ID: &str = "mira-e2e";
