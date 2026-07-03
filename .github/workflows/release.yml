@@ -162,7 +162,7 @@ jobs:
             label: linux
           - os: windows-latest
             label: windows
-          - os: macos-latest
+          - os: macos-15
             label: macos
 
     steps:
@@ -239,7 +239,7 @@ jobs:
           - os: windows-latest
             label: windows
             bundles: nsis
-          - os: macos-latest
+          - os: macos-15
             label: macos
             bundles: dmg
 
@@ -464,7 +464,7 @@ jobs:
           - os: windows-latest
             label: windows
             bundles: nsis
-          - os: macos-latest
+          - os: macos-15
             label: macos
             bundles: dmg
 
