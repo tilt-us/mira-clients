@@ -2,7 +2,7 @@ import type { Page, Route } from "@playwright/test";
 import { createUnsignedJwt, getKeycloakIssuerUrl } from "./auth";
 
 const apiRequestPattern =
-  /^(https:\/\/api\.tilt-us\.com|http:\/\/localhost:808[0-3])\//;
+  /^(https:\/\/api\.tilt-us\.com|http:\/\/localhost:808[0-4])\//;
 
 const now = new Date("2026-06-25T10:00:00.000Z").toISOString();
 
@@ -177,6 +177,22 @@ async function fulfillMockApiRequest(route: Route) {
     return;
   }
 
+  if (pathname === "/api/champions") {
+    const weekly = url.searchParams.get("weekly") === "true";
+    const owned = url.searchParams.get("owned") === "true";
+    const champions = weekly
+      ? [{ name: "Sophia" }, { name: "Yuna" }]
+      : owned
+        ? [{ name: "Lira" }]
+        : [{ name: "Ignara" }, { name: "Lira" }, { name: "Sophia" }, { name: "Yuna" }];
+
+    await route.fulfill({
+      contentType: "application/json",
+      json: champions,
+    });
+    return;
+  }
+
   await route.fulfill({
     contentType: "application/json",
     json: {},
@@ -184,5 +200,5 @@ async function fulfillMockApiRequest(route: Route) {
 }
 
 function stripServicePrefix(pathname: string) {
-  return pathname.replace(/^\/(?:auth|live|match)(?=\/api\/)/, "");
+  return pathname.replace(/^\/(?:auth|live|match|game|champions)(?=\/api\/)/, "");
 }

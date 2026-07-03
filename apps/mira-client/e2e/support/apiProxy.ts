@@ -1,7 +1,7 @@
 import type { Page, Route } from "@playwright/test";
 
 const proxiedApiOrigins =
-  /^(https:\/\/api\.tilt-us\.com|http:\/\/localhost:808[0-3])\//;
+  /^(https:\/\/api\.tilt-us\.com|http:\/\/localhost:808[0-4])\//;
 
 export async function proxyApiRequests(page: Page) {
   await page.route(proxiedApiOrigins, async (route) => {

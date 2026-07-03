@@ -35,6 +35,10 @@ export function getCredentials(): TestCredentials {
   };
 }
 
+export function shouldUseRealKeycloakLogin() {
+  return process.env.E2E_REAL_LOGIN === "1";
+}
+
 export function getKeycloakIssuerUrl() {
   const baseUrl =
     process.env.VITE_KEYCLOAK_BASE_URL ??

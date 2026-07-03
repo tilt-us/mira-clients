@@ -1,9 +1,14 @@
 import { expect, test } from "@playwright/test";
-import { getCredentials } from "./support/auth";
+import { getCredentials, shouldUseRealKeycloakLogin } from "./support/auth";
 import { proxyApiRequests } from "./support/apiProxy";
+import { mockAuthenticatedClientApi } from "./support/mockClientApi";
 
 test.beforeEach(async ({ page }) => {
-  await proxyApiRequests(page);
+  if (shouldUseRealKeycloakLogin()) {
+    await proxyApiRequests(page);
+  } else {
+    await mockAuthenticatedClientApi(page);
+  }
   await page.addInitScript(() => {
     localStorage.removeItem("mira.auth.tokens");
     sessionStorage.removeItem("mira.auth.state");
