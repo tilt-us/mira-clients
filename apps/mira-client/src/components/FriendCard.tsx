@@ -226,10 +226,6 @@ function FriendCard({
       onMouseEnter={(event) => onTooltipShow(friend.id, event.currentTarget)}
       onMouseLeave={onTooltipHide}
       onPointerDown={(event) => {
-        if (sidebarCollapsed) {
-          return;
-        }
-
         onDragPointerDown(friend.id, event);
       }}
     >

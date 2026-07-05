@@ -1,3 +1,4 @@
+use bevy::app::AppExit;
 use bevy::asset::AssetMetaCheck;
 use bevy::feathers::{FeathersPlugins, dark_theme::create_dark_theme, theme::UiTheme};
 use bevy::prelude::*;
@@ -45,6 +46,16 @@ impl Plugin for ClientAppPlugins {
             .get_resource::<ClientLaunchGate>()
             .and_then(ClientLaunchGate::blocked_message)
             .is_some();
+        let window_resolution = if launch_blocked {
+            WindowResolution::new(960, 540)
+        } else {
+            WindowResolution::new(1920, 1080)
+        };
+        let window_mode = if launch_blocked {
+            WindowMode::Windowed
+        } else {
+            bevy_window_mode(screen_mode)
+        };
 
         app.insert_resource(Time::<Fixed>::from_hz(FIXED_TIMESTEP_HZ))
             .insert_resource(health_bar_style)
@@ -54,8 +65,8 @@ impl Plugin for ClientAppPlugins {
                     .set(WindowPlugin {
                         primary_window: Some(Window {
                             title: "mira-game-client".to_string(),
-                            resolution: WindowResolution::new(1920, 1080),
-                            mode: bevy_window_mode(screen_mode),
+                            resolution: window_resolution,
+                            mode: window_mode,
                             ..default()
                         }),
                         ..default()
@@ -119,12 +130,16 @@ struct BlockedLaunchScreenPlugin;
 
 impl Plugin for BlockedLaunchScreenPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn_blocked_launch_screen);
+        app.add_systems(Startup, spawn_blocked_launch_screen)
+            .add_systems(Update, handle_blocked_launch_close_button);
     }
 }
 
 #[derive(Component)]
 struct BlockedLaunchScreenRoot;
+
+#[derive(Component)]
+struct BlockedLaunchCloseButton;
 
 fn spawn_blocked_launch_screen(mut commands: Commands, launch_gate: Res<ClientLaunchGate>) {
     let Some(message) = launch_gate.blocked_message() else {
@@ -153,7 +168,6 @@ fn spawn_blocked_launch_screen(mut commands: Commands, launch_gate: Res<ClientLa
         },
         BackgroundColor(Color::srgb_u8(0x0B, 0x10, 0x18)),
         ZIndex(20_000),
-        Pickable::IGNORE,
         children![
             (
                 Text::new("MIRA"),
@@ -176,6 +190,42 @@ fn spawn_blocked_launch_screen(mut commands: Commands, launch_gate: Res<ClientLa
                     TextLayout::new_with_justify(Justify::Center),
                 )],
             ),
+            (
+                Button,
+                BlockedLaunchCloseButton,
+                Node {
+                    width: px(156),
+                    height: px(44),
+                    display: Display::Flex,
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    border: UiRect::all(px(1)),
+                    border_radius: BorderRadius::all(px(6)),
+                    ..default()
+                },
+                BackgroundColor(Color::srgb_u8(0xF2, 0xC4, 0x5B)),
+                BorderColor::all(Color::srgba(1.0, 1.0, 1.0, 0.22)),
+                children![(
+                    Text::new("Close"),
+                    TextFont::from_font_size(15.0),
+                    TextColor(Color::srgb_u8(0x0B, 0x10, 0x18)),
+                    TextLayout::new_with_justify(Justify::Center),
+                )],
+            ),
         ],
     ));
+}
+
+fn handle_blocked_launch_close_button(
+    mut interactions: Query<
+        &Interaction,
+        (Changed<Interaction>, With<Button>, With<BlockedLaunchCloseButton>),
+    >,
+    mut app_exit: MessageWriter<AppExit>,
+) {
+    for interaction in &mut interactions {
+        if *interaction == Interaction::Pressed {
+            app_exit.write(AppExit::Success);
+        }
+    }
 }

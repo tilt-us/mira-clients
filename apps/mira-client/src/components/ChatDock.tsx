@@ -779,9 +779,6 @@ function ChatDock({
 
   useEffect(() => {
     const autoRoomIds = new Set(autoRooms.map((room) => room.id));
-    const hasNewAutoRoom = autoRooms.some((room) => {
-      return !previousAutoRoomIdsRef.current.has(room.id);
-    });
     const removedGroupRoomIds = contactsRef.current
       .filter((contact) => {
         return (
@@ -801,10 +798,6 @@ function ChatDock({
         baseUrl: CHAT_API_BASE_URL,
         path: { roomId },
       });
-    }
-
-    if (hasNewAutoRoom) {
-      setOpen(true);
     }
 
     setContacts((currentContacts) => {
@@ -932,7 +925,6 @@ function ChatDock({
       }
 
       if (discoveredContacts.length > 0) {
-        setOpen(true);
         setContacts((currentContacts) => {
           const currentContactIds = new Set(
             currentContacts.map((contact) => contact.id),
@@ -1235,9 +1227,11 @@ function ChatDock({
       aria-expanded={open}
       aria-label={t(open ? "chat-close" : "chat-open")}
       className={
-        chatPosition === "left"
-          ? "chat-dock-tab chat-dock-tab-left"
-          : "chat-dock-tab"
+        [
+          "chat-dock-tab",
+          chatPosition === "left" ? "chat-dock-tab-left" : "",
+          totalUnreadCount > 0 && !open ? "chat-dock-tab-attention" : "",
+        ].filter(Boolean).join(" ")
       }
       data-placement={placement}
       type="button"

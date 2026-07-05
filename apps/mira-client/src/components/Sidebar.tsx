@@ -714,6 +714,7 @@ function Sidebar({
   const foldersRef = useRef(folders);
   const friendFoldersRef = useRef(friendFolders);
   const knownFriendIdsRef = useRef<Set<string> | undefined>(undefined);
+  const suppressNextFriendClickRef = useRef<string | undefined>(undefined);
   const suppressNextFolderClickRef = useRef<string | undefined>(undefined);
   const createFolderInputRef = useRef<HTMLInputElement | null>(null);
   const friendAddSearchInputRef = useRef<HTMLInputElement | null>(null);
@@ -1049,13 +1050,20 @@ function Sidebar({
         .elementFromPoint(event.clientX, event.clientY)
         ?.closest<HTMLElement>("[data-folder-drop-id]");
 
-      setDragState({
+      if (isActive) {
+        event.preventDefault();
+      }
+
+      const nextDragState = {
         ...currentDragState,
         active: isActive,
         overFolderId: dropTarget?.dataset.folderDropId,
         x: event.clientX,
         y: event.clientY,
-      });
+      };
+
+      dragStateRef.current = nextDragState;
+      setDragState(nextDragState);
     }
 
     function handlePointerUp(event: globalThis.PointerEvent) {
@@ -1071,6 +1079,15 @@ function Sidebar({
           currentDragState.friendId,
           currentDragState.overFolderId,
         );
+      }
+
+      if (currentDragState.active) {
+        suppressNextFriendClickRef.current = currentDragState.friendId;
+        window.setTimeout(() => {
+          if (suppressNextFriendClickRef.current === currentDragState.friendId) {
+            suppressNextFriendClickRef.current = undefined;
+          }
+        }, 0);
       }
 
       const lobbyDropTarget = document
@@ -1613,10 +1630,6 @@ function Sidebar({
     friendId: string,
     event: PointerEvent<HTMLElement>,
   ) {
-    if (sidebarCollapsed) {
-      return;
-    }
-
     if (queueActionsLocked) {
       return;
     }
@@ -1625,7 +1638,10 @@ function Sidebar({
       return;
     }
 
-    event.preventDefault();
+    if (!sidebarCollapsed) {
+      event.preventDefault();
+    }
+
     event.currentTarget.setPointerCapture(event.pointerId);
     setFriendTooltip(undefined);
     setDragState({
@@ -1642,10 +1658,6 @@ function Sidebar({
     folderId: string,
     event: PointerEvent<HTMLElement>,
   ) {
-    if (sidebarCollapsed) {
-      return;
-    }
-
     if (event.button !== 0 || renamingFolderId === folderId) {
       return;
     }
@@ -1870,6 +1882,11 @@ function Sidebar({
           onJoinParty={handleJoinParty}
           onMenuToggle={(friendId) =>
             setOpenMenuFriendId((currentFriendId) => {
+              if (suppressNextFriendClickRef.current === friendId) {
+                suppressNextFriendClickRef.current = undefined;
+                return currentFriendId;
+              }
+
               setOpenMenuFolderId(undefined);
               setFriendTooltip(undefined);
               return currentFriendId === friendId ? undefined : friendId;

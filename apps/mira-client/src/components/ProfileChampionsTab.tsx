@@ -24,7 +24,7 @@ type ChampionCategoryId =
   | "guardian"
   | "caster"
   | "mage";
-type ChampionRadarStatId = "damage" | "utility" | "control" | "engage" | "defense";
+type ChampionRadarStatId = "damage" | "utility" | "control" | "mobility" | "defense";
 type ChampionScalingStat = "ad" | "ap";
 
 type ChampionAbility = {
@@ -95,7 +95,7 @@ const championRadarStats: Array<{ id: ChampionRadarStatId; labelKey: string }> =
   { id: "damage", labelKey: "profile-champions-radar-damage" },
   { id: "utility", labelKey: "profile-champions-radar-utility" },
   { id: "control", labelKey: "profile-champions-radar-control" },
-  { id: "engage", labelKey: "profile-champions-radar-engage" },
+  { id: "mobility", labelKey: "profile-champions-radar-mobility" },
   { id: "defense", labelKey: "profile-champions-radar-defense" },
 ];
 
@@ -158,7 +158,7 @@ const fallbackUserPageChampions: UserPageChampion[] = [
       health: 620,
       healthRegen: 1.8,
       manaRegen: 1.2,
-      radar: { damage: 86, utility: 44, control: 68, engage: 72, defense: 52 },
+      radar: { damage: 86, utility: 44, control: 68, mobility: 72, defense: 52 },
       resistance: 31,
     },
     wallpaper: ignaraWallpaper,
@@ -209,7 +209,7 @@ const fallbackUserPageChampions: UserPageChampion[] = [
       health: 560,
       healthRegen: 1.4,
       manaRegen: 1.5,
-      radar: { damage: 82, utility: 56, control: 42, engage: 78, defense: 38 },
+      radar: { damage: 82, utility: 56, control: 42, mobility: 78, defense: 38 },
       resistance: 26,
     },
     wallpaper: liraWallpaper,
@@ -260,7 +260,7 @@ const fallbackUserPageChampions: UserPageChampion[] = [
       health: 540,
       healthRegen: 1.2,
       manaRegen: 2.1,
-      radar: { damage: 76, utility: 88, control: 58, engage: 38, defense: 46 },
+      radar: { damage: 76, utility: 88, control: 58, mobility: 38, defense: 46 },
       resistance: 34,
     },
     wallpaper: sophiaWallpaper,
@@ -311,7 +311,7 @@ const fallbackUserPageChampions: UserPageChampion[] = [
       health: 690,
       healthRegen: 2.2,
       manaRegen: 1.1,
-      radar: { damage: 52, utility: 70, control: 76, engage: 54, defense: 86 },
+      radar: { damage: 52, utility: 70, control: 76, mobility: 54, defense: 86 },
       resistance: 38,
     },
     wallpaper: yunaWallpaper,
@@ -548,7 +548,9 @@ function getChampionServerStats(champion: ApiChampionRecord, fallback: UserPageC
       control:
         getNumberValue(radar, ["control", "crowdControl", "crowd_control"]) ??
         fallback.serverStats.radar.control,
-      engage: getNumberValue(radar, ["engage"]) ?? fallback.serverStats.radar.engage,
+      mobility:
+        getNumberValue(radar, ["mobility", "engage"]) ??
+        fallback.serverStats.radar.mobility,
       defense:
         getNumberValue(radar, ["defense", "defence"]) ?? fallback.serverStats.radar.defense,
     },
