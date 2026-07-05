@@ -35,6 +35,7 @@ import {
   getProfileLevel,
   getProfileName,
   getProfileTagId,
+  hasPublicAvatarConsent,
 } from "../utils/profile";
 
 /**
@@ -518,7 +519,7 @@ function Authentication() {
 
     if (
       !profileKey ||
-      nextProfile.avatarRightsConsented ||
+      hasPublicAvatarConsent(nextProfile) ||
       (profileSetupPreference?.completed && !profileSetupPreference.useAvatar)
     ) {
       setOauthProfileSetup(undefined);
@@ -1071,7 +1072,7 @@ function Authentication() {
   const profileTagId = profile ? getProfileTagId(profile) : undefined;
   const profileAvatarAllowed = oauthProfileSetup
     ? oauthProfileSetup.useAvatar
-    : Boolean(profile?.avatarRightsConsented);
+    : hasPublicAvatarConsent(profile);
   const profileAvatarUrl = profile
     ? profileAvatarAllowed
       ? getProfileAvatarUrl(profile, readTokens()?.accessToken)

@@ -34,6 +34,10 @@ const DEFAULT_MATCHMAKING_API_BASE_URL: &str = "https://api.tilt-us.com/match";
 const DEFAULT_CHAMPION_API_BASE_URL: &str = "http://localhost:8084";
 #[cfg(not(debug_assertions))]
 const DEFAULT_CHAMPION_API_BASE_URL: &str = "https://api.tilt-us.com/game";
+#[cfg(debug_assertions)]
+const DEFAULT_CHAT_API_BASE_URL: &str = "http://localhost:8085";
+#[cfg(not(debug_assertions))]
+const DEFAULT_CHAT_API_BASE_URL: &str = "https://api.tilt-us.com/chat";
 const DEFAULT_KEYCLOAK_REALM: &str = "mira";
 const DEFAULT_KEYCLOAK_CLIENT_ID: &str = "mira-bevy";
 const DEFAULT_KEYCLOAK_PASSWORD_CLIENT_ID: &str = "mira-e2e";
@@ -71,6 +75,7 @@ struct ClientConfig {
     live_api_base_url: String,
     matchmaking_api_base_url: String,
     champion_api_base_url: String,
+    chat_api_base_url: String,
     no_shared_auth: bool,
 }
 
@@ -86,6 +91,7 @@ struct ServiceConfigFile {
     live_api_base_url: Option<String>,
     matchmaking_api_base_url: Option<String>,
     champion_api_base_url: Option<String>,
+    chat_api_base_url: Option<String>,
 }
 
 #[derive(Default, serde::Deserialize)]
@@ -1617,6 +1623,10 @@ impl ClientConfigFile {
             champion_api_base_url: normalize_base_url(
                 services.champion_api_base_url.as_deref(),
                 DEFAULT_CHAMPION_API_BASE_URL,
+            ),
+            chat_api_base_url: normalize_base_url(
+                services.chat_api_base_url.as_deref(),
+                DEFAULT_CHAT_API_BASE_URL,
             ),
             no_shared_auth: env_flag_enabled("MIRA_CLIENT_NO_SHARED_AUTH"),
         }

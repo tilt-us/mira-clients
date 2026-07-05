@@ -93,6 +93,7 @@ For browser/Vite development you can still override the addresses with:
 VITE_API_BASE_URL=http://localhost:8080
 VITE_LIVE_API_BASE_URL=http://localhost:8082
 VITE_MATCHMAKING_API_BASE_URL=http://localhost:8083
+VITE_CHAT_API_BASE_URL=http://localhost:8085
 VITE_KEYCLOAK_BASE_URL=http://localhost:8081
 VITE_KEYCLOAK_REALM=mira
 VITE_KEYCLOAK_CLIENT_ID=mira-bevy
@@ -111,18 +112,20 @@ By default, `npm run generate:api` reads and merges:
 - `https://api.tilt-us.com/auth/v3/api-docs`
 - `https://api.tilt-us.com/live/v3/api-docs`
 - `https://api.tilt-us.com/match/v3/api-docs`
+- `https://api.tilt-us.com/chat/v3/api-docs`
 
 Use `npm run generate:local:api` to generate from localhost instead:
 
 - `http://localhost:8080/v3/api-docs`
 - `http://localhost:8082/v3/api-docs`
 - `http://localhost:8083/v3/api-docs`
+- `http://localhost:8085/v3/api-docs`
 
 The services must expose those endpoints, for example with Springdoc OpenAPI.
 If the backends are running somewhere else, override the input URLs:
 
 ```bash
-OPENAPI_INPUTS=http://localhost:8080/v3/api-docs,http://localhost:8082/v3/api-docs,http://localhost:8083/v3/api-docs npm run generate:api
+OPENAPI_INPUTS=http://localhost:8080/v3/api-docs,http://localhost:8082/v3/api-docs,http://localhost:8083/v3/api-docs,http://localhost:8085/v3/api-docs npm run generate:api
 ```
 
 To generate from a single OpenAPI document, use the legacy input override:

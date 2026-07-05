@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type {
   ApiMatchResponse,
   MatchLobbyResponse,
@@ -26,7 +26,7 @@ type ChampionSelectionProps = {
   match: ApiMatchResponse;
   onChampionHover: (champion?: string, publish?: boolean) => Promise<void>;
   onChampionSelect: (champion: string) => Promise<boolean>;
-  onPickTimeout: () => void;
+  onPickTimeout: (activePickPublicIds: number[]) => void;
   onReadyPhaseComplete: () => Promise<void> | void;
   t: Translate;
 };
@@ -412,22 +412,39 @@ function ChampionSelection({
   const [phaseStartedAt, setPhaseStartedAt] = useState(Date.now());
   const [phaseNow, setPhaseNow] = useState(Date.now());
   const [serverClockOffsetMs, setServerClockOffsetMs] = useState(0);
-  const [activePickGroupIndex, setActivePickGroupIndex] = useState(0);
-  const [completedWarmupPhaseEndsAtMs, setCompletedWarmupPhaseEndsAtMs] =
-    useState<number>();
+  const [pickGroupPhaseEndsAtMs, setPickGroupPhaseEndsAtMs] = useState<number>();
   const [preselectedChampionWallpaper, setPreselectedChampionWallpaper] = useState<string>();
   const [preselectedChampion, setPreselectedChampion] = useState<string>();
   const [gameClientStarting, setGameClientStarting] = useState(false);
   const [localSelectedChampion, setLocalSelectedChampion] = useState<string>();
   const [selectingChampion, setSelectingChampion] = useState<string>();
   const [availableChampionNames, setAvailableChampionNames] = useState<Set<string>>();
+  const previousPickTimerGroupRef = useRef({
+    activePhase: "",
+    groupIndex: 0,
+    matchId: undefined as string | undefined,
+  });
   const teams = useMemo(() => getMatchTeams(match), [match]);
   const pickGroups = useMemo(() => getPickGroups(teams), [teams]);
   const selectedPublicIds = useMemo(() => getSelectedPublicIds(match), [match]);
-  const selectedSignature = match.championSelections
-    ?.map((selection) => `${selection.playerPublicId}:${selection.champion}`)
-    .sort()
-    .join("|") ?? "";
+  const serverSelectedChampion = match.championSelections?.find((selection) => {
+    return selection.playerPublicId === currentPlayerPublicId;
+  })?.champion;
+  const selectedChampion = serverSelectedChampion ?? localSelectedChampion;
+  const effectiveSelectedPublicIds = useMemo(() => {
+    const publicIds = new Set(selectedPublicIds);
+
+    if (localSelectedChampion && typeof currentPlayerPublicId === "number") {
+      publicIds.add(currentPlayerPublicId);
+    }
+
+    return publicIds;
+  }, [currentPlayerPublicId, localSelectedChampion, selectedPublicIds]);
+  const nextPickGroupIndex = pickGroups.findIndex((group) =>
+    group.some((player) => !effectiveSelectedPublicIds.has(player.publicId ?? -1)),
+  );
+  const activePickGroupIndex =
+    nextPickGroupIndex >= 0 ? nextPickGroupIndex : pickGroups.length;
   const activePickGroup = pickGroups[activePickGroupIndex] ?? [];
   const activePickPublicIds = new Set(
     activePickGroup
@@ -444,9 +461,6 @@ function ChampionSelection({
   })
     ? 1
     : 0;
-  const serverSelectedChampion = match.championSelections?.find((selection) => {
-    return selection.playerPublicId === currentPlayerPublicId;
-  })?.champion;
   const phaseEndsAtMs = parseApiTimestamp(match.phaseEndsAt);
   const serverChampionPhase = getServerChampionPhase(match);
   const activePhase =
@@ -456,7 +470,6 @@ function ChampionSelection({
       : match.status === "PENDING_ACCEPTANCE"
         ? "warmup"
         : "pick");
-  const selectedChampion = serverSelectedChampion ?? localSelectedChampion;
   const canCurrentPlayerPick =
     activePhase === "pick" &&
     typeof currentPlayerPublicId === "number" &&
@@ -552,10 +565,12 @@ function ChampionSelection({
       : activePhase === "ready"
         ? readySeconds
         : pickSeconds;
+  const effectivePhaseEndsAtMs =
+    activePhase === "pick" ? (pickGroupPhaseEndsAtMs ?? phaseEndsAtMs) : phaseEndsAtMs;
   const phaseFallbackElapsedMs = Math.max(0, phaseNow - phaseStartedAt);
   const phaseRemainingMs =
-    phaseEndsAtMs !== undefined
-      ? Math.max(0, phaseEndsAtMs - (phaseNow + serverClockOffsetMs))
+    effectivePhaseEndsAtMs !== undefined
+      ? Math.max(0, effectivePhaseEndsAtMs - (phaseNow + serverClockOffsetMs))
       : Math.max(0, phaseDurationSeconds * 1_000 - phaseFallbackElapsedMs);
   const visiblePhaseDurationMs =
     activePhase === "pick" ? pickSeconds * 1_000 : phaseDurationSeconds * 1_000;
@@ -594,6 +609,10 @@ function ChampionSelection({
       ? preselectedChampion
       : undefined;
 
+  function getFallbackPickGroupPhaseEndsAtMs() {
+    return Date.now() + serverClockOffsetMs + pickSeconds * 1_000 + pickGraceMs;
+  }
+
   function isChampionAvailable(champion: string) {
     return !championAvailabilityLoaded || availableChampionNames.has(champion.toLowerCase());
   }
@@ -611,17 +630,6 @@ function ChampionSelection({
       setLocalSelectedChampion(champion);
       setPreselectedChampion(undefined);
       void onChampionHover(undefined, true);
-      if (
-        activePickGroup.length > 0 &&
-        activePickGroup.every((player) => {
-          return (
-            player.publicId === currentPlayerPublicId ||
-            selectedPublicIds.has(player.publicId ?? -1)
-          );
-        })
-      ) {
-        setActivePickGroupIndex((currentIndex) => currentIndex + 1);
-      }
     }
   }
 
@@ -658,6 +666,12 @@ function ChampionSelection({
       window.clearInterval(intervalId);
     };
   }, []);
+
+  useEffect(() => {
+    setLocalSelectedChampion(undefined);
+    setPreselectedChampion(undefined);
+    setPreselectedChampionWallpaper(undefined);
+  }, [match.matchId]);
 
   useEffect(() => {
     let ignore = false;
@@ -702,13 +716,47 @@ function ChampionSelection({
   }, [availableChampionNames, onChampionHover, preselectedChampion]);
 
   useEffect(() => {
+    const previousPickTimerGroup = previousPickTimerGroupRef.current;
+    const matchId = match.matchId;
+    const pickGroupChanged =
+      previousPickTimerGroup.groupIndex !== activePickGroupIndex;
+    const matchChanged = previousPickTimerGroup.matchId !== matchId;
+
+    previousPickTimerGroupRef.current = {
+      activePhase,
+      groupIndex: activePickGroupIndex,
+      matchId,
+    };
+
     setPhaseStartedAt(Date.now());
     setPhaseNow(Date.now());
-  }, [activePhase, activePickGroupIndex, match.phaseEndsAt]);
+
+    if (activePhase !== "pick") {
+      setPickGroupPhaseEndsAtMs(undefined);
+      return;
+    }
+
+    setPickGroupPhaseEndsAtMs(
+      pickGroupChanged && !matchChanged
+        ? getFallbackPickGroupPhaseEndsAtMs()
+        : (phaseEndsAtMs ?? getFallbackPickGroupPhaseEndsAtMs()),
+    );
+  }, [activePhase, activePickGroupIndex, match.matchId]);
 
   useEffect(() => {
-    setCompletedWarmupPhaseEndsAtMs(undefined);
-  }, [match.matchId]);
+    if (
+      activePhase !== "pick" ||
+      phaseEndsAtMs === undefined
+    ) {
+      return;
+    }
+
+    setPickGroupPhaseEndsAtMs((currentPhaseEndsAtMs) =>
+      currentPhaseEndsAtMs === undefined || phaseEndsAtMs > currentPhaseEndsAtMs
+        ? phaseEndsAtMs
+        : currentPhaseEndsAtMs,
+    );
+  }, [activePhase, phaseEndsAtMs, pickGroupPhaseEndsAtMs]);
 
   useEffect(() => {
     const serverNow = parseApiTimestamp(match.serverNow);
@@ -721,34 +769,12 @@ function ChampionSelection({
   }, [match.matchId, match.serverNow]);
 
   useEffect(() => {
-    if (
-      activePhase === "pick" &&
-      activePickGroup.length > 0 &&
-      activePickGroup.every((player) => selectedPublicIds.has(player.publicId ?? -1))
-    ) {
-      setActivePickGroupIndex((currentIndex) => currentIndex + 1);
-    }
-  }, [activePhase, activePickGroup, selectedPublicIds, selectedSignature]);
-
-  useEffect(() => {
-    if (activePhase === "warmup" && phaseRemainingMs <= 0) {
-      setCompletedWarmupPhaseEndsAtMs(phaseEndsAtMs);
-      return;
-    }
-
     if (activePhase === "pick" && phaseRemainingMs <= 0) {
       if (!canCurrentPlayerPick || selectingChampion) {
         return;
       }
 
-      if (
-        phaseEndsAtMs !== undefined &&
-        completedWarmupPhaseEndsAtMs === phaseEndsAtMs
-      ) {
-        return;
-      }
-
-      onPickTimeout();
+      onPickTimeout([...activePickPublicIds]);
     }
 
     if (
@@ -762,8 +788,6 @@ function ChampionSelection({
   }, [
     activePhase,
     canCurrentPlayerPick,
-    completedWarmupPhaseEndsAtMs,
-    phaseEndsAtMs,
     gameClientStarting,
     onPickTimeout,
     onReadyPhaseComplete,

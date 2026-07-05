@@ -38,6 +38,13 @@ type GetLobbyRolesOptions = {
   };
 };
 
+type DeleteChatRoomOptions = {
+  baseUrl?: string;
+  path: {
+    roomId: string;
+  };
+};
+
 type GetChampionCatalogOptions = {
   query?: {
     owned?: boolean;
@@ -140,6 +147,22 @@ export function getLobbyRoles(options: GetLobbyRolesOptions) {
     }
 
     return result;
+  });
+}
+
+export function deleteChatRoom(options: DeleteChatRoomOptions) {
+  return client.delete<{ 204: void; 409: unknown }, unknown, false>({
+    url: "/api/chats/rooms/{roomId}",
+    ...options,
+  }).then((result) => {
+    if (result.response?.status !== 404) {
+      return result;
+    }
+
+    return client.delete<{ 204: void; 409: unknown }, unknown, false>({
+      url: "/api/chats/{roomId}",
+      ...options,
+    });
   });
 }
 

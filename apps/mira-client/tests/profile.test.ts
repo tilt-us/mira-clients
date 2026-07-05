@@ -7,7 +7,10 @@ import {
   getProfileLevel,
   getProfileName,
   getProfileTagId,
+  getPublicAvatarUrl,
   getPublicDisplayName,
+  hasAvatarRightsConsentDate,
+  hasPublicAvatarConsent,
   normalizeTagId,
 } from "../src/utils/profile";
 
@@ -60,6 +63,39 @@ describe("profile level and tag helpers", () => {
 });
 
 describe("profile avatar helpers", () => {
+  test("requires avatar rights consent for public avatar URLs", () => {
+    expect(
+      getPublicAvatarUrl({
+        avatarRightsConsented: true,
+        avatarUrl: "https://cdn.mira.test/public-avatar.png",
+      }),
+    ).toBe("https://cdn.mira.test/public-avatar.png");
+    expect(
+      getPublicAvatarUrl({
+        avatarRightsConsentedAt: "2026-01-02T03:04:05.000Z",
+        avatarUrl: "https://cdn.mira.test/dated-avatar.png",
+      }),
+    ).toBe("https://cdn.mira.test/dated-avatar.png");
+    expect(
+      getPublicAvatarUrl({
+        avatarUrl: "https://cdn.mira.test/private-avatar.png",
+      }),
+    ).toBeUndefined();
+  });
+
+  test("detects avatar rights consent fields", () => {
+    expect(hasPublicAvatarConsent({ avatarRightsConsented: true })).toBe(true);
+    expect(hasPublicAvatarConsent({ consentedAt: "2026-01-02" })).toBe(true);
+    expect(hasPublicAvatarConsent({ avatarRightsConsented: false })).toBe(false);
+    expect(hasPublicAvatarConsent()).toBe(false);
+    expect(
+      hasAvatarRightsConsentDate({
+        avatarRightsConsentedAt: "not-a-date",
+        consentedAt: "2026-01-02",
+      }),
+    ).toBe(false);
+  });
+
   test("uses the first safe avatar field", () => {
     expect(
       getAvatarUrl({
@@ -87,6 +123,12 @@ describe("profile avatar helpers", () => {
   test("rejects invalid and unsafe avatar URLs", () => {
     expect(getAvatarUrl({ avatarUrl: "notaurl" })).toBeUndefined();
     expect(getAvatarUrl({ avatarUrl: "file:///tmp/avatar.png" })).toBeUndefined();
+    expect(
+      getAvatarUrl({
+        avatarRightsConsented: false,
+        avatarUrl: "https://cdn.mira.test/avatar.png",
+      }),
+    ).toBeUndefined();
   });
 
   test("falls back to the picture claim in an access token", () => {
@@ -97,11 +139,18 @@ describe("profile avatar helpers", () => {
     expect(getProfileAvatarUrl({}, token)).toBe(
       "https://cdn.mira.test/token-picture.png",
     );
+    expect(
+      getProfileAvatarUrl(
+        { avatarUrl: "https://cdn.mira.test/profile-avatar.png" },
+        token,
+      ),
+    ).toBe("https://cdn.mira.test/profile-avatar.png");
   });
 
   test("ignores malformed token payloads", () => {
     expect(getProfileAvatarUrl({}, "invalid.token")).toBeUndefined();
     expect(getProfileAvatarUrl({}, "header..signature")).toBeUndefined();
+    expect(getProfileAvatarUrl({}, "header.bm90LWpzb24.signature")).toBeUndefined();
     expect(getProfileAvatarUrl({}, createUnsignedJwt({ picture: 42 }))).toBeUndefined();
   });
 });

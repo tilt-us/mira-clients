@@ -95,9 +95,84 @@ test("opens and closes chat from the dock and friend list", async ({ page }) => 
   await page.locator(".friend-card").filter({ hasText: "Lane Partner" }).dblclick();
   await expect(chatDock).toHaveClass(/open/);
   await expect(page.getByText("Lane Partner").last()).toBeVisible();
-  await expect(page.getByRole("textbox", { name: "Nachricht" })).toBeEnabled();
+  await expect(chatDock.getByText("Ready for duo?")).toBeVisible();
+  const messageInput = page.getByRole("textbox", { name: "Nachricht" });
+  await expect(messageInput).toBeEnabled();
+  await messageInput.fill("E2E private ping");
+  await page.getByRole("button", { name: "Nachricht senden" }).click();
+  await expect(messageInput).toBeEmpty();
+  await expect(page.getByText("E2E private ping")).toBeVisible();
   await page.getByRole("button", { name: "Chat schliessen" }).click();
   await expect(chatDock).not.toHaveClass(/open/);
+});
+
+test("discovers incoming private chat rooms from the room last message", async ({ page }) => {
+  const incomingCreatedAt = new Date("2026-06-25T10:01:00.000Z").toISOString();
+
+  await page.route(
+    /^(https:\/\/api\.tilt-us\.com|http:\/\/localhost:8085)\/(?:chat\/)?api\/chats(?:\/private-9001-9101\/messages)?(?:\?.*)?$/,
+    async (route) => {
+      const pathname = new URL(route.request().url()).pathname.replace(
+        /^\/chat(?=\/api\/)/,
+        "",
+      );
+
+      if (pathname === "/api/chats") {
+        await route.fulfill({
+          contentType: "application/json",
+          json: [
+            {
+              id: "private-9001-9101",
+              type: "PRIVATE",
+              participantPublicIds: [9001, 9101],
+              createdAt: incomingCreatedAt,
+              lastMessage: {
+                id: "message-e2e-incoming",
+                chatRoomId: "private-9001-9101",
+                senderPublicId: 9101,
+                content: "Incoming DB ping",
+                createdAt: incomingCreatedAt,
+              },
+              unreadCount: 0,
+              updatedAt: incomingCreatedAt,
+            },
+          ],
+        });
+        return;
+      }
+
+      await route.fulfill({
+        contentType: "application/json",
+        json: {
+          messages: [
+            {
+              id: "message-e2e-incoming",
+              chatRoomId: "private-9001-9101",
+              senderPublicId: 9101,
+              content: "Incoming DB ping",
+              createdAt: incomingCreatedAt,
+            },
+          ],
+        },
+      });
+    },
+  );
+
+  await loginToClient(page);
+  const chatDock = page.getByRole("region", { name: "Chat" });
+
+  await expect(chatDock).toHaveClass(/open/);
+  const incomingChat = chatDock.locator(".chat-contact-card").filter({
+    hasText: "Lane Partner",
+  });
+  await expect(incomingChat).toBeVisible();
+  await expect(incomingChat.locator(".chat-contact-unread-badge")).toHaveText("1");
+  await incomingChat.locator(".chat-contact-button").click();
+  await expect(chatDock.getByText("Incoming DB ping")).toBeVisible();
+  await incomingChat.getByRole("button", { name: "Chat-Karte schliessen" }).click();
+  await expect(incomingChat).toBeHidden();
+  await page.waitForTimeout(5_500);
+  await expect(incomingChat).toBeHidden();
 });
 
 test("supports the client friend list and folder workflow", async ({ page }) => {
