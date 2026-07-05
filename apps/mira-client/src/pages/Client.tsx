@@ -34,6 +34,7 @@ import {
   clearChampionHoverDuplicate,
   client,
   createRankedLobby,
+  deleteChatRoom,
   decide,
   decline,
   get as getMatch,
@@ -41,6 +42,7 @@ import {
   hoverChampionDuplicate,
   invite,
   invitations as listLobbyInvitations,
+  listRooms as listChatRooms,
   joinLobby,
   kickMember,
   leaveLobby,
@@ -56,11 +58,13 @@ import {
   startSearch,
   temporaryMatches,
   transferHost,
+  usersByPublicIds,
   getLobbyRoles,
   updateMe,
   updateLobbyMemberRoles,
   userStatusMe,
   type ApiMatchResponse,
+  type ChatRoomResponse,
   type FriendUserResponse,
   type LobbyInvitation,
   type LobbyMember,
@@ -70,6 +74,7 @@ import {
 } from "../api/client";
 import {
   API_BASE_URL,
+  CHAT_API_BASE_URL,
   LIVE_API_BASE_URL,
   MATCHMAKING_API_BASE_URL,
 } from "../api/config";
@@ -131,6 +136,7 @@ import {
   formatLobbySearchTime,
   GameModeIcon,
   getChampionSelectionTeamChatRoom,
+  getChampionSelectionLobbyChatRoom,
   getCurrentLobbyMember,
   getDesktopSessionConflictKey,
   getErrorMessage,
@@ -142,6 +148,7 @@ import {
   getLobbyDisplayName,
   getLobbyHost,
   getLobbyLeaveColor,
+  getLobbyMemberPublicAvatarUrl,
   getMemberName,
   getLobbyMemberDisplayIdentity,
   getLobbyMemberNameTag,
@@ -302,6 +309,9 @@ function Client({
   const [partyInviteOnlineUsers, setPartyInviteOnlineUsers] = useState<
     OnlineInviteUser[]
   >([]);
+  const [publicUsersByPublicId, setPublicUsersByPublicId] = useState<
+    Map<number, FriendUserResponse>
+  >(new Map());
   const [partyInviteOnlinePage, setPartyInviteOnlinePage] = useState(0);
   const [partyInviteSearching, setPartyInviteSearching] = useState(false);
   const [partyInviteBusyId, setPartyInviteBusyId] = useState<number>();
@@ -356,6 +366,190 @@ function Client({
   const lobbyLeaveColor = getLobbyLeaveColor(accentColor);
   const { notify } = useNotifications();
 
+  function getClientChatRoomId(room: ChatRoomResponse) {
+    const runtimeRoom = room as ChatRoomResponse & { id?: unknown };
+
+    return (
+      (typeof room.roomId === "string" && room.roomId) ||
+      (typeof runtimeRoom.id === "string" && runtimeRoom.id) ||
+      undefined
+    );
+  }
+
+  function getClientChatRoomType(room: ChatRoomResponse) {
+    return room.type?.toUpperCase();
+  }
+
+  function getClientChatRoomParticipantPublicIds(room: ChatRoomResponse) {
+    return (
+      room.participantPublicIds
+        ?.map((publicId) => toPublicId(publicId))
+        .filter((publicId): publicId is number => typeof publicId === "number") ?? []
+    );
+  }
+
+  function getClientChatRooms(data: unknown): ChatRoomResponse[] {
+    if (Array.isArray(data)) {
+      return data as ChatRoomResponse[];
+    }
+
+    if (data && typeof data === "object") {
+      const rooms = (data as { rooms?: unknown }).rooms;
+
+      if (Array.isArray(rooms)) {
+        return rooms as ChatRoomResponse[];
+      }
+    }
+
+    return [];
+  }
+
+  function chatRoomContextMatches(roomContextId: string | undefined, contextId: string) {
+    const normalizedRoomContextId = roomContextId?.toUpperCase();
+    const normalizedContextId = contextId.toUpperCase();
+
+    if (!normalizedRoomContextId) {
+      return false;
+    }
+
+    return (
+      normalizedRoomContextId === normalizedContextId ||
+      normalizedRoomContextId.startsWith(`${normalizedContextId}:`) ||
+      normalizedRoomContextId.endsWith(`:${normalizedContextId}`) ||
+      normalizedRoomContextId.includes(`:${normalizedContextId}:`)
+    );
+  }
+
+  async function getCurrentUserGroupChatRoomIds(
+    roomTypes: readonly ("LOBBY" | "TEAM")[],
+    contextIds: readonly string[],
+  ) {
+    if (typeof profilePublicId !== "number" || contextIds.length === 0) {
+      return [];
+    }
+
+    const roomsResult = await listChatRooms({
+      baseUrl: CHAT_API_BASE_URL,
+    }).catch(() => undefined);
+
+    if (!roomsResult || roomsResult.error) {
+      return [];
+    }
+
+    const roomTypeSet = new Set(roomTypes);
+
+    return getClientChatRooms(roomsResult.data)
+      .filter((room) => {
+        const roomId = getClientChatRoomId(room);
+        const roomType = getClientChatRoomType(room);
+        const participants = getClientChatRoomParticipantPublicIds(room);
+
+        return (
+          Boolean(roomId) &&
+          roomTypeSet.has(roomType as "LOBBY" | "TEAM") &&
+          participants.includes(profilePublicId) &&
+          contextIds.some((contextId) =>
+            chatRoomContextMatches(room.contextId, contextId),
+          )
+        );
+      })
+      .map(getClientChatRoomId)
+      .filter((roomId): roomId is string => Boolean(roomId));
+  }
+
+  async function getCurrentUserGroupChatRooms(
+    roomTypes: readonly ("LOBBY" | "TEAM")[],
+    contextIds: readonly string[],
+  ) {
+    if (typeof profilePublicId !== "number" || contextIds.length === 0) {
+      return [];
+    }
+
+    const roomsResult = await listChatRooms({
+      baseUrl: CHAT_API_BASE_URL,
+    }).catch(() => undefined);
+
+    if (!roomsResult || roomsResult.error) {
+      return [];
+    }
+
+    const roomTypeSet = new Set(roomTypes);
+
+    return getClientChatRooms(roomsResult.data).filter((room) => {
+      const roomId = getClientChatRoomId(room);
+      const roomType = getClientChatRoomType(room);
+      const participants = getClientChatRoomParticipantPublicIds(room);
+
+      return (
+        Boolean(roomId) &&
+        roomTypeSet.has(roomType as "LOBBY" | "TEAM") &&
+        participants.includes(profilePublicId) &&
+        contextIds.some((contextId) =>
+          chatRoomContextMatches(room.contextId, contextId),
+        )
+      );
+    });
+  }
+
+  function currentUserIsOnlyChatRoomParticipant(room: ChatRoomResponse) {
+    const participants = getClientChatRoomParticipantPublicIds(room);
+
+    return (
+      typeof profilePublicId === "number" &&
+      participants.length > 0 &&
+      participants.every((participantPublicId) => participantPublicId === profilePublicId)
+    );
+  }
+
+  async function deleteChatRoomsById(roomIds: readonly string[]) {
+    await Promise.all(
+      [...new Set(roomIds)].map((roomId) =>
+        deleteChatRoom({
+          baseUrl: CHAT_API_BASE_URL,
+          path: { roomId },
+        }).catch(() => undefined),
+      ),
+    );
+  }
+
+  async function deleteCurrentUserGroupChatRooms(
+    roomTypes: readonly ("LOBBY" | "TEAM")[],
+    contextIds: readonly string[],
+  ) {
+    await deleteChatRoomsById(
+      await getCurrentUserGroupChatRoomIds(roomTypes, contextIds),
+    );
+  }
+
+  function currentUserIsLastLobbyMember(lobby: LobbySnapshot) {
+    return (
+      typeof profilePublicId === "number" &&
+      (lobby.members?.length ?? 0) > 0 &&
+      (lobby.members ?? []).every((member) => member.publicId === profilePublicId)
+    );
+  }
+
+  function getCurrentMatchLobbyId(match: ApiMatchResponse | undefined) {
+    if (typeof profilePublicId !== "number") {
+      return undefined;
+    }
+
+    return match?.lobbies?.find((lobby) => {
+      return lobby.players?.some((player) => player.publicId === profilePublicId);
+    })?.lobbyId;
+  }
+
+  async function deleteChampionSelectionChatRooms(
+    match: ApiMatchResponse | undefined,
+  ) {
+    const contextIds = [
+      match?.matchId,
+      getCurrentMatchLobbyId(match),
+    ].filter((contextId): contextId is string => Boolean(contextId));
+
+    await deleteCurrentUserGroupChatRooms(["TEAM", "LOBBY"], contextIds);
+  }
+
   useEffect(() => {
     return () => {
       clearTopActionDragTimer();
@@ -408,6 +602,66 @@ function Client({
     }),
     [profileAvatarUrl, profileName, profilePublicId],
   );
+  const lobbyPublicUserIds = useMemo(() => {
+    const publicIds = new Set<number>();
+    const addPublicId = (publicId?: number) => {
+      if (
+        typeof publicId === "number" &&
+        publicId !== profilePublicId
+      ) {
+        publicIds.add(publicId);
+      }
+    };
+
+    activeLobby?.members?.forEach((member) => addPublicId(member.publicId));
+    lobbyInvitations.forEach((invitation) => {
+      invitation.inviters?.forEach((member) => addPublicId(member.publicId));
+      invitation.lobby?.members?.forEach((member) => addPublicId(member.publicId));
+    });
+    championSelectionMatch?.lobbies?.forEach((lobby) => {
+      lobby.players?.forEach((player) => addPublicId(player.publicId));
+    });
+
+    return [...publicIds].sort((left, right) => left - right);
+  }, [activeLobby, championSelectionMatch, lobbyInvitations, profilePublicId]);
+  const lobbyPublicUserIdKey = lobbyPublicUserIds.join(",");
+
+  useEffect(() => {
+    let active = true;
+
+    if (lobbyPublicUserIds.length === 0) {
+      setPublicUsersByPublicId((currentUsers) =>
+        currentUsers.size === 0 ? currentUsers : new Map(),
+      );
+      return () => {
+        active = false;
+      };
+    }
+
+    void usersByPublicIds({
+      baseUrl: API_BASE_URL,
+      query: { publicIds: lobbyPublicUserIds },
+    }).then((result) => {
+      if (!active || result.error) {
+        return;
+      }
+
+      setPublicUsersByPublicId(
+        new Map(
+          (result.data?.users ?? [])
+            .filter(
+              (user): user is FriendUserResponse & { publicId: number } =>
+                typeof user.publicId === "number",
+            )
+            .map((user) => [user.publicId, user]),
+        ),
+      );
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [lobbyPublicUserIdKey]);
   const playerSlots = Array.from({ length: 5 }, (_, index) => index);
   const lobbySlotMembers = activeLobby ? getLobbySlotMembers(activeLobby) : [];
   const lobbyRosterMembers = lobbySlotMembers.filter(
@@ -423,19 +677,44 @@ function Client({
     profileName,
   );
   const lobbyChatRooms = useMemo(() => {
-    const lobbyChatRoom = getLobbyChatRoom(activeLobby, t);
+    const lobbyChatRoom = getLobbyChatRoom(
+      activeLobby,
+      t,
+      currentMatchPlayerProfile,
+      publicUsersByPublicId,
+    );
 
     return lobbyChatRoom ? [lobbyChatRoom] : [];
-  }, [activeLobby, t]);
+  }, [activeLobby, currentMatchPlayerProfile, publicUsersByPublicId, t]);
   const championSelectionChatRooms = useMemo(() => {
     const teamChatRoom = getChampionSelectionTeamChatRoom(
       championSelectionMatch,
-      profilePublicId,
+      currentMatchPlayerProfile,
       t,
+      publicUsersByPublicId,
     );
+    const championSelectionLobbyChatRoom =
+      lobbyChatRooms[0] ??
+      getChampionSelectionLobbyChatRoom(
+        championSelectionMatch,
+        currentMatchPlayerProfile,
+        t,
+        publicUsersByPublicId,
+      );
+    const championSelectionLobbyChatRooms = championSelectionLobbyChatRoom
+      ? [championSelectionLobbyChatRoom]
+      : [];
 
-    return teamChatRoom ? [teamChatRoom, ...lobbyChatRooms] : lobbyChatRooms;
-  }, [championSelectionMatch, lobbyChatRooms, profilePublicId, t]);
+    return teamChatRoom
+      ? [teamChatRoom, ...championSelectionLobbyChatRooms]
+      : championSelectionLobbyChatRooms;
+  }, [
+    championSelectionMatch,
+    currentMatchPlayerProfile,
+    lobbyChatRooms,
+    publicUsersByPublicId,
+    t,
+  ]);
   const activeLobbyHost = activeLobby ? getLobbyHost(activeLobby) : undefined;
   const isCurrentUserLobbyHost = isSameLobbyMember(
     activeLobbyHost,
@@ -1424,7 +1703,11 @@ function Client({
         body: {
           lobbyId: lobby.id,
           mode: "RANKED",
-          players: mapLobbyToMatchPlayers(lobbyWithCachedRoles, currentMatchPlayerProfile),
+          players: mapLobbyToMatchPlayers(
+            lobbyWithCachedRoles,
+            currentMatchPlayerProfile,
+            publicUsersByPublicId,
+          ),
         },
       });
 
@@ -1446,6 +1729,9 @@ function Client({
       return;
     }
 
+    void deleteChampionSelectionChatRooms(
+      championSelectionMatchRef.current ?? pendingMatch,
+    );
     setPendingMatch(undefined);
     setMatchFoundStartedAt(undefined);
     setMatchAutoDeclinedId(undefined);
@@ -2314,10 +2600,37 @@ function Client({
       return;
     }
 
-    await leaveLobby({
+    const lobbyChatRooms = await getCurrentUserGroupChatRooms(["LOBBY"], [lobby.id]);
+    const lastMemberLobbyChatRoomIds = lobbyChatRooms
+      .filter(currentUserIsOnlyChatRoomParticipant)
+      .map(getClientChatRoomId)
+      .filter((roomId): roomId is string => Boolean(roomId));
+
+    if (lastMemberLobbyChatRoomIds.length > 0 || currentUserIsLastLobbyMember(lobby)) {
+      await deleteChatRoomsById(
+        lastMemberLobbyChatRoomIds.length > 0
+          ? lastMemberLobbyChatRoomIds
+          : lobbyChatRooms
+              .map(getClientChatRoomId)
+              .filter((roomId): roomId is string => Boolean(roomId)),
+      );
+    }
+
+    const result = await leaveLobby({
       baseUrl: LIVE_API_BASE_URL,
       path: { lobbyId: lobby.id },
     });
+
+    const remainingMembers = result.data?.members ?? [];
+
+    if (remainingMembers.length === 0) {
+      await deleteChatRoomsById(
+        lobbyChatRooms
+          .map(getClientChatRoomId)
+          .filter((roomId): roomId is string => Boolean(roomId)),
+      );
+    }
+
     activeLobbyRef.current = undefined;
     setActiveLobby(undefined);
     setLobbyPageOpen(false);
@@ -2578,11 +2891,14 @@ function Client({
   }
 
   async function leaveActiveChampionSelection(status: ChampionSelectionLeaveStatus) {
-    const matchId = championSelectionMatchRef.current?.matchId;
+    const match = championSelectionMatchRef.current;
+    const matchId = match?.matchId;
 
     if (!matchId) {
       return;
     }
+
+    await deleteChampionSelectionChatRooms(match);
 
     const liveLeaveResult = await notifyChampionSelectionLeft({
       baseUrl: LIVE_API_BASE_URL,
@@ -2785,6 +3101,7 @@ function Client({
           players: mapLobbyToMatchPlayers(
             activeLobbyWithCachedRoles,
             currentMatchPlayerProfile,
+            publicUsersByPublicId,
           ),
         },
       });
@@ -2812,6 +3129,7 @@ function Client({
           players: mapLobbyToMatchPlayers(
             activeLobbyWithCachedRoles,
             currentMatchPlayerProfile,
+            publicUsersByPublicId,
           ),
         },
       }),
@@ -3237,7 +3555,7 @@ function Client({
     }
 
     handleProfileOpen({
-      avatarUrl: member.avatarUrl,
+      avatarUrl: getLobbyMemberPublicAvatarUrl(member, publicUsersByPublicId),
       level: 0,
       name: getMemberName(member),
       publicId: member.publicId,
@@ -3528,7 +3846,9 @@ function Client({
     }
   }
 
-  async function handleChampionSelectionTimeout() {
+  async function handleChampionSelectionTimeout(
+    timedOutPickPublicIds: number[] = [],
+  ) {
     if (championSelectionTimeoutInFlightRef.current) {
       return;
     }
@@ -3538,10 +3858,9 @@ function Client({
     try {
       const timedOutMatch = championSelectionMatchRef.current;
       const matchId = timedOutMatch?.matchId;
-      const timedOutPhaseEndsAt = timedOutMatch?.phaseEndsAt;
-      const timedOutSelectionCount = timedOutMatch?.championSelections?.length ?? 0;
 
       if (matchId) {
+        await deleteChampionSelectionChatRooms(timedOutMatch);
         await new Promise((resolve) => window.setTimeout(resolve, 350));
 
         const latestMatch = await getMatch({
@@ -3552,20 +3871,29 @@ function Client({
         if (latestMatch && !latestMatch.error && latestMatch.data) {
           const hydratedLatestMatch = hydrateMatch(normalizeMatchResponse(latestMatch.data));
           const latestPhaseEndsAt = parseApiTimestamp(hydratedLatestMatch.phaseEndsAt);
-          const latestSelectionCount = hydratedLatestMatch.championSelections?.length ?? 0;
           const latestPhase = hydratedLatestMatch.phase?.trim().toUpperCase();
           const latestServerNow =
             parseApiTimestamp(hydratedLatestMatch.serverNow) ?? Date.now();
+          const latestSelectedPublicIds = new Set(
+            hydratedLatestMatch.championSelections
+              ?.map((selection) => selection.playerPublicId)
+              .filter((publicId): publicId is number => typeof publicId === "number") ?? [],
+          );
+          const timedOutPickGroupComplete =
+            timedOutPickPublicIds.length > 0 &&
+            timedOutPickPublicIds.every((publicId) =>
+              latestSelectedPublicIds.has(publicId),
+            );
 
           if (
             hydratedLatestMatch.status === "READY" ||
             latestPhase === "READY" ||
-            (latestPhase === "PICK" &&
+            timedOutPickGroupComplete ||
+            (timedOutPickPublicIds.length === 0 &&
+              latestPhase === "PICK" &&
               latestPhaseEndsAt !== undefined &&
               latestPhaseEndsAt > latestServerNow) ||
-            latestPhase === "WARMUP" ||
-            hydratedLatestMatch.phaseEndsAt !== timedOutPhaseEndsAt ||
-            latestSelectionCount > timedOutSelectionCount
+            latestPhase === "WARMUP"
           ) {
             setCurrentChampionSelectionMatch(hydratedLatestMatch);
             return;
@@ -3751,7 +4079,8 @@ function Client({
     });
   }
 
-  function finishGameStart() {
+  async function finishGameStart() {
+    await deleteChampionSelectionChatRooms(championSelectionMatchRef.current);
     setCurrentChampionSelectionMatch(undefined);
     setPendingMatch(undefined);
     setMatchFoundStartedAt(undefined);
@@ -3779,7 +4108,7 @@ function Client({
       const launchParameters = createGameLaunchParameters(launchableMatch);
 
       await launchGameClient(launchParameters, true);
-      finishGameStart();
+      await finishGameStart();
     } catch (caughtError) {
       console.error(caughtError);
       notifyGameStartError(caughtError);
@@ -3822,12 +4151,16 @@ function Client({
           t={t}
           onChampionHover={handleChampionHover}
           onChampionSelect={handleChampionSelect}
-          onPickTimeout={() => void handleChampionSelectionTimeout()}
+          onPickTimeout={(activePickPublicIds) =>
+            void handleChampionSelectionTimeout(activePickPublicIds)
+          }
           onReadyPhaseComplete={handleReadyPhaseComplete}
         />
         <ChatDock
           autoRooms={championSelectionChatRooms}
           chatPosition={chatPosition}
+          currentUserPublicId={profilePublicId}
+          locale={locale}
           placement="fullscreen"
           t={t}
         />
@@ -3861,7 +4194,13 @@ function Client({
         profilePublicId={profilePublicId}
         t={t}
       />
-      <ChatDock autoRooms={lobbyChatRooms} chatPosition={chatPosition} t={t} />
+      <ChatDock
+        autoRooms={lobbyChatRooms}
+        chatPosition={chatPosition}
+        currentUserPublicId={profilePublicId}
+        locale={locale}
+        t={t}
+      />
 
       {!gameSelectorOpen &&
       !gameInProgress &&
@@ -3927,8 +4266,20 @@ function Client({
                       void handleCopyLobbyRosterMember(member);
                     }}
                   >
-                    {member.avatarUrl ? (
-                      <img alt="" src={member.avatarUrl} />
+                    {(member.publicId === profilePublicId
+                      ? profileAvatarUrl
+                      : getLobbyMemberPublicAvatarUrl(member, publicUsersByPublicId)) ? (
+                      <img
+                        alt=""
+                        src={
+                          member.publicId === profilePublicId
+                            ? profileAvatarUrl
+                            : getLobbyMemberPublicAvatarUrl(
+                                member,
+                                publicUsersByPublicId,
+                              )
+                        }
+                      />
                     ) : (
                       getMemberName(member).charAt(0).toUpperCase()
                     )}
@@ -4003,19 +4354,26 @@ function Client({
                 <article className="lobby-invite-card" key={invitation.lobbyId}>
                   <div className="lobby-invite-copy">
                     <div className="lobby-invite-avatar-stack" aria-hidden="true">
-                      {inviters.slice(0, 3).map((inviter, index) => (
-                        <span
-                          className="lobby-member-avatar lobby-invite-avatar"
-                          key={inviter.publicId ?? index}
-                          style={{ zIndex: 3 - index }}
-                        >
-                          {inviter.avatarUrl ? (
-                            <img alt="" src={inviter.avatarUrl} />
-                          ) : (
-                            getMemberName(inviter).charAt(0).toUpperCase()
-                          )}
-                        </span>
-                      ))}
+                      {inviters.slice(0, 3).map((inviter, index) => {
+                        const inviterAvatarUrl = getLobbyMemberPublicAvatarUrl(
+                          inviter,
+                          publicUsersByPublicId,
+                        );
+
+                        return (
+                          <span
+                            className="lobby-member-avatar lobby-invite-avatar"
+                            key={inviter.publicId ?? index}
+                            style={{ zIndex: 3 - index }}
+                          >
+                            {inviterAvatarUrl ? (
+                              <img alt="" src={inviterAvatarUrl} />
+                            ) : (
+                              getMemberName(inviter).charAt(0).toUpperCase()
+                            )}
+                          </span>
+                        );
+                      })}
                     </div>
                     <span>{getMemberName(mainInviter)}</span>
                     <small>{getInvitationModeLabel(invitation)}</small>
@@ -4365,10 +4723,23 @@ function Client({
                     >
                       <span className="lobby-player-avatar-content">
                         {member ? (
-                          member.avatarUrl ? (
-                            <img alt="" src={member.avatarUrl} />
-                          ) : isCurrentUser && profileAvatarUrl ? (
-                            <img alt="" src={profileAvatarUrl} />
+                          (isCurrentUser
+                            ? profileAvatarUrl
+                            : getLobbyMemberPublicAvatarUrl(
+                                member,
+                                publicUsersByPublicId,
+                              )) ? (
+                            <img
+                              alt=""
+                              src={
+                                isCurrentUser
+                                  ? profileAvatarUrl
+                                  : getLobbyMemberPublicAvatarUrl(
+                                      member,
+                                      publicUsersByPublicId,
+                                    )
+                              }
+                            />
                           ) : (
                             getMemberName(member).charAt(0).toUpperCase()
                           )

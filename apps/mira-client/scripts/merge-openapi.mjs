@@ -6,6 +6,7 @@ const DEFAULT_INPUTS = [
   "https://api.tilt-us.com/auth/v3/api-docs",
   "https://api.tilt-us.com/live/v3/api-docs",
   "https://api.tilt-us.com/match/v3/api-docs",
+  "https://api.tilt-us.com/chat/v3/api-docs",
 ];
 const DEFAULT_OUTPUT = ".openapi/api-docs.json";
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");

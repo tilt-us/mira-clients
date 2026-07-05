@@ -4,6 +4,7 @@ import type {
   FriendUserResponse,
   LobbyInvitation,
   LobbyMember,
+  MatchLobbyResponse,
   LobbyRolesSnapshot,
   LobbySnapshot,
   MatchPlayerResponse,
@@ -14,7 +15,7 @@ import type {
 } from "../api/client";
 import { LIVE_API_BASE_URL } from "../api/config";
 import { readTokens } from "../auth/storage";
-import type { ChatRoom } from "../components/ChatDock";
+import type { ChatParticipant, ChatRoom } from "../components/ChatDock";
 import { getMatchTeams } from "../gameSession";
 import {
   getMemberLobbyRoles,
@@ -23,7 +24,7 @@ import {
 import type { FriendProfile, PresenceStatus, Translate } from "../types/ui";
 import {
   formatTagId,
-  getAvatarUrl,
+  getPublicAvatarUrl,
   getPublicDisplayName,
   normalizeTagId,
 } from "../utils/profile";
@@ -63,6 +64,17 @@ export type UserPageProfile = {
 type TaggedFriendUser = FriendUserResponse & {
   level?: unknown;
   tagId?: unknown;
+};
+
+type PublicAvatarFields = {
+  avatarRightsConsented?: boolean;
+  avatarRightsConsentedAt?: null | string;
+  avatarUrl?: string;
+  consentedAt?: null | string;
+  imageUrl?: string;
+  picture?: string;
+  pictureUrl?: string;
+  profileImageUrl?: string;
 };
 
 export function getUserPageNameClassName(name: string) {
@@ -288,6 +300,18 @@ export function getMemberName(member?: LobbyMember) {
   );
 }
 
+export function getLobbyMemberPublicAvatarUrl(
+  member?: LobbyMember | MatchPlayerResponse,
+  publicUsersByPublicId?: ReadonlyMap<number, FriendUserResponse>,
+) {
+  const publicUser =
+    typeof member?.publicId === "number"
+      ? publicUsersByPublicId?.get(member.publicId)
+      : undefined;
+
+  return getPublicAvatarUrl(publicUser ?? (member as PublicAvatarFields | undefined));
+}
+
 export function getLobbyMemberTagId(member: LobbyMember) {
   const runtimeMember = member as LobbyMember & { tagId?: unknown };
   return normalizeTagId(runtimeMember.tagId);
@@ -426,7 +450,7 @@ export function mapUserToInviteCandidate(user: FriendUserResponse): PartyInviteC
   const publicId = toPublicId(user.publicId);
 
   return {
-    avatarUrl: getAvatarUrl(user),
+    avatarUrl: getPublicAvatarUrl(user as PublicAvatarFields),
     email: user.email,
     name: getFriendUserName(user),
     publicId,
@@ -439,7 +463,7 @@ export function mapOnlineUserToInviteCandidate(user: OnlineInviteUser): PartyInv
   const publicId = toPublicId(user.publicId);
 
   return {
-    avatarUrl: getAvatarUrl(user),
+    avatarUrl: getPublicAvatarUrl(user as PublicAvatarFields),
     email: user.email,
     name: getPublicDisplayName(
       user.displayName,
@@ -465,7 +489,7 @@ export function mapFriendUserToProfile(
         : "offline";
 
   return {
-    avatarUrl: getAvatarUrl(user),
+    avatarUrl: getPublicAvatarUrl(user as PublicAvatarFields),
     email: user.email,
     id: String(publicId ?? user.email ?? user.displayName ?? "unknown-user"),
     level: getFriendUserLevel(user),
@@ -649,44 +673,161 @@ export function getMatchPlayerPublicIds(match: ApiMatchResponse) {
   );
 }
 
-export function getLobbyChatRoom(lobby: LobbySnapshot | undefined, t: Translate): ChatRoom | undefined {
+export function getLobbyChatRoom(
+  lobby: LobbySnapshot | undefined,
+  t: Translate,
+  currentPlayerProfile?: CurrentMatchPlayerProfile,
+  publicUsersByPublicId?: ReadonlyMap<number, FriendUserResponse>,
+): ChatRoom | undefined {
   if (!lobby?.id || (lobby.members?.length ?? 0) === 0) {
     return undefined;
   }
 
   return {
+    contextId: lobby.id,
     id: `lobby:${lobby.id}`,
     locked: true,
     name: t("chat-lobby-title"),
+    participants: getLobbyChatParticipants(
+      lobby.members ?? [],
+      currentPlayerProfile,
+      publicUsersByPublicId,
+    ),
     subtitle: t("chat-lobby-subtitle"),
     type: "lobby",
   };
 }
 
+function getLobbyChatParticipants(
+  members: LobbyMember[],
+  currentPlayerProfile?: CurrentMatchPlayerProfile,
+  publicUsersByPublicId?: ReadonlyMap<number, FriendUserResponse>,
+): ChatParticipant[] {
+  return members
+    .filter((member) => typeof member.publicId === "number")
+    .map((member) => {
+      const isCurrentPlayer = member.publicId === currentPlayerProfile?.publicId;
+      const name = getPublicDisplayName(
+        isCurrentPlayer ? currentPlayerProfile?.displayName : member.displayName,
+        "User",
+      );
+
+      return {
+        avatarUrl: isCurrentPlayer
+          ? currentPlayerProfile?.avatarUrl
+          : getLobbyMemberPublicAvatarUrl(member, publicUsersByPublicId),
+        name,
+        publicId: member.publicId as number,
+      };
+    });
+}
+
 export function getChampionSelectionTeamChatRoom(
   match: ApiMatchResponse | undefined,
-  currentPlayerPublicId: number | undefined,
+  currentPlayerProfile: CurrentMatchPlayerProfile | undefined,
   t: Translate,
+  publicUsersByPublicId?: ReadonlyMap<number, FriendUserResponse>,
 ): ChatRoom | undefined {
-  if (!match?.matchId || typeof currentPlayerPublicId !== "number") {
+  if (!match?.matchId || typeof currentPlayerProfile?.publicId !== "number") {
     return undefined;
   }
 
-  const teamIndex = getMatchTeams(match).findIndex((team) => {
-    return team.players?.some((player) => player.publicId === currentPlayerPublicId);
+  const teams = getMatchTeams(match);
+  const teamIndex = teams.findIndex((team) => {
+    return team.players?.some((player) => player.publicId === currentPlayerProfile.publicId);
   });
 
   if (teamIndex < 0) {
     return undefined;
   }
 
+  const team = teamIndex === 0 ? "Dark" : "Light";
+
   return {
+    contextId: match.matchId,
     id: `team:${match.matchId}:${teamIndex}`,
     locked: true,
     name: t("chat-team-title"),
+    participants: getTeamChatParticipants(
+      teams[teamIndex]?.players ?? [],
+      currentPlayerProfile,
+      publicUsersByPublicId,
+    ),
     subtitle: t("chat-team-subtitle"),
+    team,
     type: "team",
   };
+}
+
+export function getChampionSelectionLobbyChatRoom(
+  match: ApiMatchResponse | undefined,
+  currentPlayerProfile: CurrentMatchPlayerProfile | undefined,
+  t: Translate,
+  publicUsersByPublicId?: ReadonlyMap<number, FriendUserResponse>,
+): ChatRoom | undefined {
+  if (!match?.matchId || typeof currentPlayerProfile?.publicId !== "number") {
+    return undefined;
+  }
+
+  const lobby = match.lobbies?.find((currentLobby) => {
+    return currentLobby.players?.some(
+      (player) => player.publicId === currentPlayerProfile.publicId,
+    );
+  });
+
+  if (!lobby?.lobbyId) {
+    return undefined;
+  }
+
+  return {
+    contextId: lobby.lobbyId,
+    id: `lobby:${lobby.lobbyId}`,
+    locked: true,
+    name: t("chat-lobby-title"),
+    participants: getMatchLobbyChatParticipants(
+      lobby,
+      currentPlayerProfile,
+      publicUsersByPublicId,
+    ),
+    subtitle: t("chat-lobby-subtitle"),
+    type: "lobby",
+  };
+}
+
+function getMatchLobbyChatParticipants(
+  lobby: MatchLobbyResponse,
+  currentPlayerProfile: CurrentMatchPlayerProfile,
+  publicUsersByPublicId?: ReadonlyMap<number, FriendUserResponse>,
+): ChatParticipant[] {
+  return getTeamChatParticipants(
+    lobby.players ?? [],
+    currentPlayerProfile,
+    publicUsersByPublicId,
+  );
+}
+
+function getTeamChatParticipants(
+  players: MatchPlayerResponse[],
+  currentPlayerProfile: CurrentMatchPlayerProfile,
+  publicUsersByPublicId?: ReadonlyMap<number, FriendUserResponse>,
+): ChatParticipant[] {
+  return players
+    .filter((player) => typeof player.publicId === "number")
+    .map((player) => {
+      const isCurrentPlayer = player.publicId === currentPlayerProfile.publicId;
+      const name = getPublicDisplayName(
+        isCurrentPlayer ? currentPlayerProfile.displayName : player.displayName,
+        "User",
+      );
+
+      return {
+        avatarUrl: isCurrentPlayer
+          ? currentPlayerProfile.avatarUrl
+          : getLobbyMemberPublicAvatarUrl(player, publicUsersByPublicId),
+        name,
+        publicId: player.publicId as number,
+      };
+    });
 }
 
 export function areAllChampionsSelected(match: ApiMatchResponse) {
@@ -720,6 +861,7 @@ export function isGenericPlayerName(value?: string) {
 export function mapLobbyToMatchPlayers(
   lobby: LobbySnapshot,
   currentPlayerProfile?: CurrentMatchPlayerProfile,
+  publicUsersByPublicId?: ReadonlyMap<number, FriendUserResponse>,
 ) {
   return (
     lobby.members
@@ -730,8 +872,8 @@ export function mapLobbyToMatchPlayers(
           ? currentPlayerProfile?.displayName
           : member.displayName;
         const avatarUrl = isCurrentPlayer
-          ? currentPlayerProfile?.avatarUrl ?? member.avatarUrl
-          : member.avatarUrl;
+          ? currentPlayerProfile?.avatarUrl
+          : getLobbyMemberPublicAvatarUrl(member, publicUsersByPublicId);
         const roles = getMemberLobbyRoles(member);
 
         return {

@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { AbortRankedSearchData, AbortRankedSearchResponses, AbortSearchData, AbortSearchResponses, AcceptData, AcceptRequestData, AcceptRequestResponses, AcceptResponses, AssignRolesData, AssignRolesResponses, BootstrapData, BootstrapResponses, CancelChampionPhaseData, CancelChampionPhaseDuplicateData, CancelChampionPhaseDuplicateResponses, CancelChampionPhaseResponses, ClearChampionHoverData, ClearChampionHoverDuplicateData, ClearChampionHoverDuplicateResponses, ClearChampionHoverResponses, ConfirmAvatarRightsData, ConfirmAvatarRightsResponses, CreateRankedLobbyData, CreateRankedLobbyResponses, DebugData, DebugResponses, DecideData, DecideResponses, DeclineData, DeclineRequestData, DeclineRequestResponses, DeclineResponses, DeleteByEmailData, DeleteByEmailResponses, EndMatchData, EndMatchDuplicateData, EndMatchDuplicateResponses, EndMatchResponses, EventsData, EventsResponses, FriendsData, FriendsResponses, GetAvatarRightsData, GetAvatarRightsResponses, GetData, GetResponses, HealthData, HealthResponses, HeartbeatData, HeartbeatResponses, HoverChampionData, HoverChampionDuplicateData, HoverChampionDuplicateResponses, HoverChampionResponses, IncreaseLevelData, IncreaseLevelResponses, InvitationsData, InvitationsResponses, InviteData, InviteResponses, JoinLobbyData, JoinLobbyResponses, KickMemberData, KickMemberResponses, LeaveLobbyData, LeaveLobbyResponses, ListFriendsData, ListFriendsResponses, ListRequestsData, ListRequestsResponses, LiveAcceptRequestData, LiveAcceptRequestResponses, LiveDeclineRequestData, LiveDeclineRequestResponses, LiveHeartbeatData, LiveHeartbeatResponses, LiveRemoveFriendData, LiveRemoveFriendResponses, LiveRevokeRequestData, LiveRevokeRequestResponses, LiveSendRequestData, LiveSendRequestResponses, LoginAttemptsData, LoginAttemptsResponses, LoginOptionsData, LoginOptionsResponses, LogoutData, LogoutResponses, MarkChampionsReadyData, MarkChampionsReadyDuplicateData, MarkChampionsReadyDuplicateResponses, MarkChampionsReadyResponses, MeData, MeResponses, NotifyChampionSelectionLeftData, NotifyChampionSelectionLeftResponses, OnlineData, OnlineResponses, RegisterData, RegisterResponses, RemoveFriendData, RemoveFriendResponses, RevokeRequestData, RevokeRequestResponses, RolesData, RolesResponses, RosterData, RosterResponses, SearchData, SearchRankedData, SearchRankedResponses, SearchResponses, SelectChampionData, SelectChampionDuplicateData, SelectChampionDuplicateResponses, SelectChampionResponses, SendRequestData, SendRequestResponses, SessionConflictData, SessionConflictResponses, SetLevelData, SetLevelResponses, StartSearchData, StartSearchResponses, TemporaryMatchesData, TemporaryMatchesResponses, TransferHostData, TransferHostResponses, UpdateMeData, UpdateMeResponses, UpdateRolesData, UpdateRolesResponses, UpdateTagIdData, UpdateTagIdResponses, UpdateUsernameData, UpdateUsernameResponses, UsersByPublicIdsData, UsersByPublicIdsResponses, UserStatusMeData, UserStatusMeResponses } from './types.gen';
+import type { AbortRankedSearchData, AbortRankedSearchResponses, AbortSearchData, AbortSearchResponses, AcceptData, AcceptRequestData, AcceptRequestResponses, AcceptResponses, AssignRolesData, AssignRolesResponses, BootstrapData, BootstrapResponses, CancelChampionPhaseData, CancelChampionPhaseDuplicateData, CancelChampionPhaseDuplicateResponses, CancelChampionPhaseResponses, ClearChampionHoverData, ClearChampionHoverDuplicateData, ClearChampionHoverDuplicateResponses, ClearChampionHoverResponses, ClearRetentionHoldData, ClearRetentionHoldResponses, ConfirmAvatarRightsData, ConfirmAvatarRightsResponses, CreateRankedLobbyData, CreateRankedLobbyResponses, DebugData, DebugResponses, DecideData, DecideResponses, DeclineData, DeclineRequestData, DeclineRequestResponses, DeclineResponses, DeleteByEmailData, DeleteByEmailResponses, DeleteRoom1Data, DeleteRoom1Responses, DeleteRoomData, DeleteRoomResponses, EndMatchData, EndMatchDuplicateData, EndMatchDuplicateResponses, EndMatchResponses, EventsData, EventsResponses, FriendsData, FriendsResponses, GetAvatarRightsData, GetAvatarRightsResponses, GetData, GetResponses, GetRoomData, GetRoomResponses, HealthData, HealthResponses, HeartbeatData, HeartbeatResponses, HoverChampionData, HoverChampionDuplicateData, HoverChampionDuplicateResponses, HoverChampionResponses, IncreaseLevelData, IncreaseLevelResponses, InvitationsData, InvitationsResponses, InviteData, InviteResponses, JoinLobbyData, JoinLobbyResponses, KickMemberData, KickMemberResponses, LeaveLobbyData, LeaveLobbyResponses, ListFriendsData, ListFriendsResponses, ListMessagesData, ListMessagesResponses, ListRequestsData, ListRequestsResponses, ListRoomsData, ListRoomsResponses, LiveAcceptRequestData, LiveAcceptRequestResponses, LiveDeclineRequestData, LiveDeclineRequestResponses, LiveHeartbeatData, LiveHeartbeatResponses, LiveRemoveFriendData, LiveRemoveFriendResponses, LiveRevokeRequestData, LiveRevokeRequestResponses, LiveSendRequestData, LiveSendRequestResponses, LoginAttemptsData, LoginAttemptsResponses, LoginOptionsData, LoginOptionsResponses, LogoutData, LogoutResponses, MarkChampionsReadyData, MarkChampionsReadyDuplicateData, MarkChampionsReadyDuplicateResponses, MarkChampionsReadyResponses, MarkReadData, MarkReadResponses, MeData, MeResponses, NotifyChampionSelectionLeftData, NotifyChampionSelectionLeftResponses, OnlineData, OnlineResponses, PublishChatEventsData, PublishChatEventsResponses, RegisterData, RegisterResponses, RemoveFriendData, RemoveFriendResponses, RevokeRequestData, RevokeRequestResponses, RolesData, RolesResponses, RosterData, RosterResponses, SearchData, SearchRankedData, SearchRankedResponses, SearchResponses, SelectChampionData, SelectChampionDuplicateData, SelectChampionDuplicateResponses, SelectChampionResponses, SendIngameMessageData, SendIngameMessageResponses, SendLobbyMessageData, SendLobbyMessageResponses, SendPrivateData, SendPrivateResponses, SendRequestData, SendRequestResponses, SendTeamMessageData, SendTeamMessageResponses, SessionConflictData, SessionConflictResponses, SetLevelData, SetLevelResponses, SetRetentionHoldData, SetRetentionHoldResponses, StartSearchData, StartSearchResponses, TemporaryMatchesData, TemporaryMatchesResponses, TransferHostData, TransferHostResponses, UpdateMeData, UpdateMeResponses, UpdateRolesData, UpdateRolesResponses, UpdateTagIdData, UpdateTagIdResponses, UpdateUsernameData, UpdateUsernameResponses, UsersByPublicIdsData, UsersByPublicIdsResponses, UserStatusMeData, UserStatusMeResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -145,6 +145,15 @@ export const transferHost = <ThrowOnError extends boolean = false>(options: Opti
 });
 
 export const endMatch = <ThrowOnError extends boolean = false>(options: Options<EndMatchData, ThrowOnError>): RequestResult<EndMatchResponses, unknown, ThrowOnError> => (options.client ?? client).post<EndMatchResponses, unknown, ThrowOnError>({ url: '/internal/live/matches/{matchId}/ended', ...options });
+
+export const publishChatEvents = <ThrowOnError extends boolean = false>(options: Options<PublishChatEventsData, ThrowOnError>): RequestResult<PublishChatEventsResponses, unknown, ThrowOnError> => (options.client ?? client).post<PublishChatEventsResponses, unknown, ThrowOnError>({
+    url: '/internal/live/chat-events',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
 
 export const sessionConflict = <ThrowOnError extends boolean = false>(options: Options<SessionConflictData, ThrowOnError>): RequestResult<SessionConflictResponses, unknown, ThrowOnError> => (options.client ?? client).post<SessionConflictResponses, unknown, ThrowOnError>({
     url: '/internal/live/auth-events/session-conflict',
@@ -318,3 +327,62 @@ export const cancelChampionPhaseDuplicate = <ThrowOnError extends boolean = fals
 export const clearChampionHoverDuplicate = <ThrowOnError extends boolean = false>(options: Options<ClearChampionHoverDuplicateData, ThrowOnError>): RequestResult<ClearChampionHoverDuplicateResponses, unknown, ThrowOnError> => (options.client ?? client).delete<ClearChampionHoverDuplicateResponses, unknown, ThrowOnError>({ url: '/internal/matches/{matchId}/champion-hovers/{playerPublicId}', ...options });
 
 export const abortSearch = <ThrowOnError extends boolean = false>(options: Options<AbortSearchData, ThrowOnError>): RequestResult<AbortSearchResponses, unknown, ThrowOnError> => (options.client ?? client).delete<AbortSearchResponses, unknown, ThrowOnError>({ url: '/internal/matches/searches/{lobbyId}', ...options });
+
+export const clearRetentionHold = <ThrowOnError extends boolean = false>(options: Options<ClearRetentionHoldData, ThrowOnError>): RequestResult<ClearRetentionHoldResponses, unknown, ThrowOnError> => (options.client ?? client).delete<ClearRetentionHoldResponses, unknown, ThrowOnError>({ url: '/internal/chats/rooms/{roomId}/retention-hold', ...options });
+
+export const setRetentionHold = <ThrowOnError extends boolean = false>(options: Options<SetRetentionHoldData, ThrowOnError>): RequestResult<SetRetentionHoldResponses, unknown, ThrowOnError> => (options.client ?? client).post<SetRetentionHoldResponses, unknown, ThrowOnError>({ url: '/internal/chats/rooms/{roomId}/retention-hold', ...options });
+
+export const markRead = <ThrowOnError extends boolean = false>(options: Options<MarkReadData, ThrowOnError>): RequestResult<MarkReadResponses, unknown, ThrowOnError> => (options.client ?? client).post<MarkReadResponses, unknown, ThrowOnError>({
+    url: '/api/chats/{roomId}/read',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+export const sendPrivate = <ThrowOnError extends boolean = false>(options: Options<SendPrivateData, ThrowOnError>): RequestResult<SendPrivateResponses, unknown, ThrowOnError> => (options.client ?? client).post<SendPrivateResponses, unknown, ThrowOnError>({
+    url: '/api/chats/private/{targetPublicId}/messages',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+export const sendTeamMessage = <ThrowOnError extends boolean = false>(options: Options<SendTeamMessageData, ThrowOnError>): RequestResult<SendTeamMessageResponses, unknown, ThrowOnError> => (options.client ?? client).post<SendTeamMessageResponses, unknown, ThrowOnError>({
+    url: '/api/chats/matches/{matchId}/teams/{team}/messages',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+export const sendIngameMessage = <ThrowOnError extends boolean = false>(options: Options<SendIngameMessageData, ThrowOnError>): RequestResult<SendIngameMessageResponses, unknown, ThrowOnError> => (options.client ?? client).post<SendIngameMessageResponses, unknown, ThrowOnError>({
+    url: '/api/chats/matches/{matchId}/messages',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+export const sendLobbyMessage = <ThrowOnError extends boolean = false>(options: Options<SendLobbyMessageData, ThrowOnError>): RequestResult<SendLobbyMessageResponses, unknown, ThrowOnError> => (options.client ?? client).post<SendLobbyMessageResponses, unknown, ThrowOnError>({
+    url: '/api/chats/lobbies/{lobbyId}/messages',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+export const listRooms = <ThrowOnError extends boolean = false>(options?: Options<ListRoomsData, ThrowOnError>): RequestResult<ListRoomsResponses, unknown, ThrowOnError> => (options?.client ?? client).get<ListRoomsResponses, unknown, ThrowOnError>({ url: '/api/chats', ...options });
+
+export const deleteRoom = <ThrowOnError extends boolean = false>(options: Options<DeleteRoomData, ThrowOnError>): RequestResult<DeleteRoomResponses, unknown, ThrowOnError> => (options.client ?? client).delete<DeleteRoomResponses, unknown, ThrowOnError>({ url: '/api/chats/{roomId}', ...options });
+
+export const getRoom = <ThrowOnError extends boolean = false>(options: Options<GetRoomData, ThrowOnError>): RequestResult<GetRoomResponses, unknown, ThrowOnError> => (options.client ?? client).get<GetRoomResponses, unknown, ThrowOnError>({ url: '/api/chats/{roomId}', ...options });
+
+export const listMessages = <ThrowOnError extends boolean = false>(options: Options<ListMessagesData, ThrowOnError>): RequestResult<ListMessagesResponses, unknown, ThrowOnError> => (options.client ?? client).get<ListMessagesResponses, unknown, ThrowOnError>({ url: '/api/chats/{roomId}/messages', ...options });
+
+export const deleteRoom1 = <ThrowOnError extends boolean = false>(options: Options<DeleteRoom1Data, ThrowOnError>): RequestResult<DeleteRoom1Responses, unknown, ThrowOnError> => (options.client ?? client).delete<DeleteRoom1Responses, unknown, ThrowOnError>({ url: '/api/chats/rooms/{roomId}', ...options });

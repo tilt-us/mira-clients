@@ -134,6 +134,7 @@ chat-no-active-body = Wähle einen Chat aus.
 chat-thread-empty = Noch keine Nachrichten.
 chat-message = Nachricht
 chat-send = Nachricht senden
+chat-send-failed = Nachricht konnte nicht gesendet werden.
 chat-unknown-contact = Unbekannt
 chat-lobby-title = Lobby Chat
 chat-lobby-subtitle = Deine aktuelle Lobby

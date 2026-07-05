@@ -60,7 +60,7 @@ import type {
 import { presenceMessageIds } from "../types/ui";
 import {
   formatTagId,
-  getAvatarUrl,
+  getPublicAvatarUrl,
   getProfileInitials,
   getPublicDisplayName,
   normalizeTagId,
@@ -148,7 +148,10 @@ type FriendConfirmState = {
 };
 
 type FriendUserAvatarFields = FriendUserItem & {
+  avatarRightsConsented?: boolean;
+  avatarRightsConsentedAt?: null | string;
   avatarUrl?: string;
+  consentedAt?: null | string;
   imageUrl?: string;
   picture?: string;
   pictureUrl?: string;
@@ -277,7 +280,7 @@ function formatNotificationTime(createdAt: number) {
 }
 
 function getFriendUserAvatarUrl(user?: FriendUserItem) {
-  return getAvatarUrl(user as FriendUserAvatarFields | undefined);
+  return getPublicAvatarUrl(user as FriendUserAvatarFields | undefined);
 }
 
 function getRequestUser(
@@ -1216,16 +1219,27 @@ function Sidebar({
       nextFriendFolders,
     );
 
-    setFriends(
-      mapApiFriendsToProfiles(
-        apiFriends,
-        nextFolders,
-        resolvedFriendFolders,
-        friendStatuses,
-        openLobbies,
-        forceOnlinePublicIds,
-        blockedFriendPublicIds,
-      ),
+    const nextFriends = mapApiFriendsToProfiles(
+      apiFriends,
+      nextFolders,
+      resolvedFriendFolders,
+      friendStatuses,
+      openLobbies,
+      forceOnlinePublicIds,
+      blockedFriendPublicIds,
+    );
+
+    setFriends(nextFriends);
+    window.dispatchEvent(
+      new CustomEvent("mira:friends-updated", {
+        detail: {
+          friends: nextFriends.map((friend) => ({
+            avatarUrl: friend.avatarUrl,
+            name: friend.name,
+            publicId: friend.publicId,
+          })),
+        },
+      }),
     );
     setFriendRequests({
       incoming: result.data?.friendRequests?.incoming ?? [],
@@ -1534,12 +1548,17 @@ function Sidebar({
   function handleChat(friendId: string) {
     const friend = friends.find((currentFriend) => currentFriend.id === friendId);
 
+    if (typeof friend?.publicId !== "number") {
+      return;
+    }
+
     window.dispatchEvent(
       new CustomEvent("mira:chat-request", {
         detail: {
           avatarUrl: friend?.avatarUrl,
           friendId,
           name: friend?.name,
+          publicId: friend.publicId,
         },
       }),
     );

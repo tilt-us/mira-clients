@@ -1,7 +1,10 @@
 import type { UserProfileResponse } from "../api/client";
 
 type AvatarFields = {
+  avatarRightsConsented?: boolean;
+  avatarRightsConsentedAt?: null | string;
   avatarUrl?: string;
+  consentedAt?: null | string;
   imageUrl?: string;
   picture?: string;
   pictureUrl?: string;
@@ -47,6 +50,30 @@ export function getProfileAvatarUrl(
 }
 
 export function getAvatarUrl(profile?: AvatarFields) {
+  if (profile?.avatarRightsConsented === false) {
+    return undefined;
+  }
+
+  return getRawAvatarUrl(profile);
+}
+
+export function getPublicAvatarUrl(profile?: AvatarFields) {
+  if (!hasPublicAvatarConsent(profile)) {
+    return undefined;
+  }
+
+  return getRawAvatarUrl(profile);
+}
+
+export function hasPublicAvatarConsent(profile?: AvatarFields) {
+  return profile?.avatarRightsConsented === true || hasAvatarRightsConsentDate(profile);
+}
+
+export function hasAvatarRightsConsentDate(profile?: AvatarFields) {
+  return isValidDateString(profile?.avatarRightsConsentedAt ?? profile?.consentedAt);
+}
+
+function getRawAvatarUrl(profile?: AvatarFields) {
   return (
     getSafeImageUrl(profile?.avatarUrl) ??
     getSafeImageUrl(profile?.picture) ??
@@ -54,6 +81,14 @@ export function getAvatarUrl(profile?: AvatarFields) {
     getSafeImageUrl(profile?.pictureUrl) ??
     getSafeImageUrl(profile?.profileImageUrl)
   );
+}
+
+function isValidDateString(value?: null | string) {
+  if (typeof value !== "string" || !value.trim()) {
+    return false;
+  }
+
+  return Number.isFinite(Date.parse(value));
 }
 
 export function getProfileInitials(profileName: string) {

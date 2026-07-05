@@ -2,7 +2,7 @@ import type { Page, Route } from "@playwright/test";
 import { createUnsignedJwt, getKeycloakIssuerUrl } from "./auth";
 
 const apiRequestPattern =
-  /^(https:\/\/api\.tilt-us\.com|http:\/\/localhost:808[0-4])\//;
+  /^(https:\/\/api\.tilt-us\.com|http:\/\/localhost:808[0-5])\//;
 
 const now = new Date("2026-06-25T10:00:00.000Z").toISOString();
 
@@ -177,6 +177,90 @@ async function fulfillMockApiRequest(route: Route) {
     return;
   }
 
+  if (pathname === "/api/chats") {
+    await route.fulfill({
+      contentType: "application/json",
+      json: [
+        {
+          roomId: "private-9001-9101",
+          type: "PRIVATE",
+          participantPublicIds: [9001, 9101],
+          createdAt: now,
+          lastReadAt: now,
+          unreadCount: 0,
+          updatedAt: now,
+        },
+      ],
+    });
+    return;
+  }
+
+  if (pathname === "/api/chats/private/9101/messages" && request.method() === "POST") {
+    const body = request.postDataJSON() as { content?: string } | null;
+
+    await route.fulfill({
+      contentType: "application/json",
+      json: {
+        messageId: "message-e2e-private",
+        roomId: "private-9001-9101",
+        senderPublicId: 9001,
+        content: body?.content ?? "",
+        createdAt: now,
+      },
+    });
+    return;
+  }
+
+  if (pathname === "/api/chats/private/9102/messages" && request.method() === "POST") {
+    const body = request.postDataJSON() as { content?: string } | null;
+
+    await route.fulfill({
+      contentType: "application/json",
+      json: {
+        messageId: "message-e2e-private-2",
+        roomId: "private-9001-9102",
+        senderPublicId: 9001,
+        content: body?.content ?? "",
+        createdAt: now,
+      },
+    });
+    return;
+  }
+
+  if (pathname === "/api/chats/private-9001-9101/messages") {
+    await route.fulfill({
+      contentType: "application/json",
+      json: {
+        messages: [
+          {
+            messageId: "message-e2e-existing",
+            roomId: "private-9001-9101",
+            senderPublicId: 9101,
+            content: "Ready for duo?",
+            createdAt: now,
+          },
+        ],
+      },
+    });
+    return;
+  }
+
+  if (pathname === "/api/chats/private-9001-9101/read") {
+    await route.fulfill({
+      contentType: "application/json",
+      json: {
+        roomId: "private-9001-9101",
+        type: "PRIVATE",
+        participantPublicIds: [9001, 9101],
+        createdAt: now,
+        lastReadAt: now,
+        unreadCount: 0,
+        updatedAt: now,
+      },
+    });
+    return;
+  }
+
   if (pathname === "/api/champions") {
     const weekly = url.searchParams.get("weekly") === "true";
     const owned = url.searchParams.get("owned") === "true";
@@ -200,5 +284,5 @@ async function fulfillMockApiRequest(route: Route) {
 }
 
 function stripServicePrefix(pathname: string) {
-  return pathname.replace(/^\/(?:auth|live|match|game|champions)(?=\/api\/)/, "");
+  return pathname.replace(/^\/(?:auth|live|match|game|champions|chat)(?=\/api\/)/, "");
 }
