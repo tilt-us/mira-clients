@@ -737,6 +737,19 @@ function Sidebar({
       .map((request) => request.addressee?.publicId)
       .filter((publicId): publicId is number => typeof publicId === "number"),
   );
+  const incomingFriendRequestsByPublicId = new Map(
+    incomingFriendRequests
+      .map((request) => {
+        const publicId = request.requester?.publicId;
+
+        return typeof publicId === "number"
+          ? ([publicId, request] as const)
+          : undefined;
+      })
+      .filter((entry): entry is readonly [number, FriendRequestItem] =>
+        Boolean(entry),
+      ),
+  );
   const friendPublicIds = new Set(
     friends
       .map((friend) => friend.publicId)
@@ -2120,10 +2133,15 @@ function Sidebar({
                             const alreadyRequested =
                               typeof user.publicId === "number" &&
                               outgoingFriendPublicIds.has(user.publicId);
+                            const incomingRequest =
+                              typeof user.publicId === "number"
+                                ? incomingFriendRequestsByPublicId.get(user.publicId)
+                                : undefined;
                             const canRequest =
                               typeof user.publicId === "number" &&
                               !alreadyFriend &&
-                              !alreadyRequested;
+                              !alreadyRequested &&
+                              !incomingRequest;
                             const matchedFriend =
                               typeof user.publicId === "number"
                                 ? friends.find((friend) => friend.publicId === user.publicId)
@@ -2157,6 +2175,20 @@ function Sidebar({
                                       }
                                     >
                                       <UserMinus size={15} />
+                                    </button>
+                                  ) : incomingRequest ? (
+                                    <button
+                                      className="friend-add-action-button"
+                                      disabled={
+                                        typeof incomingRequest.id !== "number" ||
+                                        friendRequestBusyId === incomingRequest.id
+                                      }
+                                      type="button"
+                                      onClick={() =>
+                                        void handleAcceptRequest(incomingRequest.id)
+                                      }
+                                    >
+                                      {t("friend-request-accept")}
                                     </button>
                                   ) : (
                                     <button
