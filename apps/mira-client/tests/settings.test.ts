@@ -201,4 +201,54 @@ describe("remote settings mapping", () => {
       uiScale: 1,
     });
   });
+
+  test("normalizes partial and malformed API settings defensively", () => {
+    expect(normalizeClientSettingsApiResponse(undefined)).toEqual({});
+    expect(
+      normalizeClientSettingsApiResponse({
+        accentColor: "#5b78eb",
+        allowFriendRequest: "allow",
+        background: "unknown",
+        chatPosition: "right",
+        clientAnimation: "all",
+        folders: [
+          null,
+          "invalid",
+          { friendPublicIds: "invalid", name: "No IDs" },
+          { friend_public_ids: ["9101", 9101, -1, 0, "bad", true], name: "  Duo  " },
+          { friendPublicIds: [9102], name: "   " },
+        ],
+        language: "fr",
+        resolution: "1024x768",
+        screenMode: "borderless",
+        showEmailPublic: true,
+        uiScale: "bad",
+      }),
+    ).toEqual({
+      accentColor: "#5b78eb",
+      chatPosition: "right",
+      clientAnimation: "all",
+      folders: [
+        {
+          friendPublicIds: [],
+          name: "No IDs",
+        },
+        {
+          friendPublicIds: [9101],
+          name: "Duo",
+        },
+      ],
+      friendRequestPolicy: "allow",
+      gameScreenMode: "borderless",
+      showEmailPublic: true,
+    });
+
+    expect(
+      normalizeClientSettingsApiResponse({
+        folders: "invalid",
+        show_email_public: "yes",
+        ui_scale: {},
+      }),
+    ).toEqual({});
+  });
 });
