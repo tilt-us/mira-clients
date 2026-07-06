@@ -432,6 +432,7 @@ function Authentication() {
     gameScreenMode,
     locale,
     resolution,
+    showEmailPublic,
     supportsFourKResolution,
     supportsTwoKResolution,
     t,
@@ -444,6 +445,7 @@ function Authentication() {
     setGameScreenMode,
     setLocale,
     setResolution,
+    setShowEmailPublic,
     setUiScale,
   } = useClientSettings();
   const { notify } = useNotifications();
@@ -1171,6 +1173,7 @@ function Authentication() {
           profilePublicId={profile.publicId}
           profileTagId={profileTagId}
           resolution={resolution}
+          showEmailPublic={showEmailPublic}
           settingsOpen={settingsOpen}
           supportsFourKResolution={supportsFourKResolution}
           supportsTwoKResolution={supportsTwoKResolution}
@@ -1188,6 +1191,7 @@ function Authentication() {
           onQuit={handleQuit}
           onResolutionChange={setResolution}
           onSettingsClose={() => setSettingsOpen(false)}
+          onShowEmailPublicChange={setShowEmailPublic}
           onUiScaleChange={setUiScale}
         />
       ) : (
@@ -1348,6 +1352,7 @@ function Authentication() {
           gameScreenMode={gameScreenMode}
           locale={locale}
           resolution={resolution}
+          showEmailPublic={showEmailPublic}
           supportsFourKResolution={supportsFourKResolution}
           supportsTwoKResolution={supportsTwoKResolution}
           t={t}
@@ -1362,6 +1367,7 @@ function Authentication() {
           onClose={() => setSettingsOpen(false)}
           onLocaleChange={setLocale}
           onResolutionChange={setResolution}
+          onShowEmailPublicChange={setShowEmailPublic}
           onUiScaleChange={setUiScale}
         />
       ) : null}

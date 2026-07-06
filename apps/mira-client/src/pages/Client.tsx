@@ -237,6 +237,7 @@ type ClientProps = {
   onQuit: () => void;
   onResolutionChange: (resolution: AppResolution) => void;
   onSettingsClose: () => void;
+  onShowEmailPublicChange: (showEmailPublic: boolean) => void;
   onUiScaleChange: (uiScale: UiScale) => void;
   profileAvatarUrl?: string;
   profileLevel: number;
@@ -244,6 +245,7 @@ type ClientProps = {
   profilePublicId?: number;
   profileTagId?: string;
   resolution: AppResolution;
+  showEmailPublic: boolean;
   settingsOpen: boolean;
   supportsFourKResolution: boolean;
   supportsTwoKResolution: boolean;
@@ -272,6 +274,7 @@ function Client({
   onQuit,
   onResolutionChange,
   onSettingsClose,
+  onShowEmailPublicChange,
   onUiScaleChange,
   profileAvatarUrl,
   profileLevel,
@@ -279,6 +282,7 @@ function Client({
   profilePublicId,
   profileTagId,
   resolution,
+  showEmailPublic,
   settingsOpen,
   supportsFourKResolution,
   supportsTwoKResolution,
@@ -947,10 +951,12 @@ function Client({
     }
 
     const matchesQuery = (candidate: PartyInviteCandidate) => {
+      const canMatchEmail = candidate.source === "friend" || showEmailPublic;
+
       return (
         candidate.name.toLowerCase().includes(query) ||
         candidate.tagId?.toLowerCase().includes(query) ||
-        candidate.email?.toLowerCase().includes(query) ||
+        (canMatchEmail && candidate.email?.toLowerCase().includes(query)) ||
         String(candidate.publicId ?? "").includes(query)
       );
     };
@@ -1013,6 +1019,7 @@ function Client({
     partyInviteableFriendPublicIdSet,
     partyInviteSearchResults,
     profilePublicId,
+    showEmailPublic,
   ]);
   const partyInviteCandidateTotalPages = Math.ceil(
     filteredInviteCandidates.length / PARTY_INVITE_ONLINE_LIMIT,
@@ -5066,7 +5073,9 @@ function Client({
               {inviteCandidates.length > 0 ? (
                 inviteCandidates.map((candidate) => {
                   const candidateKey = getInviteCandidateKey(candidate);
-                  const candidateSubtitle = getInviteCandidateSubtitle(candidate);
+                  const candidateSubtitle = getInviteCandidateSubtitle(candidate, {
+                    showEmail: candidate.source === "friend" || showEmailPublic,
+                  });
                   const candidateInLobby =
                     typeof candidate.publicId === "number" &&
                     activeLobbyMemberPublicIds.has(candidate.publicId);
@@ -5191,6 +5200,7 @@ function Client({
           gameScreenMode={gameScreenMode}
           locale={locale}
           resolution={resolution}
+          showEmailPublic={showEmailPublic}
           supportsFourKResolution={supportsFourKResolution}
           supportsTwoKResolution={supportsTwoKResolution}
           t={t}
@@ -5205,6 +5215,7 @@ function Client({
           onGameScreenModeChange={onGameScreenModeChange}
           onLocaleChange={onLocaleChange}
           onResolutionChange={onResolutionChange}
+          onShowEmailPublicChange={onShowEmailPublicChange}
           onUiScaleChange={onUiScaleChange}
         />
       ) : null}

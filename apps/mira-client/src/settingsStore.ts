@@ -21,6 +21,7 @@ import {
   defaultFriendRequestPolicy,
   defaultGameScreenMode,
   defaultResolution,
+  defaultShowEmailPublic,
   defaultUiScale,
   getAccentForegroundColor,
   getResolutionFromSize,
@@ -95,6 +96,12 @@ export function useClientSettings() {
     }
 
     return defaultFriendRequestPolicy;
+  });
+  const [showEmailPublic, setShowEmailPublic] = useState(() => {
+    const storedSettings = readStoredSettings();
+    return typeof storedSettings.showEmailPublic === "boolean"
+      ? storedSettings.showEmailPublic
+      : defaultShowEmailPublic;
   });
   const [clientAnimation, setClientAnimation] = useState<ClientAnimation>(() => {
     const storedSettings = readStoredSettings();
@@ -183,6 +190,7 @@ export function useClientSettings() {
       gameScreenMode,
       locale,
       resolution,
+      showEmailPublic,
       uiScale,
     });
   }, [
@@ -194,6 +202,7 @@ export function useClientSettings() {
     gameScreenMode,
     locale,
     resolution,
+    showEmailPublic,
     uiScale,
   ]);
 
@@ -258,6 +267,7 @@ export function useClientSettings() {
     gameScreenMode,
     locale,
     resolution,
+    showEmailPublic,
     supportsFourKResolution: monitorResolutionSupport?.fourK === true,
     supportsTwoKResolution: monitorResolutionSupport?.twoK === true,
     t,
@@ -270,6 +280,7 @@ export function useClientSettings() {
     setGameScreenMode,
     setLocale,
     setResolution,
+    setShowEmailPublic,
     setUiScale,
   };
 }

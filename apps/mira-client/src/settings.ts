@@ -9,6 +9,7 @@ export const defaultGameScreenMode = "borderless";
 export const defaultBackgroundChampion = "yuna";
 export const defaultFriendRequestPolicy = "allow";
 export const defaultChatPosition = "right";
+export const defaultShowEmailPublic = false;
 
 export type AppResolution =
   | "1270x720"
@@ -34,6 +35,7 @@ export type StoredSettings = {
   gameScreenMode?: GameScreenMode;
   locale?: AppLocale;
   resolution?: AppResolution;
+  showEmailPublic?: boolean;
   uiScale?: UiScale;
 };
 

@@ -7,6 +7,7 @@ import {
   defaultFriendRequestPolicy,
   defaultGameScreenMode,
   defaultResolution,
+  defaultShowEmailPublic,
   defaultUiScale,
   getAccentForegroundColor,
   getResolutionFromSize,
@@ -99,6 +100,7 @@ describe("stored settings", () => {
       gameScreenMode: defaultGameScreenMode,
       locale: "de" as const,
       resolution: defaultResolution,
+      showEmailPublic: defaultShowEmailPublic,
       uiScale: defaultUiScale,
     };
 

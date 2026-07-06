@@ -23,6 +23,7 @@ type SettingsModalProps = {
   gameScreenMode: GameScreenMode;
   locale: AppLocale;
   resolution: AppResolution;
+  showEmailPublic: boolean;
   supportsFourKResolution: boolean;
   supportsTwoKResolution: boolean;
   uiScale: UiScale;
@@ -35,6 +36,7 @@ type SettingsModalProps = {
   onGameScreenModeChange: (gameScreenMode: GameScreenMode) => void;
   onLocaleChange: (locale: AppLocale) => void;
   onResolutionChange: (resolution: AppResolution) => void;
+  onShowEmailPublicChange: (showEmailPublic: boolean) => void;
   onUiScaleChange: (uiScale: UiScale) => void;
   t: Translate;
   vision: SettingsVision;
@@ -134,6 +136,7 @@ function SettingsModal({
   gameScreenMode,
   locale,
   resolution,
+  showEmailPublic,
   supportsFourKResolution,
   supportsTwoKResolution,
   uiScale,
@@ -146,6 +149,7 @@ function SettingsModal({
   onGameScreenModeChange,
   onLocaleChange,
   onResolutionChange,
+  onShowEmailPublicChange,
   onUiScaleChange,
   t,
   vision,
@@ -633,42 +637,69 @@ function SettingsModal({
             ) : null}
 
             {socialTabAvailable && activeSettingsTab === "social" ? (
-              <div className="settings-row">
-                <span>{t("settings-allow-friend-request")}</span>
-                <div
-                  className="settings-dropdown"
-                  onMouseDown={(event) => event.stopPropagation()}
-                >
-                  <button
-                    aria-expanded={friendRequestPolicyDropdownOpen}
-                    aria-haspopup="listbox"
-                    className="settings-dropdown-trigger"
-                    type="button"
-                    onClick={() => {
-                      closeDropdowns();
-                      setFriendRequestPolicyDropdownOpen((open) => !open);
-                    }}
+              <>
+                <div className="settings-row">
+                  <span>{t("settings-allow-friend-request")}</span>
+                  <div
+                    className="settings-dropdown"
+                    onMouseDown={(event) => event.stopPropagation()}
                   >
-                    <span>{t(selectedFriendRequestPolicy)}</span>
-                  </button>
+                    <button
+                      aria-expanded={friendRequestPolicyDropdownOpen}
+                      aria-haspopup="listbox"
+                      className="settings-dropdown-trigger"
+                      type="button"
+                      onClick={() => {
+                        closeDropdowns();
+                        setFriendRequestPolicyDropdownOpen((open) => !open);
+                      }}
+                    >
+                      <span>{t(selectedFriendRequestPolicy)}</span>
+                    </button>
 
-                  {friendRequestPolicyDropdownOpen ? (
-                    <div className="settings-dropdown-menu" role="listbox">
-                      {friendRequestPolicyOptions.map((option) => (
-                        <button
-                          aria-selected={friendRequestPolicy === option.value}
-                          key={option.value}
-                          role="option"
-                          type="button"
-                          onClick={() => handleFriendRequestPolicySelect(option.value)}
-                        >
-                          <span>{t(option.labelId)}</span>
-                        </button>
-                      ))}
-                    </div>
-                  ) : null}
+                    {friendRequestPolicyDropdownOpen ? (
+                      <div className="settings-dropdown-menu" role="listbox">
+                        {friendRequestPolicyOptions.map((option) => (
+                          <button
+                            aria-selected={friendRequestPolicy === option.value}
+                            key={option.value}
+                            role="option"
+                            type="button"
+                            onClick={() => handleFriendRequestPolicySelect(option.value)}
+                          >
+                            <span>{t(option.labelId)}</span>
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
-              </div>
+                <div className="settings-row">
+                  <span>{t("settings-show-email-public")}</span>
+                  <div
+                    aria-label={t("settings-show-email-public")}
+                    className="settings-toggle-group"
+                    role="group"
+                  >
+                    <button
+                      aria-pressed={showEmailPublic}
+                      className={showEmailPublic ? "active" : ""}
+                      type="button"
+                      onClick={() => onShowEmailPublicChange(true)}
+                    >
+                      {t("settings-toggle-yes")}
+                    </button>
+                    <button
+                      aria-pressed={!showEmailPublic}
+                      className={!showEmailPublic ? "active" : ""}
+                      type="button"
+                      onClick={() => onShowEmailPublicChange(false)}
+                    >
+                      {t("settings-toggle-no")}
+                    </button>
+                  </div>
+                </div>
+              </>
             ) : null}
           </div>
         </div>

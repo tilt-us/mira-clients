@@ -10,7 +10,7 @@
 }
 
 .close-backdrop {
-  z-index: 700;
+  z-index: 1000;
 }
 
 .close-dialog {

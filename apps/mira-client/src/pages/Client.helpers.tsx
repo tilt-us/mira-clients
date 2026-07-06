@@ -509,8 +509,11 @@ export function getInviteCandidateKey(candidate: PartyInviteCandidate) {
   return candidate.publicId ?? candidate.email ?? candidate.name;
 }
 
-export function getInviteCandidateSubtitle(candidate: PartyInviteCandidate) {
-  return formatTagId(candidate.tagId) ?? candidate.email;
+export function getInviteCandidateSubtitle(
+  candidate: PartyInviteCandidate,
+  options: { showEmail: boolean } = { showEmail: true },
+) {
+  return formatTagId(candidate.tagId) ?? (options.showEmail ? candidate.email : undefined);
 }
 
 export function getLobbyDisplayName(name: string) {
