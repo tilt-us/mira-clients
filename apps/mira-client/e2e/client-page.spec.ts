@@ -161,6 +161,8 @@ test("discovers incoming private chat rooms from the room last message", async (
   await loginToClient(page);
   const chatDock = page.getByRole("region", { name: "Chat" });
 
+  await expect(chatDock).not.toHaveClass(/open/);
+  await page.getByRole("button", { name: "Chat öffnen" }).click();
   await expect(chatDock).toHaveClass(/open/);
   const incomingChat = chatDock.locator(".chat-contact-card").filter({
     hasText: "Lane Partner",
