@@ -345,6 +345,18 @@
   animation: play-button-gradient 5.6s linear infinite reverse;
 }
 
+.chat-dock-tab-attention {
+  animation: chat-dock-tab-pulse 1.35s ease-in-out infinite;
+}
+
+.chat-dock-tab-attention::before {
+  animation: play-button-gradient 3.4s linear infinite;
+}
+
+.chat-dock-tab-attention::after {
+  animation: play-button-gradient 4.4s linear infinite reverse;
+}
+
 .chat-dock-tab > svg {
   position: relative;
   z-index: 1;
@@ -737,6 +749,19 @@
 
   100% {
     background-position: 200% 50%;
+  }
+}
+
+@keyframes chat-dock-tab-pulse {
+  0%,
+  100% {
+    filter: drop-shadow(0 -8px 18px rgba(0, 0, 0, 0.34));
+  }
+
+  50% {
+    filter:
+      drop-shadow(0 -8px 18px rgba(0, 0, 0, 0.34))
+      drop-shadow(0 0 16px color-mix(in srgb, var(--accent-color) 72%, transparent));
   }
 }
 

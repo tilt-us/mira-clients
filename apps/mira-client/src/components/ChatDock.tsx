@@ -1,6 +1,7 @@
 import { MessageCircle, Send, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  client,
   deleteChatRoom,
   listMessages,
   listRooms,
@@ -78,7 +79,8 @@ type ChatFriendsUpdatedEvent = CustomEvent<{
 }>;
 
 const emptyChatRooms: ChatRoom[] = [];
-const chatRefreshMs = 5_000;
+const chatRefreshMs = 30_000;
+const chatEventRefreshDelayMs = 150;
 const chatMessageLimit = 50;
 
 function isChatRequestEvent(event: Event): event is ChatRequestEvent {
@@ -262,6 +264,152 @@ function getChatMessages(data: unknown): ChatMessageResponse[] {
   }
 
   return [];
+}
+
+function parseChatWireValue(value: unknown): unknown {
+  if (typeof value !== "string") {
+    return value;
+  }
+
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return value;
+  }
+}
+
+function getChatWireEventType(value: unknown) {
+  const parsedValue = parseChatWireValue(value);
+
+  if (!parsedValue || typeof parsedValue !== "object" || Array.isArray(parsedValue)) {
+    return undefined;
+  }
+
+  const record = parsedValue as Record<string, unknown>;
+
+  return [record.type, record.event, record.eventType, record.eventName, record.name].find(
+    (currentValue): currentValue is string => typeof currentValue === "string",
+  );
+}
+
+function isChatMessagePayload(value: unknown): value is ChatMessageResponse {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+
+  const record = value as Record<string, unknown>;
+
+  return (
+    typeof record.content === "string" &&
+    (typeof record.messageId === "string" ||
+      typeof record.id === "string" ||
+      typeof record.roomId === "string" ||
+      typeof record.chatRoomId === "string")
+  );
+}
+
+function isChatRoomPayload(value: unknown): value is ChatRoomResponse {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+
+  const record = value as Record<string, unknown>;
+
+  return (
+    (typeof record.roomId === "string" || typeof record.id === "string") &&
+    (typeof record.type === "string" ||
+      typeof record.lastReadAt === "string" ||
+      typeof record.unreadCount === "number" ||
+      typeof record.lastMessage === "object")
+  );
+}
+
+function findChatMessageEventPayload(
+  value: unknown,
+  depth = 0,
+): ChatMessageResponse | undefined {
+  if (!value || depth > 5) {
+    return undefined;
+  }
+
+  const parsedValue = parseChatWireValue(value);
+
+  if (isChatMessagePayload(parsedValue)) {
+    return normalizeChatMessage(parsedValue);
+  }
+
+  if (Array.isArray(parsedValue)) {
+    for (const item of parsedValue) {
+      const message = findChatMessageEventPayload(item, depth + 1);
+
+      if (message) {
+        return message;
+      }
+    }
+
+    return undefined;
+  }
+
+  if (typeof parsedValue !== "object") {
+    return undefined;
+  }
+
+  const record = parsedValue as Record<string, unknown>;
+  const payload = record.payload ?? record.data ?? record.message;
+
+  if (payload) {
+    const payloadMessage = findChatMessageEventPayload(payload, depth + 1);
+
+    if (payloadMessage) {
+      return payloadMessage;
+    }
+  }
+
+  return undefined;
+}
+
+function findChatRoomEventPayload(
+  value: unknown,
+  depth = 0,
+): ChatRoomResponse | undefined {
+  if (!value || depth > 5) {
+    return undefined;
+  }
+
+  const parsedValue = parseChatWireValue(value);
+
+  if (isChatRoomPayload(parsedValue)) {
+    return parsedValue;
+  }
+
+  if (Array.isArray(parsedValue)) {
+    for (const item of parsedValue) {
+      const room = findChatRoomEventPayload(item, depth + 1);
+
+      if (room) {
+        return room;
+      }
+    }
+
+    return undefined;
+  }
+
+  if (typeof parsedValue !== "object") {
+    return undefined;
+  }
+
+  const record = parsedValue as Record<string, unknown>;
+  const payload = record.payload ?? record.data ?? record.room;
+
+  if (payload) {
+    const payloadRoom = findChatRoomEventPayload(payload, depth + 1);
+
+    if (payloadRoom) {
+      return payloadRoom;
+    }
+  }
+
+  return undefined;
 }
 
 function findPrivateRoom(
@@ -643,10 +791,15 @@ function ChatDock({
   const [draftMessage, setDraftMessage] = useState("");
   const [refreshNonce, setRefreshNonce] = useState(0);
   const contactsRef = useRef<ChatContact[]>([]);
+  const activeContactIdRef = useRef<string | undefined>(undefined);
+  const applyChatEventRef = useRef<(event: unknown) => void>(() => undefined);
+  const currentUserPublicIdRef = useRef<number | undefined>(currentUserPublicId);
   const friendsByPublicIdRef = useRef<
     Map<number, { avatarUrl?: string; name?: string }>
   >(new Map());
   const messageListRef = useRef<HTMLDivElement>(null);
+  const openRef = useRef(open);
+  const refreshTimeoutRef = useRef<number | undefined>(undefined);
   const dismissedPrivateActivityRef = useRef<Map<string, string>>(new Map());
   const markedReadByRoomRef = useRef<Map<string, string>>(new Map());
   const previousAutoRoomIdsRef = useRef<Set<string>>(new Set());
@@ -670,9 +823,210 @@ function ChatDock({
     );
   }
 
+  function queueChatRefresh() {
+    if (refreshTimeoutRef.current !== undefined) {
+      return;
+    }
+
+    refreshTimeoutRef.current = window.setTimeout(() => {
+      refreshTimeoutRef.current = undefined;
+      setRefreshNonce((currentRefreshNonce) => currentRefreshNonce + 1);
+    }, chatEventRefreshDelayMs);
+  }
+
+  function applyChatMessageEvent(message: ChatMessageResponse) {
+    const normalizedMessage = normalizeChatMessage(message);
+    const roomId = getMessageRoomId(normalizedMessage);
+
+    if (!normalizedMessage || !roomId) {
+      queueChatRefresh();
+      return;
+    }
+
+    const matchedContact = contactsRef.current.some(
+      (contact) => contact.roomId === roomId,
+    );
+
+    setContacts((currentContacts) =>
+      currentContacts.map((contact) => {
+        if (contact.roomId !== roomId) {
+          return contact;
+        }
+
+        const messageKey = getMessageKey(normalizedMessage);
+        const alreadyKnown = Boolean(
+          contact.messages?.some(
+            (currentMessage) => getMessageKey(currentMessage) === messageKey,
+          ),
+        );
+        const currentPublicId = currentUserPublicIdRef.current;
+        const isIncomingMessage =
+          typeof currentPublicId === "number" &&
+          normalizedMessage.senderPublicId !== currentPublicId;
+        const isActiveContact =
+          openRef.current && activeContactIdRef.current === contact.id;
+
+        return {
+          ...contact,
+          lastActivityKey: getMessageActivityKey(normalizedMessage) ?? contact.lastActivityKey,
+          messages: mergeMessages(contact.messages, [normalizedMessage]),
+          messagesLoaded: true,
+          unreadCount:
+            isIncomingMessage && !isActiveContact && !alreadyKnown
+              ? (contact.unreadCount ?? 0) + 1
+              : contact.unreadCount,
+        };
+      }),
+    );
+
+    if (!matchedContact) {
+      queueChatRefresh();
+    }
+  }
+
+  function applyChatRoomEvent(room: ChatRoomResponse) {
+    const roomId = getRoomId(room);
+
+    if (!roomId) {
+      queueChatRefresh();
+      return;
+    }
+
+    const matchedContact = contactsRef.current.some(
+      (contact) => contact.roomId === roomId,
+    );
+
+    setContacts((currentContacts) =>
+      currentContacts.map((contact) => {
+        if (contact.roomId !== roomId) {
+          return contact;
+        }
+
+        const currentPublicId = currentUserPublicIdRef.current;
+
+        return {
+          ...contact,
+          lastActivityKey: getRoomActivityKey(room) ?? contact.lastActivityKey,
+          lastReadAt: room.lastReadAt ?? contact.lastReadAt,
+          messages: room.lastMessage
+            ? mergeMessages(contact.messages, [room.lastMessage])
+            : contact.messages,
+          unreadCount:
+            typeof currentPublicId === "number"
+              ? getRoomUnreadCount(room, currentPublicId)
+              : (room.unreadCount ?? contact.unreadCount),
+        };
+      }),
+    );
+
+    if (!matchedContact) {
+      queueChatRefresh();
+    }
+  }
+
+  function applyChatEvent(event: unknown) {
+    const eventType = getChatWireEventType(event);
+
+    if (eventType === "CONNECTED") {
+      return;
+    }
+
+    const message = findChatMessageEventPayload(event);
+    const room = findChatRoomEventPayload(event);
+
+    if (message) {
+      applyChatMessageEvent(message);
+    }
+
+    if (room) {
+      applyChatRoomEvent(room);
+    }
+
+    if (!message && !room && eventType?.startsWith("chat.")) {
+      queueChatRefresh();
+    }
+  }
+
   useEffect(() => {
     contactsRef.current = contacts;
   }, [contacts]);
+
+  useEffect(() => {
+    applyChatEventRef.current = applyChatEvent;
+  });
+
+  useEffect(() => {
+    activeContactIdRef.current = activeContactId;
+  }, [activeContactId]);
+
+  useEffect(() => {
+    currentUserPublicIdRef.current = currentUserPublicId;
+  }, [currentUserPublicId]);
+
+  useEffect(() => {
+    openRef.current = open;
+  }, [open]);
+
+  useEffect(() => {
+    return () => {
+      if (refreshTimeoutRef.current !== undefined) {
+        window.clearTimeout(refreshTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof currentUserPublicId !== "number") {
+      return;
+    }
+
+    let active = true;
+    let reconnectTimeout: number | undefined;
+    const abortController = new AbortController();
+
+    function scheduleReconnect() {
+      if (!active || abortController.signal.aborted) {
+        return;
+      }
+
+      reconnectTimeout = window.setTimeout(() => {
+        void listenForChatEvents();
+      }, 2_000);
+    }
+
+    async function listenForChatEvents() {
+      try {
+        const result = await client.sse.get<unknown>({
+          baseUrl: CHAT_API_BASE_URL,
+          signal: abortController.signal,
+          url: "/api/chats/events",
+        });
+
+        for await (const event of result.stream) {
+          if (!active) {
+            break;
+          }
+
+          applyChatEventRef.current(event);
+        }
+
+        scheduleReconnect();
+      } catch {
+        scheduleReconnect();
+      }
+    }
+
+    void listenForChatEvents();
+
+    return () => {
+      active = false;
+      abortController.abort();
+
+      if (reconnectTimeout !== undefined) {
+        window.clearTimeout(reconnectTimeout);
+      }
+    };
+  }, [currentUserPublicId]);
 
   useEffect(() => {
     function handleChatRequest(event: Event) {
@@ -779,9 +1133,6 @@ function ChatDock({
 
   useEffect(() => {
     const autoRoomIds = new Set(autoRooms.map((room) => room.id));
-    const hasNewAutoRoom = autoRooms.some((room) => {
-      return !previousAutoRoomIdsRef.current.has(room.id);
-    });
     const removedGroupRoomIds = contactsRef.current
       .filter((contact) => {
         return (
@@ -801,10 +1152,6 @@ function ChatDock({
         baseUrl: CHAT_API_BASE_URL,
         path: { roomId },
       });
-    }
-
-    if (hasNewAutoRoom) {
-      setOpen(true);
     }
 
     setContacts((currentContacts) => {
@@ -969,7 +1316,7 @@ function ChatDock({
         ),
       );
 
-      for (const contact of messageContacts) {
+      await Promise.all(messageContacts.map(async (contact) => {
         if (cancelled) {
           return;
         }
@@ -989,7 +1336,7 @@ function ChatDock({
             messagesLoaded: true,
             messagesLoading: false,
           }));
-          continue;
+          return;
         }
 
         const messagesResult = await listMessages({
@@ -1027,7 +1374,7 @@ function ChatDock({
                 : (room.unreadCount ?? currentContact.unreadCount ?? 0),
           };
         });
-      }
+      }));
     }
 
     void refreshChatMessages();
@@ -1235,9 +1582,11 @@ function ChatDock({
       aria-expanded={open}
       aria-label={t(open ? "chat-close" : "chat-open")}
       className={
-        chatPosition === "left"
-          ? "chat-dock-tab chat-dock-tab-left"
-          : "chat-dock-tab"
+        [
+          "chat-dock-tab",
+          chatPosition === "left" ? "chat-dock-tab-left" : "",
+          totalUnreadCount > 0 && !open ? "chat-dock-tab-attention" : "",
+        ].filter(Boolean).join(" ")
       }
       data-placement={placement}
       type="button"
