@@ -2,6 +2,10 @@ import { client } from "./generated/client.gen";
 import { API_BASE_URL, CHAMPION_API_BASE_URL } from "./config";
 import { apiFetch, getClientDeviceType } from "./http";
 import { getValidAccessToken, getValidDesktopApiToken } from "../auth/keycloak";
+import type {
+  ClientSettingsApiRequest,
+  ClientSettingsApiResponse,
+} from "../settings";
 
 export type LobbyRole = "TOP" | "JUNGLE" | "MID" | "ADC" | "SUPPORT";
 
@@ -58,6 +62,18 @@ type SetOwnedChampionOptions = {
     champion: number | string;
     userId: number;
   };
+};
+
+type UpdateClientSettingsOptions = {
+  body: ClientSettingsApiRequest;
+};
+
+export type UserSettingsSummaryResponse = {
+  accent_color?: string;
+  accentColor?: string;
+  publicId?: number;
+  show_email_public?: boolean;
+  showEmailPublic?: boolean;
 };
 
 client.setConfig({
@@ -182,6 +198,32 @@ export function setOwnedChampion(options: SetOwnedChampionOptions) {
     headers: {
       "Content-Type": "application/json",
     },
+  });
+}
+
+export function getClientSettings() {
+  return client.get<{ 200: ClientSettingsApiResponse }, unknown, false>({
+    url: "/api/me/settings",
+    baseUrl: API_BASE_URL,
+  });
+}
+
+export function updateClientSettings(options: UpdateClientSettingsOptions) {
+  return client.put<{ 200: ClientSettingsApiResponse; 204: void }, unknown, false>({
+    url: "/api/me/settings",
+    baseUrl: API_BASE_URL,
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+    },
+  });
+}
+
+export function getUserSettingsSummary(publicId: number) {
+  return client.get<{ 200: UserSettingsSummaryResponse }, unknown, false>({
+    url: "/api/users/{publicId}/settings-summary",
+    baseUrl: API_BASE_URL,
+    path: { publicId },
   });
 }
 

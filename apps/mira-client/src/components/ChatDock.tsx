@@ -1279,7 +1279,6 @@ function ChatDock({
       }
 
       if (discoveredContacts.length > 0) {
-        setOpen(true);
         setContacts((currentContacts) => {
           const currentContactIds = new Set(
             currentContacts.map((contact) => contact.id),

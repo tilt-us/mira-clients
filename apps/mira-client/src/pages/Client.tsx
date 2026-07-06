@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -38,6 +39,7 @@ import {
   decide,
   decline,
   get as getMatch,
+  getUserSettingsSummary,
   hoverChampion,
   hoverChampionDuplicate,
   invite,
@@ -94,6 +96,7 @@ import type {
   BackgroundChampion,
   ChatPosition,
   ClientAnimation,
+  ClientSettingsFolder,
   FriendRequestPolicy,
   GameScreenMode,
   UiScale,
@@ -220,6 +223,7 @@ type ClientProps = {
   accentColor: string;
   backgroundChampion: BackgroundChampion;
   chatPosition: ChatPosition;
+  clientSettingsFolders: ClientSettingsFolder[];
   clientAnimation: ClientAnimation;
   friendRequestPolicy: FriendRequestPolicy;
   closeDialogOpen: boolean;
@@ -228,6 +232,7 @@ type ClientProps = {
   onAccentColorChange: (accentColor: string) => void;
   onBackgroundChampionChange: (backgroundChampion: BackgroundChampion) => void;
   onChatPositionChange: (chatPosition: ChatPosition) => void;
+  onClientSettingsFoldersChange: (folders: ClientSettingsFolder[]) => void;
   onClientAnimationChange: (clientAnimation: ClientAnimation) => void;
   onCloseDialogClose: () => void;
   onFriendRequestPolicyChange: (friendRequestPolicy: FriendRequestPolicy) => void;
@@ -237,6 +242,7 @@ type ClientProps = {
   onQuit: () => void;
   onResolutionChange: (resolution: AppResolution) => void;
   onSettingsClose: () => void;
+  onShowEmailPublicChange: (showEmailPublic: boolean) => void;
   onUiScaleChange: (uiScale: UiScale) => void;
   profileAvatarUrl?: string;
   profileLevel: number;
@@ -244,6 +250,7 @@ type ClientProps = {
   profilePublicId?: number;
   profileTagId?: string;
   resolution: AppResolution;
+  showEmailPublic: boolean;
   settingsOpen: boolean;
   supportsFourKResolution: boolean;
   supportsTwoKResolution: boolean;
@@ -255,6 +262,7 @@ function Client({
   accentColor,
   backgroundChampion,
   chatPosition,
+  clientSettingsFolders,
   clientAnimation,
   friendRequestPolicy,
   closeDialogOpen,
@@ -263,6 +271,7 @@ function Client({
   onAccentColorChange,
   onBackgroundChampionChange,
   onChatPositionChange,
+  onClientSettingsFoldersChange,
   onClientAnimationChange,
   onCloseDialogClose,
   onFriendRequestPolicyChange,
@@ -272,6 +281,7 @@ function Client({
   onQuit,
   onResolutionChange,
   onSettingsClose,
+  onShowEmailPublicChange,
   onUiScaleChange,
   profileAvatarUrl,
   profileLevel,
@@ -279,6 +289,7 @@ function Client({
   profilePublicId,
   profileTagId,
   resolution,
+  showEmailPublic,
   settingsOpen,
   supportsFourKResolution,
   supportsTwoKResolution,
@@ -309,6 +320,8 @@ function Client({
   const [partyInviteOnlineUsers, setPartyInviteOnlineUsers] = useState<
     OnlineInviteUser[]
   >([]);
+  const [userEmailVisibilityByPublicId, setUserEmailVisibilityByPublicId] =
+    useState<Map<number, boolean>>(new Map());
   const [publicUsersByPublicId, setPublicUsersByPublicId] = useState<
     Map<number, FriendUserResponse>
   >(new Map());
@@ -938,6 +951,88 @@ function Client({
         .filter((publicId): publicId is number => typeof publicId === "number"),
     );
   }, [partyInviteFriends]);
+  const canShowInviteCandidateEmail = useCallback(
+    (candidate: PartyInviteCandidate) => (
+      candidate.source === "friend" ||
+      (
+        typeof candidate.publicId === "number" &&
+        userEmailVisibilityByPublicId.get(candidate.publicId) === true
+      )
+    ),
+    [userEmailVisibilityByPublicId],
+  );
+  useEffect(() => {
+    if (!partyInviteOpen) {
+      return;
+    }
+
+    const publicIds = new Set<number>();
+    const addPublicId = (value: unknown) => {
+      const publicId = toPublicId(value);
+
+      if (
+        typeof publicId === "number" &&
+        publicId !== profilePublicId &&
+        !friendPublicIds.has(publicId) &&
+        !userEmailVisibilityByPublicId.has(publicId)
+      ) {
+        publicIds.add(publicId);
+      }
+    };
+
+    for (const user of partyInviteSearchResults) {
+      addPublicId(user.publicId);
+    }
+
+    for (const user of partyInviteOnlineUsers) {
+      addPublicId(user.publicId);
+    }
+
+    if (publicIds.size === 0) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadUserSettingsSummaries() {
+      const summaries = await Promise.all(
+        [...publicIds].map(async (publicId) => {
+          const result = await getUserSettingsSummary(publicId);
+          const showEmailPublic =
+            result.data?.showEmailPublic ?? result.data?.show_email_public ?? false;
+
+          return [publicId, result.error ? false : showEmailPublic] as const;
+        }),
+      );
+
+      if (cancelled) {
+        return;
+      }
+
+      setUserEmailVisibilityByPublicId((currentVisibility) => {
+        const nextVisibility = new Map(currentVisibility);
+
+        for (const [publicId, showEmailPublic] of summaries) {
+          nextVisibility.set(publicId, showEmailPublic);
+        }
+
+        return nextVisibility;
+      });
+    }
+
+    void loadUserSettingsSummaries();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    friendPublicIds,
+    partyInviteOnlineUsers,
+    partyInviteOpen,
+    partyInviteSearchResults,
+    profilePublicId,
+    userEmailVisibilityByPublicId,
+  ]);
   const filteredInviteCandidates = useMemo(() => {
     const query = partyInviteSearch.trim().toLowerCase();
     const candidatesById = new Map<number | string, PartyInviteCandidate>();
@@ -946,14 +1041,15 @@ function Client({
       return [];
     }
 
-    const matchesQuery = (candidate: PartyInviteCandidate) => {
-      return (
-        candidate.name.toLowerCase().includes(query) ||
-        candidate.tagId?.toLowerCase().includes(query) ||
-        candidate.email?.toLowerCase().includes(query) ||
-        String(candidate.publicId ?? "").includes(query)
-      );
-    };
+    const matchesQuery = (candidate: PartyInviteCandidate) => (
+      candidate.name.toLowerCase().includes(query) ||
+      candidate.tagId?.toLowerCase().includes(query) ||
+      (
+        canShowInviteCandidateEmail(candidate) &&
+        candidate.email?.toLowerCase().includes(query)
+      ) ||
+      String(candidate.publicId ?? "").includes(query)
+    );
 
     for (const friend of partyInviteFriends) {
       if (
@@ -975,7 +1071,7 @@ function Client({
       const candidate = mapUserToInviteCandidate(user);
       const key = getInviteCandidateKey(candidate);
 
-      if (!candidatesById.has(key)) {
+      if (!candidatesById.has(key) && matchesQuery(candidate)) {
         candidatesById.set(key, candidate);
       }
     }
@@ -1006,6 +1102,7 @@ function Client({
     });
   }, [
     activeLobbyCurrentMember,
+    canShowInviteCandidateEmail,
     partyInviteFriends,
     partyInviteOnlineUsers,
     partyInviteOnlinePublicIdSet,
@@ -4182,7 +4279,9 @@ function Client({
       <Sidebar
         activeLobbyId={activeLobby?.id}
         activeLobbyMemberPublicIds={[...activeLobbyMemberPublicIds]}
+        clientSettingsFolders={clientSettingsFolders}
         forceOnlinePublicIds={forceOnlinePublicIds}
+        onClientSettingsFoldersChange={onClientSettingsFoldersChange}
         onFriendPartyInvite={handleLobbyFriendDrop}
         onFriendPartyJoin={handleJoinFriendParty}
         onLobbyFriendDrop={handleLobbyFriendDrop}
@@ -5066,7 +5165,9 @@ function Client({
               {inviteCandidates.length > 0 ? (
                 inviteCandidates.map((candidate) => {
                   const candidateKey = getInviteCandidateKey(candidate);
-                  const candidateSubtitle = getInviteCandidateSubtitle(candidate);
+                  const candidateSubtitle = getInviteCandidateSubtitle(candidate, {
+                    showEmail: canShowInviteCandidateEmail(candidate),
+                  });
                   const candidateInLobby =
                     typeof candidate.publicId === "number" &&
                     activeLobbyMemberPublicIds.has(candidate.publicId);
@@ -5191,6 +5292,7 @@ function Client({
           gameScreenMode={gameScreenMode}
           locale={locale}
           resolution={resolution}
+          showEmailPublic={showEmailPublic}
           supportsFourKResolution={supportsFourKResolution}
           supportsTwoKResolution={supportsTwoKResolution}
           t={t}
@@ -5205,6 +5307,7 @@ function Client({
           onGameScreenModeChange={onGameScreenModeChange}
           onLocaleChange={onLocaleChange}
           onResolutionChange={onResolutionChange}
+          onShowEmailPublicChange={onShowEmailPublicChange}
           onUiScaleChange={onUiScaleChange}
         />
       ) : null}

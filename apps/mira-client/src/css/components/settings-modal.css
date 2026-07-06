@@ -208,6 +208,42 @@
   font-weight: 750;
 }
 
+.settings-toggle-group {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  justify-self: end;
+  width: 225px;
+  min-width: 0;
+  min-height: 38px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: #101216;
+}
+
+.settings-toggle-group button {
+  border: 0;
+  border-radius: 0;
+  color: #9aa7b5;
+  background: transparent;
+  font-size: 0.86rem;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.settings-toggle-group button + button {
+  border-left: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.settings-toggle-group button:hover {
+  background: #20242c;
+}
+
+.settings-toggle-group button.active {
+  color: var(--accent-foreground-color);
+  background: var(--accent-color);
+}
+
 .settings-checkbox-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -230,7 +266,8 @@
 
 .settings-dropdown-trigger:focus,
 .settings-row input[type="color"]:focus,
-.settings-dropdown-search:focus-within {
+.settings-dropdown-search:focus-within,
+.settings-toggle-group:focus-within {
   border-color: color-mix(in srgb, var(--accent-color) 75%, transparent);
   outline: none;
 }

@@ -1,6 +1,14 @@
 import { defineConfig } from "vitest/config";
+import { fileURLToPath, URL } from "node:url";
+
+const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 
 export default defineConfig({
+  server: {
+    fs: {
+      allow: [repoRoot],
+    },
+  },
   test: {
     coverage: {
       clean: true,

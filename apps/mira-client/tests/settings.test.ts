@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "vitest";
 import {
+  backgroundChampionNames,
   defaultAccentColor,
   defaultBackgroundChampion,
   defaultChatPosition,
@@ -7,6 +8,7 @@ import {
   defaultFriendRequestPolicy,
   defaultGameScreenMode,
   defaultResolution,
+  defaultShowEmailPublic,
   defaultUiScale,
   getAccentForegroundColor,
   getResolutionFromSize,
@@ -20,8 +22,10 @@ import {
   isHexColor,
   isLocale,
   isUiScale,
+  normalizeClientSettingsApiResponse,
   readStoredSettings,
   settingsStorageKey,
+  toClientSettingsApiRequest,
   writeStoredSettings,
 } from "../src/settings";
 
@@ -39,6 +43,7 @@ describe("settings validators", () => {
     expect(isUiScale(1.25)).toBe(true);
     expect(isGameScreenMode("borderless")).toBe(true);
     expect(isBackgroundChampion("yuna")).toBe(true);
+    expect(backgroundChampionNames).toEqual(["ignara", "lira", "sophia", "yuna"]);
     expect(isFriendRequestPolicy("vip")).toBe(true);
     expect(isChatPosition("left")).toBe(true);
   });
@@ -95,10 +100,12 @@ describe("stored settings", () => {
       backgroundChampion: defaultBackgroundChampion,
       chatPosition: defaultChatPosition,
       clientAnimation: defaultClientAnimation,
+      folders: [],
       friendRequestPolicy: defaultFriendRequestPolicy,
       gameScreenMode: defaultGameScreenMode,
       locale: "de" as const,
       resolution: defaultResolution,
+      showEmailPublic: defaultShowEmailPublic,
       uiScale: defaultUiScale,
     };
 
@@ -111,5 +118,137 @@ describe("stored settings", () => {
     localStorage.setItem(settingsStorageKey, "{invalid");
 
     expect(readStoredSettings()).toEqual({});
+  });
+});
+
+describe("remote settings mapping", () => {
+  test("normalizes API settings and serializes updates", () => {
+    const normalizedSettings = normalizeClientSettingsApiResponse({
+      accent_color: "#5b78eb",
+      allow_friend_request: "vip",
+      background: "lira",
+      chat_position: "left",
+      client_animation: "none",
+      folders: [
+        {
+          friendPublicIds: [9101, 9102],
+          name: "Lane",
+        },
+      ],
+      language: "en",
+      resolution: "1400x800",
+      screen_mode: "window",
+      show_email_public: true,
+      ui_scale: 1,
+    });
+
+    expect(normalizedSettings).toEqual({
+      accentColor: "#5b78eb",
+      backgroundChampion: "lira",
+      chatPosition: "left",
+      clientAnimation: "none",
+      folders: [
+        {
+          friendPublicIds: [9101, 9102],
+          name: "Lane",
+        },
+      ],
+      friendRequestPolicy: "vip",
+      gameScreenMode: "window",
+      locale: "en",
+      resolution: "1400x800",
+      showEmailPublic: true,
+      uiScale: 1,
+    });
+
+    expect(
+      toClientSettingsApiRequest({
+        accentColor: "#5b78eb",
+        allowFriendRequests: false,
+        backgroundChampion: "lira",
+        chatPosition: "left",
+        clientAnimation: "none",
+        folders: [
+          {
+            friendPublicIds: [9101],
+            name: "Lane",
+          },
+        ],
+        friendRequestPolicy: "vip",
+        gameScreenMode: "window",
+        locale: "en",
+        resolution: "1400x800",
+        showEmailPublic: true,
+        uiScale: 1,
+      }),
+    ).toEqual({
+      accentColor: "#5b78eb",
+      allowFriendRequest: "vip",
+      background: "lira",
+      chatPosition: "left",
+      clientAnimation: "none",
+      folders: [
+        {
+          friendPublicIds: [9101],
+          name: "Lane",
+        },
+      ],
+      language: "en",
+      resolution: "1400x800",
+      screenMode: "window",
+      show_email_public: true,
+      showEmailPublic: true,
+      uiScale: 1,
+    });
+  });
+
+  test("normalizes partial and malformed API settings defensively", () => {
+    expect(normalizeClientSettingsApiResponse(undefined)).toEqual({});
+    expect(
+      normalizeClientSettingsApiResponse({
+        accentColor: "#5b78eb",
+        allowFriendRequest: "allow",
+        background: "unknown",
+        chatPosition: "right",
+        clientAnimation: "all",
+        folders: [
+          null,
+          "invalid",
+          { friendPublicIds: "invalid", name: "No IDs" },
+          { friend_public_ids: ["9101", 9101, -1, 0, "bad", true], name: "  Duo  " },
+          { friendPublicIds: [9102], name: "   " },
+        ],
+        language: "fr",
+        resolution: "1024x768",
+        screenMode: "borderless",
+        showEmailPublic: true,
+        uiScale: "bad",
+      }),
+    ).toEqual({
+      accentColor: "#5b78eb",
+      chatPosition: "right",
+      clientAnimation: "all",
+      folders: [
+        {
+          friendPublicIds: [],
+          name: "No IDs",
+        },
+        {
+          friendPublicIds: [9101],
+          name: "Duo",
+        },
+      ],
+      friendRequestPolicy: "allow",
+      gameScreenMode: "borderless",
+      showEmailPublic: true,
+    });
+
+    expect(
+      normalizeClientSettingsApiResponse({
+        folders: "invalid",
+        show_email_public: "yes",
+        ui_scale: {},
+      }),
+    ).toEqual({});
   });
 });

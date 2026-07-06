@@ -71,6 +71,43 @@ async function fulfillMockApiRequest(route: Route) {
     return;
   }
 
+  if (pathname === "/api/me/settings") {
+    await route.fulfill({
+      contentType: "application/json",
+      json: {
+        accent_color: "#f2c45b",
+        allow_friend_request: "allow",
+        background: "yuna",
+        chat_position: "right",
+        client_animation: "all",
+        folders: [],
+        language: "de",
+        resolution: "1600x900",
+        screen_mode: "borderless",
+        show_email_public: false,
+        ui_scale: 0.9,
+        use_friend_colors: false,
+      },
+    });
+    return;
+  }
+
+  const settingsSummaryMatch = pathname.match(
+    /^\/api\/users\/(\d+)\/settings-summary$/,
+  );
+
+  if (settingsSummaryMatch) {
+    await route.fulfill({
+      contentType: "application/json",
+      json: {
+        accentColor: "#f2c45b",
+        publicId: Number(settingsSummaryMatch[1]),
+        showEmailPublic: true,
+      },
+    });
+    return;
+  }
+
   if (pathname === "/api/live/bootstrap") {
     await route.fulfill({
       contentType: "application/json",

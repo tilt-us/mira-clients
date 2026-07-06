@@ -12,6 +12,7 @@ import type {
   GameScreenMode,
   UiScale,
 } from "../settings";
+import { backgroundChampionNames } from "../settings";
 import type { SettingsVision, Translate } from "../types/ui";
 
 type SettingsModalProps = {
@@ -23,6 +24,7 @@ type SettingsModalProps = {
   gameScreenMode: GameScreenMode;
   locale: AppLocale;
   resolution: AppResolution;
+  showEmailPublic: boolean;
   supportsFourKResolution: boolean;
   supportsTwoKResolution: boolean;
   uiScale: UiScale;
@@ -35,6 +37,7 @@ type SettingsModalProps = {
   onGameScreenModeChange: (gameScreenMode: GameScreenMode) => void;
   onLocaleChange: (locale: AppLocale) => void;
   onResolutionChange: (resolution: AppResolution) => void;
+  onShowEmailPublicChange: (showEmailPublic: boolean) => void;
   onUiScaleChange: (uiScale: UiScale) => void;
   t: Translate;
   vision: SettingsVision;
@@ -98,15 +101,10 @@ const gameScreenModeOptions: Array<{
   { labelId: "settings-screen-mode-window", value: "window" },
 ];
 
-const backgroundChampionOptions: Array<{
-  label: string;
-  value: BackgroundChampion;
-}> = [
-  { label: "Lira", value: "lira" },
-  { label: "Ignara", value: "ignara" },
-  { label: "Yuna", value: "yuna" },
-  { label: "Sophia", value: "sophia" },
-];
+const backgroundChampionOptions = backgroundChampionNames.map((name) => ({
+  label: formatBackgroundChampionName(name),
+  value: name,
+}));
 
 const friendRequestPolicyOptions: Array<{
   labelId: string;
@@ -134,6 +132,7 @@ function SettingsModal({
   gameScreenMode,
   locale,
   resolution,
+  showEmailPublic,
   supportsFourKResolution,
   supportsTwoKResolution,
   uiScale,
@@ -146,6 +145,7 @@ function SettingsModal({
   onGameScreenModeChange,
   onLocaleChange,
   onResolutionChange,
+  onShowEmailPublicChange,
   onUiScaleChange,
   t,
   vision,
@@ -633,42 +633,69 @@ function SettingsModal({
             ) : null}
 
             {socialTabAvailable && activeSettingsTab === "social" ? (
-              <div className="settings-row">
-                <span>{t("settings-allow-friend-request")}</span>
-                <div
-                  className="settings-dropdown"
-                  onMouseDown={(event) => event.stopPropagation()}
-                >
-                  <button
-                    aria-expanded={friendRequestPolicyDropdownOpen}
-                    aria-haspopup="listbox"
-                    className="settings-dropdown-trigger"
-                    type="button"
-                    onClick={() => {
-                      closeDropdowns();
-                      setFriendRequestPolicyDropdownOpen((open) => !open);
-                    }}
+              <>
+                <div className="settings-row">
+                  <span>{t("settings-allow-friend-request")}</span>
+                  <div
+                    className="settings-dropdown"
+                    onMouseDown={(event) => event.stopPropagation()}
                   >
-                    <span>{t(selectedFriendRequestPolicy)}</span>
-                  </button>
+                    <button
+                      aria-expanded={friendRequestPolicyDropdownOpen}
+                      aria-haspopup="listbox"
+                      className="settings-dropdown-trigger"
+                      type="button"
+                      onClick={() => {
+                        closeDropdowns();
+                        setFriendRequestPolicyDropdownOpen((open) => !open);
+                      }}
+                    >
+                      <span>{t(selectedFriendRequestPolicy)}</span>
+                    </button>
 
-                  {friendRequestPolicyDropdownOpen ? (
-                    <div className="settings-dropdown-menu" role="listbox">
-                      {friendRequestPolicyOptions.map((option) => (
-                        <button
-                          aria-selected={friendRequestPolicy === option.value}
-                          key={option.value}
-                          role="option"
-                          type="button"
-                          onClick={() => handleFriendRequestPolicySelect(option.value)}
-                        >
-                          <span>{t(option.labelId)}</span>
-                        </button>
-                      ))}
-                    </div>
-                  ) : null}
+                    {friendRequestPolicyDropdownOpen ? (
+                      <div className="settings-dropdown-menu" role="listbox">
+                        {friendRequestPolicyOptions.map((option) => (
+                          <button
+                            aria-selected={friendRequestPolicy === option.value}
+                            key={option.value}
+                            role="option"
+                            type="button"
+                            onClick={() => handleFriendRequestPolicySelect(option.value)}
+                          >
+                            <span>{t(option.labelId)}</span>
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
-              </div>
+                <div className="settings-row">
+                  <span>{t("settings-show-email-public")}</span>
+                  <div
+                    aria-label={t("settings-show-email-public")}
+                    className="settings-toggle-group"
+                    role="group"
+                  >
+                    <button
+                      aria-pressed={showEmailPublic}
+                      className={showEmailPublic ? "active" : ""}
+                      type="button"
+                      onClick={() => onShowEmailPublicChange(true)}
+                    >
+                      {t("settings-toggle-yes")}
+                    </button>
+                    <button
+                      aria-pressed={!showEmailPublic}
+                      className={!showEmailPublic ? "active" : ""}
+                      type="button"
+                      onClick={() => onShowEmailPublicChange(false)}
+                    >
+                      {t("settings-toggle-no")}
+                    </button>
+                  </div>
+                </div>
+              </>
             ) : null}
           </div>
         </div>
@@ -704,6 +731,14 @@ function isResolutionVisible(
   }
 
   return true;
+}
+
+function formatBackgroundChampionName(name: string) {
+  return name
+    .split(/[-_]/)
+    .filter(Boolean)
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+    .join(" ");
 }
 
 function getMinimumVisibleResolution(
