@@ -1,14 +1,16 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Check, LogIn, UserPlus } from "lucide-react";
 import {
   confirmAvatarRights,
+  getClientSettings,
   loginOptions,
   me,
   register,
   setApiAccessToken,
+  updateClientSettings,
   updateUsername,
   type UserProfileResponse,
 } from "../api/client";
@@ -29,6 +31,11 @@ import { clearTokens, readTokens, saveTokens } from "../auth/storage";
 import SettingsModal from "../components/SettingsModal";
 import { useNotifications } from "../notifications";
 import { useClientSettings } from "../settingsStore";
+import {
+  type ClientSettingsApiRequest,
+  normalizeClientSettingsApiResponse,
+  toClientSettingsApiRequest,
+} from "../settings";
 import Client from "./Client";
 import {
   getProfileAvatarUrl,
@@ -293,6 +300,14 @@ function getProfileSetupKey(profile: UserProfileResponse) {
   return undefined;
 }
 
+function getClientSettingsProfileKey(profile: UserProfileResponse) {
+  return getProfileSetupKey(profile);
+}
+
+function serializeClientSettingsRequest(request: ClientSettingsApiRequest) {
+  return JSON.stringify(request);
+}
+
 function readOAuthProfileSetupPreferences() {
   const rawPreferences = localStorage.getItem(OAUTH_PROFILE_SETUP_STORAGE_KEY);
 
@@ -427,6 +442,7 @@ function Authentication() {
     accentColor,
     backgroundChampion,
     chatPosition,
+    clientSettingsFolders,
     clientAnimation,
     friendRequestPolicy,
     gameScreenMode,
@@ -437,9 +453,12 @@ function Authentication() {
     supportsTwoKResolution,
     t,
     uiScale,
+    applyStoredSettings,
+    currentSettings,
     setAccentColor,
     setBackgroundChampion,
     setChatPosition,
+    setClientSettingsFolders,
     setClientAnimation,
     setFriendRequestPolicy,
     setGameScreenMode,
@@ -449,6 +468,11 @@ function Authentication() {
     setUiScale,
   } = useClientSettings();
   const { notify } = useNotifications();
+  const [clientSettingsRemoteReady, setClientSettingsRemoteReady] =
+    useState(false);
+  const hydratedClientSettingsProfileKeyRef = useRef<string | undefined>(undefined);
+  const lastSavedClientSettingsPayloadRef = useRef<string | undefined>(undefined);
+  const activeProfileKey = profile ? getClientSettingsProfileKey(profile) : undefined;
 
   const googleEnabled = useMemo(
     () => providers.length === 0 || providers.includes("google"),
@@ -462,6 +486,41 @@ function Authentication() {
     () => providers.length === 0 || providers.includes("discord"),
     [providers],
   );
+
+  /**
+   * Description
+   * Loads authenticated client settings and applies them before the signed-in UI is
+   * shown. This also triggers backend provisioning for newly created OAuth users.
+   */
+  async function loadRemoteClientSettings(nextProfile: UserProfileResponse) {
+    setClientSettingsRemoteReady(false);
+
+    const result = await getClientSettings();
+    const profileKey = getClientSettingsProfileKey(nextProfile);
+
+    if (result.error) {
+      console.error("Client settings request failed", {
+        error: result.error,
+        status: result.response?.status,
+        statusText: result.response?.statusText,
+        url: result.request?.url,
+      });
+    } else {
+      const normalizedSettings = normalizeClientSettingsApiResponse(result.data);
+      const hydratedSettings = {
+        ...currentSettings,
+        ...normalizedSettings,
+      };
+
+      applyStoredSettings(normalizedSettings);
+      lastSavedClientSettingsPayloadRef.current = serializeClientSettingsRequest(
+        toClientSettingsApiRequest(hydratedSettings),
+      );
+    }
+
+    hydratedClientSettingsProfileKeyRef.current = profileKey;
+    setClientSettingsRemoteReady(true);
+  }
 
   /**
    * Description
@@ -511,8 +570,89 @@ function Authentication() {
       throw new Error(t("auth-profile-empty-error"));
     }
 
+    await loadRemoteClientSettings(result.data);
     setProfile(result.data);
     return result.data;
+  }
+
+  useEffect(() => {
+    if (!activeProfileKey) {
+      setClientSettingsRemoteReady(false);
+      hydratedClientSettingsProfileKeyRef.current = undefined;
+      lastSavedClientSettingsPayloadRef.current = undefined;
+    }
+  }, [activeProfileKey]);
+
+  useEffect(() => {
+    if (
+      !activeProfileKey ||
+      !clientSettingsRemoteReady ||
+      hydratedClientSettingsProfileKeyRef.current !== activeProfileKey
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    const requestBody = toClientSettingsApiRequest(currentSettings);
+    const requestPayload = serializeClientSettingsRequest(requestBody);
+
+    if (lastSavedClientSettingsPayloadRef.current === requestPayload) {
+      return;
+    }
+
+    async function saveClientSettings() {
+      const result = await updateClientSettings({
+        body: requestBody,
+      });
+
+      if (!cancelled && result.error) {
+        console.error("Client settings update failed", {
+          error: result.error,
+          status: result.response?.status,
+          statusText: result.response?.statusText,
+          url: result.request?.url,
+        });
+        return;
+      }
+
+      if (!cancelled) {
+        lastSavedClientSettingsPayloadRef.current = requestPayload;
+      }
+    }
+
+    void saveClientSettings();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeProfileKey, clientSettingsRemoteReady, currentSettings]);
+
+  function handleShowEmailPublicChange(nextShowEmailPublic: boolean) {
+    setShowEmailPublic(nextShowEmailPublic);
+
+    if (
+      !activeProfileKey ||
+      !clientSettingsRemoteReady ||
+      hydratedClientSettingsProfileKeyRef.current !== activeProfileKey
+    ) {
+      return;
+    }
+
+    void updateClientSettings({
+      body: {
+        show_email_public: nextShowEmailPublic,
+        showEmailPublic: nextShowEmailPublic,
+      },
+    }).then((result) => {
+      if (result.error) {
+        console.error("Show email public update failed", {
+          error: result.error,
+          status: result.response?.status,
+          statusText: result.response?.statusText,
+          url: result.request?.url,
+        });
+      }
+    });
   }
 
   function prepareOAuthProfileSetup(nextProfile: UserProfileResponse) {
@@ -598,7 +738,7 @@ function Authentication() {
     return () => {
       cancelled = true;
     };
-  }, [notify, t]);
+  }, []);
 
   useEffect(() => {
     if (!isTauri()) {
@@ -761,6 +901,8 @@ function Authentication() {
 
     try {
       await prepareNewLogin();
+      setProfile(undefined);
+      setClientSettingsRemoteReady(false);
       const tokens = await loginWithPassword(loginName, loginPassword);
       saveTokens(tokens);
       await loadProfile(tokens.accessToken);
@@ -922,6 +1064,8 @@ function Authentication() {
 
     try {
       await prepareNewLogin();
+      setProfile(undefined);
+      setClientSettingsRemoteReady(false);
       const result = await startGoogleLogin({ accentColor, locale });
 
       if (isTauri()) {
@@ -950,6 +1094,8 @@ function Authentication() {
 
     try {
       await prepareNewLogin();
+      setProfile(undefined);
+      setClientSettingsRemoteReady(false);
       const result = await startGithubLogin({ accentColor, locale });
 
       if (isTauri()) {
@@ -978,6 +1124,8 @@ function Authentication() {
 
     try {
       await prepareNewLogin();
+      setProfile(undefined);
+      setClientSettingsRemoteReady(false);
       const result = await startDiscordLogin({ accentColor, locale });
 
       if (isTauri()) {
@@ -1019,6 +1167,7 @@ function Authentication() {
     } finally {
       clearTokens();
       setApiAccessToken(undefined);
+      setClientSettingsRemoteReady(false);
       setProfile(undefined);
       setLoginPassword("");
       setLoadState("idle");
@@ -1162,6 +1311,7 @@ function Authentication() {
           accentColor={accentColor}
           backgroundChampion={backgroundChampion}
           chatPosition={chatPosition}
+          clientSettingsFolders={clientSettingsFolders}
           clientAnimation={clientAnimation}
           friendRequestPolicy={friendRequestPolicy}
           gameScreenMode={gameScreenMode}
@@ -1182,6 +1332,7 @@ function Authentication() {
           onAccentColorChange={setAccentColor}
           onBackgroundChampionChange={setBackgroundChampion}
           onChatPositionChange={setChatPosition}
+          onClientSettingsFoldersChange={setClientSettingsFolders}
           onClientAnimationChange={setClientAnimation}
           onFriendRequestPolicyChange={setFriendRequestPolicy}
           onGameScreenModeChange={setGameScreenMode}
@@ -1191,7 +1342,7 @@ function Authentication() {
           onQuit={handleQuit}
           onResolutionChange={setResolution}
           onSettingsClose={() => setSettingsOpen(false)}
-          onShowEmailPublicChange={setShowEmailPublic}
+          onShowEmailPublicChange={handleShowEmailPublicChange}
           onUiScaleChange={setUiScale}
         />
       ) : (
@@ -1367,7 +1518,7 @@ function Authentication() {
           onClose={() => setSettingsOpen(false)}
           onLocaleChange={setLocale}
           onResolutionChange={setResolution}
-          onShowEmailPublicChange={setShowEmailPublic}
+          onShowEmailPublicChange={handleShowEmailPublicChange}
           onUiScaleChange={setUiScale}
         />
       ) : null}

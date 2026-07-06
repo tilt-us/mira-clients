@@ -4,12 +4,26 @@ export const settingsStorageKey = "mira-client-settings";
 export const defaultAccentColor = "#f2c45b";
 export const defaultResolution = "1600x900";
 export const defaultClientAnimation = "all";
-export const defaultUiScale = 0.9;
+export const defaultUiScale = 1.0;
 export const defaultGameScreenMode = "borderless";
-export const defaultBackgroundChampion = "yuna";
+export const defaultLocale = "de";
 export const defaultFriendRequestPolicy = "allow";
 export const defaultChatPosition = "right";
 export const defaultShowEmailPublic = false;
+
+const characterAssetModules = import.meta.glob("../../../assets/characters/*.png", {
+  eager: true,
+  import: "default",
+  query: "?url",
+});
+
+export const backgroundChampionNames = Object.keys(characterAssetModules)
+  .map((path) => path.match(/\/([^/]+)\.png$/)?.[1])
+  .filter((name): name is string => Boolean(name))
+  .sort((left, right) => left.localeCompare(right));
+export const defaultBackgroundChampion = backgroundChampionNames.includes("yuna")
+  ? "yuna"
+  : (backgroundChampionNames[0] ?? "yuna");
 
 export type AppResolution =
   | "1270x720"
@@ -21,7 +35,7 @@ export type AppResolution =
 export type ClientAnimation = "all" | "ui-elements" | "images" | "none";
 export type UiScale = 0.5 | 0.6 | 0.7 | 0.8 | 0.9 | 1 | 1.1 | 1.25 | 1.5;
 export type GameScreenMode = "full" | "window" | "borderless";
-export type BackgroundChampion = "lira" | "ignara" | "yuna" | "sophia";
+export type BackgroundChampion = string;
 export type FriendRequestPolicy = "allow" | "disallow" | "vip";
 export type ChatPosition = "left" | "right";
 
@@ -31,10 +45,56 @@ export type StoredSettings = {
   backgroundChampion?: BackgroundChampion;
   chatPosition?: ChatPosition;
   clientAnimation?: ClientAnimation;
+  folders?: ClientSettingsFolder[];
   friendRequestPolicy?: FriendRequestPolicy;
   gameScreenMode?: GameScreenMode;
   locale?: AppLocale;
   resolution?: AppResolution;
+  showEmailPublic?: boolean;
+  uiScale?: UiScale;
+};
+
+export type ClientSettingsFolder = {
+  friendPublicIds: number[];
+  name: string;
+};
+
+export type ClientSettingsApiResponse = {
+  accent_color?: unknown;
+  accentColor?: unknown;
+  allow_friend_request?: unknown;
+  allowFriendRequest?: unknown;
+  background?: unknown;
+  chat_position?: unknown;
+  chatPosition?: unknown;
+  client_animation?: unknown;
+  clientAnimation?: unknown;
+  experimental_features?: unknown;
+  experimentalFeatures?: unknown;
+  folders?: unknown;
+  language?: unknown;
+  resolution?: unknown;
+  screen_mode?: unknown;
+  screenMode?: unknown;
+  show_email_public?: unknown;
+  showEmailPublic?: unknown;
+  ui_scale?: unknown;
+  uiScale?: unknown;
+  use_friend_colors?: unknown;
+  useFriendColors?: unknown;
+};
+
+export type ClientSettingsApiRequest = {
+  accentColor?: string;
+  allowFriendRequest?: FriendRequestPolicy;
+  background?: BackgroundChampion;
+  chatPosition?: ChatPosition;
+  clientAnimation?: ClientAnimation;
+  folders?: ClientSettingsFolder[];
+  language?: AppLocale;
+  resolution?: AppResolution;
+  screenMode?: GameScreenMode;
+  show_email_public?: boolean;
   showEmailPublic?: boolean;
   uiScale?: UiScale;
 };
@@ -55,6 +115,73 @@ export function readStoredSettings() {
 
 export function writeStoredSettings(settings: Required<StoredSettings>) {
   localStorage.setItem(settingsStorageKey, JSON.stringify(settings));
+}
+
+export function normalizeClientSettingsApiResponse(
+  response: ClientSettingsApiResponse | undefined,
+): StoredSettings {
+  if (!response) {
+    return {};
+  }
+
+  const accentColor = getApiField(response, "accent_color", "accentColor");
+  const allowFriendRequest = getApiField(
+    response,
+    "allow_friend_request",
+    "allowFriendRequest",
+  );
+  const background = getApiField(response, "background");
+  const chatPosition = getApiField(response, "chat_position", "chatPosition");
+  const clientAnimation = getApiField(
+    response,
+    "client_animation",
+    "clientAnimation",
+  );
+  const language = getApiField(response, "language");
+  const folders = normalizeClientSettingsFolders(response.folders);
+  const resolution = getApiField(response, "resolution");
+  const screenMode = getApiField(response, "screen_mode", "screenMode");
+  const showEmailPublic = getApiField(
+    response,
+    "show_email_public",
+    "showEmailPublic",
+  );
+  const uiScale = normalizeUiScale(getApiField(response, "ui_scale", "uiScale"));
+
+  return {
+    ...(isHexColor(accentColor) ? { accentColor } : {}),
+    ...(isFriendRequestPolicy(allowFriendRequest)
+      ? { friendRequestPolicy: allowFriendRequest }
+      : {}),
+    ...(isBackgroundChampion(background) ? { backgroundChampion: background } : {}),
+    ...(isChatPosition(chatPosition) ? { chatPosition } : {}),
+    ...(isClientAnimation(clientAnimation) ? { clientAnimation } : {}),
+    ...(folders ? { folders } : {}),
+    ...(isLocale(language) ? { locale: language } : {}),
+    ...(isAppResolution(resolution) ? { resolution } : {}),
+    ...(isGameScreenMode(screenMode) ? { gameScreenMode: screenMode } : {}),
+    ...(typeof showEmailPublic === "boolean" ? { showEmailPublic } : {}),
+    ...(isUiScale(uiScale) ? { uiScale } : {}),
+  };
+}
+
+export function toClientSettingsApiRequest(
+  settings: Required<StoredSettings>,
+): ClientSettingsApiRequest {
+  return {
+    accentColor: settings.accentColor,
+    allowFriendRequest: settings.friendRequestPolicy,
+    background: settings.backgroundChampion,
+    chatPosition: settings.chatPosition,
+    clientAnimation: settings.clientAnimation,
+    folders: settings.folders,
+    language: settings.locale,
+    resolution: settings.resolution,
+    screenMode: settings.gameScreenMode,
+    show_email_public: settings.showEmailPublic,
+    showEmailPublic: settings.showEmailPublic,
+    uiScale: settings.uiScale,
+  };
 }
 
 export function isLocale(value: unknown): value is AppLocale {
@@ -119,7 +246,7 @@ export function isGameScreenMode(value: unknown): value is GameScreenMode {
 }
 
 export function isBackgroundChampion(value: unknown): value is BackgroundChampion {
-  return value === "lira" || value === "ignara" || value === "yuna" || value === "sophia";
+  return typeof value === "string" && backgroundChampionNames.includes(value);
 }
 
 export function isFriendRequestPolicy(value: unknown): value is FriendRequestPolicy {
@@ -128,6 +255,83 @@ export function isFriendRequestPolicy(value: unknown): value is FriendRequestPol
 
 export function isChatPosition(value: unknown): value is ChatPosition {
   return value === "left" || value === "right";
+}
+
+function getApiField(
+  response: ClientSettingsApiResponse,
+  snakeName: keyof ClientSettingsApiResponse,
+  camelName?: keyof ClientSettingsApiResponse,
+) {
+  return response[snakeName] ?? (camelName ? response[camelName] : undefined);
+}
+
+function normalizeUiScale(value: unknown) {
+  if (typeof value === "number") {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const parsedValue = Number(value);
+
+    return Number.isFinite(parsedValue) ? parsedValue : undefined;
+  }
+
+  return undefined;
+}
+
+function normalizeClientSettingsFolders(value: unknown) {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  return value
+    .map((folder): ClientSettingsFolder | undefined => {
+      if (!folder || typeof folder !== "object") {
+        return undefined;
+      }
+
+      const record = folder as {
+        friendPublicIds?: unknown;
+        friend_public_ids?: unknown;
+        name?: unknown;
+      };
+      const name = typeof record.name === "string" ? record.name.trim() : "";
+      const publicIds = record.friendPublicIds ?? record.friend_public_ids;
+
+      if (!name) {
+        return undefined;
+      }
+
+      return {
+        friendPublicIds: normalizeFriendPublicIds(publicIds),
+        name,
+      };
+    })
+    .filter((folder): folder is ClientSettingsFolder => Boolean(folder));
+}
+
+function normalizeFriendPublicIds(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return [
+    ...new Set(
+      value
+        .map((publicId) => {
+          if (typeof publicId === "number") {
+            return publicId;
+          }
+
+          if (typeof publicId === "string") {
+            return Number.parseInt(publicId, 10);
+          }
+
+          return Number.NaN;
+        })
+        .filter((publicId) => Number.isInteger(publicId) && publicId > 0),
+    ),
+  ];
 }
 
 export function getResolutionSize(resolution: AppResolution) {

@@ -26,6 +26,46 @@ export type UpdateTagIdRequest = {
     tagId: string;
 };
 
+export type ClientSettingsFolderRequest = {
+    name: string;
+    friendPublicIds?: Array<number>;
+};
+
+export type UpdateClientSettingsRequest = {
+    resolution?: string;
+    uiScale?: number;
+    accentColor?: string;
+    background?: string;
+    clientAnimation?: string;
+    language?: string;
+    chatPosition?: string;
+    screenMode?: string;
+    allowFriendRequest?: string;
+    showEmailPublic?: boolean;
+    useFriendColors?: boolean;
+    folders?: Array<ClientSettingsFolderRequest>;
+};
+
+export type ClientSettingsFolderResponse = {
+    name?: string;
+    friendPublicIds?: Array<number>;
+};
+
+export type ClientSettingsResponse = {
+    resolution?: string;
+    uiScale?: number;
+    accentColor?: string;
+    background?: string;
+    clientAnimation?: string;
+    language?: string;
+    chatPosition?: string;
+    screenMode?: string;
+    allowFriendRequest?: string;
+    showEmailPublic?: boolean;
+    useFriendColors?: boolean;
+    folders?: Array<ClientSettingsFolderResponse>;
+};
+
 export type UpdateLevelRequest = {
     level: number;
 };
@@ -70,6 +110,12 @@ export type FriendUserResponse = {
     avatarUrl?: string;
     avatarRightsConsented?: boolean;
     avatarRightsConsentedAt?: string;
+};
+
+export type PublicClientSettingsResponse = {
+    publicId?: number;
+    accentColor?: string;
+    showEmailPublic?: boolean;
 };
 
 export type UserSearchResponse = {
@@ -592,6 +638,38 @@ export type UpdateTagIdResponses = {
 
 export type UpdateTagIdResponse = UpdateTagIdResponses[keyof UpdateTagIdResponses];
 
+export type GetSettingsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/me/settings';
+};
+
+export type GetSettingsResponses = {
+    /**
+     * OK
+     */
+    200: ClientSettingsResponse;
+};
+
+export type GetSettingsResponse = GetSettingsResponses[keyof GetSettingsResponses];
+
+export type UpdateSettingsData = {
+    body: UpdateClientSettingsRequest;
+    path?: never;
+    query?: never;
+    url: '/api/me/settings';
+};
+
+export type UpdateSettingsResponses = {
+    /**
+     * OK
+     */
+    200: ClientSettingsResponse;
+};
+
+export type UpdateSettingsResponse = UpdateSettingsResponses[keyof UpdateSettingsResponses];
+
 export type SetLevelData = {
     body: UpdateLevelRequest;
     path?: never;
@@ -783,6 +861,24 @@ export type HeartbeatResponses = {
      */
     200: unknown;
 };
+
+export type PublicClientSettingsData = {
+    body?: never;
+    path: {
+        publicId: number;
+    };
+    query?: never;
+    url: '/api/users/{publicId}/settings-summary';
+};
+
+export type PublicClientSettingsResponses = {
+    /**
+     * OK
+     */
+    200: PublicClientSettingsResponse;
+};
+
+export type PublicClientSettingsResponse2 = PublicClientSettingsResponses[keyof PublicClientSettingsResponses];
 
 export type SearchData = {
     body?: never;
@@ -1966,6 +2062,22 @@ export type ListMessagesResponses = {
 };
 
 export type ListMessagesResponse = ListMessagesResponses[keyof ListMessagesResponses];
+
+export type ChatsEventsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/chats/events';
+};
+
+export type ChatsEventsResponses = {
+    /**
+     * OK
+     */
+    200: SseEmitter;
+};
+
+export type ChatsEventsResponse = ChatsEventsResponses[keyof ChatsEventsResponses];
 
 export type DeleteRoom1Data = {
     body?: never;

@@ -12,6 +12,7 @@ import type {
   GameScreenMode,
   UiScale,
 } from "../settings";
+import { backgroundChampionNames } from "../settings";
 import type { SettingsVision, Translate } from "../types/ui";
 
 type SettingsModalProps = {
@@ -100,15 +101,10 @@ const gameScreenModeOptions: Array<{
   { labelId: "settings-screen-mode-window", value: "window" },
 ];
 
-const backgroundChampionOptions: Array<{
-  label: string;
-  value: BackgroundChampion;
-}> = [
-  { label: "Lira", value: "lira" },
-  { label: "Ignara", value: "ignara" },
-  { label: "Yuna", value: "yuna" },
-  { label: "Sophia", value: "sophia" },
-];
+const backgroundChampionOptions = backgroundChampionNames.map((name) => ({
+  label: formatBackgroundChampionName(name),
+  value: name,
+}));
 
 const friendRequestPolicyOptions: Array<{
   labelId: string;
@@ -735,6 +731,14 @@ function isResolutionVisible(
   }
 
   return true;
+}
+
+function formatBackgroundChampionName(name: string) {
+  return name
+    .split(/[-_]/)
+    .filter(Boolean)
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+    .join(" ");
 }
 
 function getMinimumVisibleResolution(

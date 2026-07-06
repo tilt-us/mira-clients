@@ -49,6 +49,7 @@ import {
 } from "../api/client";
 import { LIVE_API_BASE_URL } from "../api/config";
 import FriendCard from "./FriendCard";
+import type { ClientSettingsFolder } from "../settings";
 import type {
   FriendFolder,
   FriendFolderMoveRule,
@@ -174,7 +175,9 @@ type TaggedFriendUserItem = FriendUserItem & {
 type SidebarProps = {
   activeLobbyId?: string;
   activeLobbyMemberPublicIds?: number[];
+  clientSettingsFolders?: ClientSettingsFolder[];
   forceOnlinePublicIds?: number[];
+  onClientSettingsFoldersChange?: (folders: ClientSettingsFolder[]) => void;
   onProfileOpen?: (profile?: ProfileOpenTarget) => void;
   onLobbyFriendDrop?: (friend: FriendProfile) => void;
   onFriendPartyInvite?: (friend: FriendProfile) => void;
@@ -233,6 +236,76 @@ function getInitialFolders(storedSidebar: FriendSidebarStorage) {
     ...validStoredFolders,
     ...initialFolders.filter((folder) => !storedFolderIds.has(folder.id)),
   ];
+}
+
+function getClientSettingsFolderId(folder: ClientSettingsFolder, index: number) {
+  const normalizedName = folder.name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  return `settings-folder-${index}-${normalizedName || "folder"}`;
+}
+
+function getSidebarStateFromClientSettingsFolders(
+  clientSettingsFolders: ClientSettingsFolder[],
+  currentFolders: FriendFolder[] = [],
+) {
+  const currentFoldersByName = new Map(
+    currentFolders.map((folder) => [folder.name, folder]),
+  );
+  const folders = clientSettingsFolders.map((folder, index) => {
+    const currentFolder = currentFoldersByName.get(folder.name);
+
+    return {
+      id: currentFolder?.id ?? getClientSettingsFolderId(folder, index),
+      name: folder.name,
+      open: currentFolder?.open ?? true,
+      moveRule: currentFolder?.moveRule ?? "none",
+    } satisfies FriendFolder;
+  });
+  const friendFolders = Object.fromEntries(
+    clientSettingsFolders.flatMap((folder, index) => {
+      const folderId = folders[index]?.id;
+
+      if (!folderId) {
+        return [];
+      }
+
+      return folder.friendPublicIds.map(
+        (friendPublicId) => [String(friendPublicId), folderId] as const,
+      );
+    }),
+  );
+
+  return { folders, friendFolders };
+}
+
+function serializeClientSettingsFolders(
+  folders: FriendFolder[],
+  friendFolders: Record<string, string | undefined>,
+) {
+  return folders.map((folder) => {
+    const friendPublicIds = Object.entries(friendFolders)
+      .filter(([, folderId]) => folderId === folder.id)
+      .map(([friendId]) => Number.parseInt(friendId, 10))
+      .filter((friendPublicId) =>
+        Number.isInteger(friendPublicId) && friendPublicId > 0,
+      );
+
+    return {
+      friendPublicIds: [...new Set(friendPublicIds)],
+      name: folder.name,
+    } satisfies ClientSettingsFolder;
+  });
+}
+
+function areClientSettingsFoldersEqual(
+  left: ClientSettingsFolder[],
+  right: ClientSettingsFolder[],
+) {
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 function getFriendUserId(user: FriendUserItem) {
@@ -652,7 +725,9 @@ function mapApiFriendsToProfiles(
 function Sidebar({
   activeLobbyId,
   activeLobbyMemberPublicIds = [],
+  clientSettingsFolders,
   forceOnlinePublicIds = [],
+  onClientSettingsFoldersChange,
   onProfileOpen,
   onFriendPartyInvite,
   onFriendPartyJoin,
@@ -713,6 +788,9 @@ function Sidebar({
   const folderDragStateRef = useRef<FolderDragState | undefined>(undefined);
   const foldersRef = useRef(folders);
   const friendFoldersRef = useRef(friendFolders);
+  const lastPublishedClientSettingsFoldersRef =
+    useRef<ClientSettingsFolder[] | undefined>(undefined);
+  const skipNextClientSettingsFoldersPublishRef = useRef(false);
   const knownFriendIdsRef = useRef<Set<string> | undefined>(undefined);
   const suppressNextFriendClickRef = useRef<string | undefined>(undefined);
   const suppressNextFolderClickRef = useRef<string | undefined>(undefined);
@@ -861,6 +939,63 @@ function Sidebar({
   useEffect(() => {
     friendFoldersRef.current = friendFolders;
   }, [friendFolders]);
+
+  useEffect(() => {
+    if (!clientSettingsFolders) {
+      return;
+    }
+
+    if (
+      areClientSettingsFoldersEqual(
+        clientSettingsFolders,
+        serializeClientSettingsFolders(foldersRef.current, friendFoldersRef.current),
+      )
+    ) {
+      return;
+    }
+
+    const nextSidebarState = getSidebarStateFromClientSettingsFolders(
+      clientSettingsFolders,
+      foldersRef.current,
+    );
+
+    foldersRef.current = nextSidebarState.folders;
+    friendFoldersRef.current = nextSidebarState.friendFolders;
+    skipNextClientSettingsFoldersPublishRef.current = true;
+    setFolders(nextSidebarState.folders);
+    setFriendFolders(nextSidebarState.friendFolders);
+    setFriends((currentFriends) =>
+      currentFriends.map((friend) => ({
+        ...friend,
+        folderId: nextSidebarState.friendFolders[friend.id],
+      })),
+    );
+    lastPublishedClientSettingsFoldersRef.current = clientSettingsFolders;
+  }, [clientSettingsFolders]);
+
+  useEffect(() => {
+    if (skipNextClientSettingsFoldersPublishRef.current) {
+      skipNextClientSettingsFoldersPublishRef.current = false;
+      return;
+    }
+
+    const nextClientSettingsFolders = serializeClientSettingsFolders(
+      folders,
+      friendFolders,
+    );
+
+    if (
+      areClientSettingsFoldersEqual(
+        nextClientSettingsFolders,
+        lastPublishedClientSettingsFoldersRef.current ?? [],
+      )
+    ) {
+      return;
+    }
+
+    lastPublishedClientSettingsFoldersRef.current = nextClientSettingsFolders;
+    onClientSettingsFoldersChange?.(nextClientSettingsFolders);
+  }, [folders, friendFolders, onClientSettingsFoldersChange]);
 
   useEffect(() => {
     if (!notificationsOpen && !profileMenuOpen) {

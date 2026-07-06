@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import {
@@ -9,10 +9,6 @@ import {
 } from "@tauri-apps/api/window";
 import { translate } from "./i18n";
 import type { AppLocale } from "./i18n";
-import ignaraWallpaper from "../../../assets/wallpapers/ignara-wallpaper.png";
-import liraWallpaper from "../../../assets/wallpapers/lira-wallpaper.png";
-import sophiaWallpaper from "../../../assets/wallpapers/sophia-wallpaper.png";
-import yunaWallpaper from "../../../assets/wallpapers/yuna-wallpaper.png";
 import {
   defaultAccentColor,
   defaultBackgroundChampion,
@@ -20,6 +16,7 @@ import {
   defaultClientAnimation,
   defaultFriendRequestPolicy,
   defaultGameScreenMode,
+  defaultLocale,
   defaultResolution,
   defaultShowEmailPublic,
   defaultUiScale,
@@ -39,9 +36,11 @@ import {
   type AppResolution,
   type BackgroundChampion,
   type ChatPosition,
+  type ClientSettingsFolder,
   type ClientAnimation,
   type FriendRequestPolicy,
   type GameScreenMode,
+  type StoredSettings,
   type UiScale,
   writeStoredSettings,
 } from "./settings";
@@ -77,7 +76,7 @@ export function useClientSettings() {
   });
   const [locale, setLocale] = useState<AppLocale>(() => {
     const storedSettings = readStoredSettings();
-    return isLocale(storedSettings.locale) ? storedSettings.locale : "de";
+    return isLocale(storedSettings.locale) ? storedSettings.locale : defaultLocale;
   });
   const [resolution, setResolution] = useState<AppResolution>(() => {
     const storedSettings = readStoredSettings();
@@ -121,12 +120,92 @@ export function useClientSettings() {
       ? storedSettings.gameScreenMode
       : defaultGameScreenMode;
   });
+  const [clientSettingsFolders, setClientSettingsFolders] = useState<
+    ClientSettingsFolder[]
+  >(() => readStoredSettings().folders ?? []);
   const [monitorResolutionSupport, setMonitorResolutionSupport] = useState<
     MonitorResolutionSupport | undefined
   >(() =>
     runsInTauriLikeShell() ? undefined : detectBrowserMonitorResolutionSupport(),
   );
   const t = useCallback((id: string) => translate(locale, id), [locale]);
+  const currentSettings = useMemo(
+    () =>
+      ({
+        accentColor,
+        allowFriendRequests: friendRequestPolicy === "allow",
+        backgroundChampion,
+        chatPosition,
+        clientAnimation,
+        folders: clientSettingsFolders,
+        friendRequestPolicy,
+        gameScreenMode,
+        locale,
+        resolution,
+        showEmailPublic,
+        uiScale,
+      }) satisfies Required<StoredSettings>,
+    [
+      accentColor,
+      backgroundChampion,
+      chatPosition,
+      clientAnimation,
+      clientSettingsFolders,
+      friendRequestPolicy,
+      gameScreenMode,
+      locale,
+      resolution,
+      showEmailPublic,
+      uiScale,
+    ],
+  );
+  const applyStoredSettings = useCallback((settings: StoredSettings) => {
+    if (isHexColor(settings.accentColor)) {
+      setAccentColor(settings.accentColor);
+    }
+
+    if (isBackgroundChampion(settings.backgroundChampion)) {
+      setBackgroundChampion(settings.backgroundChampion);
+    }
+
+    if (isChatPosition(settings.chatPosition)) {
+      setChatPosition(settings.chatPosition);
+    }
+
+    if (isClientAnimation(settings.clientAnimation)) {
+      setClientAnimation(settings.clientAnimation);
+    }
+
+    if (Array.isArray(settings.folders)) {
+      setClientSettingsFolders(settings.folders);
+    }
+
+    if (isFriendRequestPolicy(settings.friendRequestPolicy)) {
+      setFriendRequestPolicy(settings.friendRequestPolicy);
+    } else if (typeof settings.allowFriendRequests === "boolean") {
+      setFriendRequestPolicy(settings.allowFriendRequests ? "allow" : "disallow");
+    }
+
+    if (isGameScreenMode(settings.gameScreenMode)) {
+      setGameScreenMode(settings.gameScreenMode);
+    }
+
+    if (isLocale(settings.locale)) {
+      setLocale(settings.locale);
+    }
+
+    if (isAppResolution(settings.resolution)) {
+      setResolution(settings.resolution);
+    }
+
+    if (typeof settings.showEmailPublic === "boolean") {
+      setShowEmailPublic(settings.showEmailPublic);
+    }
+
+    if (isUiScale(settings.uiScale)) {
+      setUiScale(settings.uiScale);
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -178,26 +257,16 @@ export function useClientSettings() {
     );
     document.documentElement.style.setProperty(
       "--app-background-wallpaper",
-      `url(${backgroundChampionWallpapers[backgroundChampion]})`,
+      `url(${getBackgroundChampionWallpaperUrl(backgroundChampion)})`,
     );
-    writeStoredSettings({
-      accentColor,
-      allowFriendRequests: friendRequestPolicy === "allow",
-      backgroundChampion,
-      chatPosition,
-      clientAnimation,
-      friendRequestPolicy,
-      gameScreenMode,
-      locale,
-      resolution,
-      showEmailPublic,
-      uiScale,
-    });
+    writeStoredSettings(currentSettings);
   }, [
     accentColor,
     backgroundChampion,
     chatPosition,
     clientAnimation,
+    clientSettingsFolders,
+    currentSettings,
     friendRequestPolicy,
     gameScreenMode,
     locale,
@@ -262,6 +331,7 @@ export function useClientSettings() {
     accentColor,
     backgroundChampion,
     chatPosition,
+    clientSettingsFolders,
     clientAnimation,
     friendRequestPolicy,
     gameScreenMode,
@@ -272,9 +342,12 @@ export function useClientSettings() {
     supportsTwoKResolution: monitorResolutionSupport?.twoK === true,
     t,
     uiScale,
+    applyStoredSettings,
+    currentSettings,
     setAccentColor,
     setBackgroundChampion,
     setChatPosition,
+    setClientSettingsFolders,
     setClientAnimation,
     setFriendRequestPolicy,
     setGameScreenMode,
@@ -317,12 +390,49 @@ type MonitorResolutionSupport = {
   twoK: boolean;
 };
 
-const backgroundChampionWallpapers: Record<BackgroundChampion, string> = {
-  ignara: ignaraWallpaper,
-  lira: liraWallpaper,
-  sophia: sophiaWallpaper,
-  yuna: yunaWallpaper,
-};
+const backgroundChampionWallpapers = getAssetUrlMap(
+  import.meta.glob("../../../assets/wallpapers/*-wallpaper.png", {
+    eager: true,
+    import: "default",
+    query: "?url",
+  }),
+  /\/([^/]+)-wallpaper\.png$/,
+);
+const backgroundChampionCharacters = getAssetUrlMap(
+  import.meta.glob("../../../assets/characters/*.png", {
+    eager: true,
+    import: "default",
+    query: "?url",
+  }),
+  /\/([^/]+)\.png$/,
+);
+
+function getAssetUrlMap(
+  modules: Record<string, unknown>,
+  namePattern: RegExp,
+) {
+  return Object.fromEntries(
+    Object.entries(modules)
+      .map(([path, url]) => {
+        const name = path.match(namePattern)?.[1];
+
+        return typeof name === "string" && typeof url === "string"
+          ? [name, url]
+          : undefined;
+      })
+      .filter((entry): entry is [string, string] => Boolean(entry)),
+  );
+}
+
+function getBackgroundChampionWallpaperUrl(backgroundChampion: BackgroundChampion) {
+  return (
+    backgroundChampionWallpapers[backgroundChampion] ??
+    backgroundChampionCharacters[backgroundChampion] ??
+    backgroundChampionWallpapers[defaultBackgroundChampion] ??
+    backgroundChampionCharacters[defaultBackgroundChampion] ??
+    ""
+  );
+}
 
 async function detectTauriMonitorResolutionSupport() {
   const monitor = (await currentMonitor()) ?? (await primaryMonitor());
