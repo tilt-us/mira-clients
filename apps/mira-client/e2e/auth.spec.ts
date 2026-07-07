@@ -33,9 +33,50 @@ test("renders the authentication screen", async ({ page }) => {
   await expect(page.getByLabel("Email oder Benutzername")).toBeVisible();
   await expect(page.getByLabel("Passwort")).toBeVisible();
   await expect(page.getByRole("button", { name: /Einloggen/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Passwort vergessen?" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Google" })).toBeEnabled();
   await expect(page.getByRole("button", { name: "GitHub" })).toBeEnabled();
   await expect(page.getByRole("button", { name: "Discord" })).toBeEnabled();
+});
+
+test("opens the registered-account password reset flow without OAuth provider hint", async ({
+  page,
+}) => {
+  await mockKeycloakAuth(page);
+
+  await page.goto("/");
+  const redirectUri = page.url();
+  const expectedResetRedirectUri = new URL(redirectUri);
+  expectedResetRedirectUri.searchParams.set("mira_password_reset", "sent");
+
+  await Promise.all([
+    page.waitForURL(/reset-credentials/),
+    page.getByRole("button", { name: "Passwort vergessen?" }).click(),
+  ]);
+
+  const resetUrl = new URL(page.url());
+
+  expect(resetUrl.pathname).toContain("/login-actions/reset-credentials");
+  expect(resetUrl.searchParams.get("client_id")).toBe("mira-bevy");
+  expect(resetUrl.searchParams.get("redirect_uri")).toBe(
+    expectedResetRedirectUri.toString(),
+  );
+  expect(resetUrl.searchParams.get("accent")).toBe("f2c45b");
+  expect(resetUrl.searchParams.get("fontColor")).toBe("black");
+  expect(resetUrl.searchParams.get("kc_locale")).toBe("de");
+  expect(resetUrl.searchParams.get("lang")).toBe("german");
+  expect(resetUrl.searchParams.get("ui_locales")).toBe("de");
+  expect(resetUrl.searchParams.has("kc_idp_hint")).toBe(false);
+  expect(resetUrl.searchParams.has("prompt")).toBe(false);
+});
+
+test("shows a mail-check toast after the password reset callback", async ({ page }) => {
+  await page.goto("/?mira_password_reset=sent");
+
+  await expect(
+    page.getByText("Bitte prüfe deine Emails, um dein Passwort zurückzusetzen."),
+  ).toBeVisible();
+  expect(new URL(page.url()).searchParams.has("mira_password_reset")).toBe(false);
 });
 
 test("starts GitHub login with the GitHub identity provider hint", async ({ page }) => {

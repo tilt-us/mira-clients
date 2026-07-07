@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Check, LogIn, UserPlus } from "lucide-react";
+import { Check, KeyRound, LogIn, UserPlus } from "lucide-react";
 import {
   confirmAvatarRights,
   getClientSettings,
@@ -22,6 +22,8 @@ import {
   getValidDesktopApiToken,
   getValidAccessToken,
   loginWithPassword,
+  passwordResetSentParam,
+  startPasswordReset,
   startDiscordLogin,
   startGithubLogin,
   startGoogleLogin,
@@ -89,6 +91,25 @@ type OAuthProfileSetupPreference = {
 };
 
 const OAUTH_PROFILE_SETUP_STORAGE_KEY = "mira.oauthProfileSetup";
+
+function isPasswordResetSentUrl(url: string) {
+  try {
+    return new URL(url).searchParams.get(passwordResetSentParam) === "sent";
+  } catch {
+    return false;
+  }
+}
+
+function removePasswordResetSentParam() {
+  const currentUrl = new URL(window.location.href);
+
+  if (!currentUrl.searchParams.has(passwordResetSentParam)) {
+    return;
+  }
+
+  currentUrl.searchParams.delete(passwordResetSentParam);
+  window.history.replaceState({}, document.title, currentUrl.toString());
+}
 
 /**
  * Description
@@ -686,10 +707,24 @@ function Authentication() {
      */
     async function bootstrapAuth() {
       const currentUrl = new URL(window.location.href);
+      const hasPasswordResetSent = isPasswordResetSentUrl(window.location.href);
       const hasOAuthResponse =
         currentUrl.searchParams.has("code") ||
         currentUrl.searchParams.has("error") ||
         currentUrl.searchParams.has("error_description");
+
+      if (hasPasswordResetSent) {
+        removePasswordResetSentParam();
+
+        if (!cancelled) {
+          notify({
+            type: "info",
+            message: t("auth-password-reset-email-sent"),
+          });
+        }
+
+        return;
+      }
 
       try {
         const redirectTokens = await completeRedirectLogin();
@@ -752,6 +787,17 @@ function Authentication() {
       setLoadState("loading");
 
       try {
+        if (isPasswordResetSentUrl(callbackUrl)) {
+          if (!cancelled) {
+            notify({
+              type: "info",
+              message: t("auth-password-reset-email-sent"),
+            });
+          }
+
+          return;
+        }
+
         const tokens = await completeRedirectLogin(callbackUrl);
 
         if (cancelled || !tokens) {
@@ -1145,6 +1191,29 @@ function Authentication() {
     }
   }
 
+  async function handlePasswordReset() {
+    setLoadState("loading");
+
+    try {
+      const result = await startPasswordReset({ accentColor, locale });
+
+      if (isTauri()) {
+        if (result?.modal === false) {
+          setLoadState("idle");
+        } else {
+          setOauthModalOpen(true);
+        }
+      }
+    } catch (caughtError) {
+      setLoadState("idle");
+      setOauthModalOpen(false);
+      notify({
+        type: "error",
+        message: getErrorMessage(caughtError, t("auth-action-failed")),
+      });
+    }
+  }
+
   /**
    * Description
    * Clears auth state, stored tokens, and open dialogs, returning the user to auth.
@@ -1405,6 +1474,17 @@ function Authentication() {
                 <button className="login-button" disabled={busy} type="submit">
                   <LogIn size={18} />
                   {busy ? t("auth-login-loading") : t("auth-login-button")}
+                </button>
+
+                <button
+                  className="password-reset-button"
+                  disabled={busy}
+                  title={t("auth-forgot-password-title")}
+                  type="button"
+                  onClick={handlePasswordReset}
+                >
+                  <KeyRound size={16} />
+                  {t("auth-forgot-password")}
                 </button>
 
                 <div className="provider-actions" aria-label="OAuth providers">

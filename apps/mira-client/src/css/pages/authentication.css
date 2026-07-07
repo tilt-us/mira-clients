@@ -156,6 +156,25 @@ input:focus {
   background: color-mix(in srgb, var(--accent-color) 82%, #ffffff);
 }
 
+.password-reset-button {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  justify-self: center;
+  gap: 8px;
+  border: 0;
+  padding: 2px 4px;
+  color: #cbd6e2;
+  background: transparent;
+  font-size: 0.86rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.password-reset-button:hover {
+  color: #edf2f7;
+}
+
 .provider-actions {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

@@ -370,9 +370,10 @@ function Client({
   const topActionDragTimerRef = useRef<number | undefined>(undefined);
   const topActionDraggingRef = useRef(false);
   const presenceInitializedRef = useRef(false);
+  const shuttingDownRef = useRef(false);
   const championSelectionTimeoutInFlightRef = useRef(false);
   const requeueingLobbyIdsRef = useRef<Set<string>>(new Set());
-  const declinedLobbyInvitationIdsRef = useRef<Set<string>>(new Set());
+  const declinedLobbyInvitationTimestampsRef = useRef<Map<string, number>>(new Map());
   const seenDesktopSessionConflictIdsRef = useRef<Set<string>>(new Set());
   const playButtonAnimated =
     clientAnimation === "all" || clientAnimation === "ui-elements";
@@ -1690,14 +1691,56 @@ function Client({
     });
   }, [championSelectionMatch, championsReadyMarkedMatchId]);
 
+  function getLobbyInvitationUpdatedAtMs(invitation: LobbyInvitation) {
+    const timestamp = Date.parse(invitation.updatedAt ?? "");
+
+    return Number.isFinite(timestamp) ? timestamp : undefined;
+  }
+
+  function shouldHideDeclinedLobbyInvitation(invitation: LobbyInvitation) {
+    const normalizedInvitation = normalizeLobbyInvitation(invitation);
+
+    if (!normalizedInvitation.lobbyId) {
+      return false;
+    }
+
+    const declinedAt = declinedLobbyInvitationTimestampsRef.current.get(
+      normalizedInvitation.lobbyId,
+    );
+
+    if (declinedAt === undefined) {
+      return false;
+    }
+
+    const invitationUpdatedAt = getLobbyInvitationUpdatedAtMs(normalizedInvitation);
+
+    return invitationUpdatedAt === undefined || invitationUpdatedAt <= declinedAt;
+  }
+
+  function rememberDeclinedLobbyInvitation(invitation: LobbyInvitation) {
+    const normalizedInvitation = normalizeLobbyInvitation(invitation);
+
+    if (!normalizedInvitation.lobbyId) {
+      return;
+    }
+
+    declinedLobbyInvitationTimestampsRef.current.set(
+      normalizedInvitation.lobbyId,
+      getLobbyInvitationUpdatedAtMs(normalizedInvitation) ?? Date.now(),
+    );
+  }
+
+  function forgetDeclinedLobbyInvitation(lobbyId: string | undefined) {
+    if (!lobbyId) {
+      return;
+    }
+
+    declinedLobbyInvitationTimestampsRef.current.delete(lobbyId);
+  }
+
   function applyLobbyInvitations(nextInvitations: LobbyInvitation[]) {
     const visibleInvitations = nextInvitations.filter((invitation) => {
-      const normalizedInvitation = normalizeLobbyInvitation(invitation);
-
-      return (
-        !normalizedInvitation.lobbyId ||
-        !declinedLobbyInvitationIdsRef.current.has(normalizedInvitation.lobbyId)
-      );
+      return !shouldHideDeclinedLobbyInvitation(invitation);
     });
 
     setLobbyInvitations((currentInvitations) =>
@@ -1712,12 +1755,7 @@ function Client({
 
   function replaceLobbyInvitations(nextInvitations: LobbyInvitation[]) {
     const visibleInvitations = nextInvitations.filter((invitation) => {
-      const normalizedInvitation = normalizeLobbyInvitation(invitation);
-
-      return (
-        !normalizedInvitation.lobbyId ||
-        !declinedLobbyInvitationIdsRef.current.has(normalizedInvitation.lobbyId)
-      );
+      return !shouldHideDeclinedLobbyInvitation(invitation);
     });
 
     setLobbyInvitations(
@@ -1728,6 +1766,24 @@ function Client({
         profilePublicId,
       ),
     );
+  }
+
+  async function listLobbyInvitationsWithFallback() {
+    for (const baseUrl of [
+      LIVE_API_BASE_URL,
+      API_BASE_URL,
+      MATCHMAKING_API_BASE_URL,
+    ]) {
+      const result = await listLobbyInvitations({
+        baseUrl,
+      }).catch(() => undefined);
+
+      if (result && !result.error) {
+        return result.data ?? [];
+      }
+    }
+
+    return undefined;
   }
 
   function hydrateMatch(match: ApiMatchResponse) {
@@ -2139,15 +2195,13 @@ function Client({
     let active = true;
 
     async function refreshInvitations() {
-      const result = await listLobbyInvitations({
-        baseUrl: LIVE_API_BASE_URL,
-      });
+      const nextInvitations = await listLobbyInvitationsWithFallback();
 
-      if (!active || result.error) {
+      if (!active || !nextInvitations) {
         return;
       }
 
-      replaceLobbyInvitations(result.data ?? []);
+      replaceLobbyInvitations(nextInvitations);
     }
 
     void refreshInvitations();
@@ -2360,12 +2414,20 @@ function Client({
     };
   }, [lobbyIdContextMenuOpen]);
 
-  async function publishPresence(status: ApiPresenceStatus, mode?: string) {
+  async function publishPresence(
+    status: ApiPresenceStatus,
+    mode?: string,
+    options?: { force?: boolean },
+  ) {
     const presenceKey = `${status}:${mode ?? ""}`;
+
+    if (shuttingDownRef.current && status !== "OFFLINE") {
+      return;
+    }
 
     currentPresenceRef.current = { status, mode };
 
-    if (remotePresenceRef.current === presenceKey) {
+    if (!options?.force && remotePresenceRef.current === presenceKey) {
       return;
     }
 
@@ -2379,6 +2441,12 @@ function Client({
     if (result.error) {
       remotePresenceRef.current = undefined;
     }
+  }
+
+  async function publishOfflinePresence() {
+    setPresenceStatus("offline");
+    sendPresenceKeepalive("OFFLINE");
+    await publishPresence("OFFLINE", undefined, { force: true });
   }
 
   function getSelectedPresenceMode(roles = selectedLobbyRoles) {
@@ -2403,6 +2471,10 @@ function Client({
   }
 
   function syncPresenceWithActivity() {
+    if (shuttingDownRef.current) {
+      return;
+    }
+
     if (!presenceInitializedRef.current) {
       return;
     }
@@ -2448,7 +2520,7 @@ function Client({
   function suppressMatchLobbyInvitations(match?: ApiMatchResponse) {
     for (const lobby of match?.lobbies ?? []) {
       if (lobby.lobbyId) {
-        declinedLobbyInvitationIdsRef.current.add(lobby.lobbyId);
+        declinedLobbyInvitationTimestampsRef.current.set(lobby.lobbyId, Date.now());
       }
     }
   }
@@ -2602,6 +2674,10 @@ function Client({
 
   useEffect(() => {
     function markActivity() {
+      if (shuttingDownRef.current) {
+        return;
+      }
+
       lastActivityRef.current = Date.now();
 
       if (!document.hidden) {
@@ -2687,6 +2763,7 @@ function Client({
     return () => {
       window.removeEventListener("pagehide", persistUnloadState);
       window.removeEventListener("beforeunload", persistUnloadState);
+      sendPresenceKeepalive("OFFLINE");
     };
   }, [profilePublicId]);
 
@@ -3076,20 +3153,22 @@ function Client({
   }
 
   async function handleClientLogout() {
+    shuttingDownRef.current = true;
     await prepareClientShutdown({
       championSelectionLeaveStatus: "LEAVE",
       leaveLobby: true,
     });
-    await publishPresence("OFFLINE");
+    await publishOfflinePresence();
     await onLogout();
   }
 
   async function handleClientQuit() {
+    shuttingDownRef.current = true;
     await prepareClientShutdown({
       championSelectionLeaveStatus: "QUIT",
       leaveLobby: !championSelectionMatchRef.current?.matchId,
     });
-    await publishPresence("OFFLINE");
+    await publishOfflinePresence();
     await onQuit();
   }
 
@@ -3426,6 +3505,42 @@ function Client({
     pendingMatch,
   ]);
 
+  async function sendLobbyInvite(lobbyId: string, targetPublicId: number) {
+    for (const baseUrl of [
+      LIVE_API_BASE_URL,
+      API_BASE_URL,
+      MATCHMAKING_API_BASE_URL,
+    ]) {
+      const result = await invite({
+        baseUrl,
+        body: { targetPublicId },
+        path: { lobbyId },
+      }).catch(() => undefined);
+
+      if (!result || result.error) {
+        continue;
+      }
+
+      const invitation = result.data
+        ? normalizeLobbyInvitation(result.data)
+        : undefined;
+      const invitationLobby = invitation?.lobby;
+
+      if (invitationLobby?.id === activeLobbyRef.current?.id) {
+        setActiveLobby(invitationLobby);
+      }
+
+      setLobbyError(undefined);
+      return true;
+    }
+
+    console.error("Lobby invite failed on all known services", {
+      lobbyId,
+      targetPublicId,
+    });
+    return false;
+  }
+
   async function handleLobbyFriendDrop(friend: FriendProfile) {
     if (
       !activeLobby?.id ||
@@ -3436,18 +3551,11 @@ function Client({
       return;
     }
 
-    const result = await invite({
-      baseUrl: LIVE_API_BASE_URL,
-      body: { targetPublicId: friend.publicId },
-      path: { lobbyId: activeLobby.id },
-    });
+    const invited = await sendLobbyInvite(activeLobby.id, friend.publicId);
 
-    if (result.error) {
+    if (!invited) {
       notifyLobbyError(t("lobby-invite-error"));
-      return;
     }
-
-    setLobbyError(undefined);
   }
 
   function openPartyInviteDialog() {
@@ -3608,20 +3716,13 @@ function Client({
 
     setPartyInviteBusyId(candidate.publicId);
 
-    const result = await invite({
-      baseUrl: LIVE_API_BASE_URL,
-      body: { targetPublicId: candidate.publicId },
-      path: { lobbyId: activeLobby.id },
-    });
+    const invited = await sendLobbyInvite(activeLobby.id, candidate.publicId);
 
     setPartyInviteBusyId(undefined);
 
-    if (result.error) {
+    if (!invited) {
       notifyLobbyError(t("lobby-invite-error"));
-      return;
     }
-
-    setLobbyError(undefined);
   }
 
   function openLobbyMemberContextMenu(
@@ -3774,7 +3875,7 @@ function Client({
       return;
     }
 
-    declinedLobbyInvitationIdsRef.current.delete(invitation.lobbyId);
+    forgetDeclinedLobbyInvitation(invitation.lobbyId);
 
     const result = await joinLobby({
       baseUrl: LIVE_API_BASE_URL,
@@ -3797,9 +3898,7 @@ function Client({
   }
 
   function handleDeclineInvite(invitation: LobbyInvitation) {
-    if (invitation.lobbyId) {
-      declinedLobbyInvitationIdsRef.current.add(invitation.lobbyId);
-    }
+    rememberDeclinedLobbyInvitation(invitation);
 
     setLobbyInvitations((currentInvitations) =>
       currentInvitations.filter(
@@ -3809,36 +3908,98 @@ function Client({
   }
 
   async function handleChampionSelect(champion: string) {
-    if (!championSelectionMatch?.matchId) {
+    const currentMatch = championSelectionMatchRef.current ?? championSelectionMatch;
+    const matchId = currentMatch?.matchId;
+
+    if (!matchId) {
       return false;
     }
 
-    const result = await selectChampion({
-      baseUrl: MATCHMAKING_API_BASE_URL,
-      body: { champion },
-      path: { matchId: championSelectionMatch.matchId },
-    });
+    let nextMatch: ApiMatchResponse | undefined;
+    const attempts: Array<{
+      endpoint: string;
+      status?: number;
+      error?: unknown;
+    }> = [];
 
-    let nextMatch = result.error || !result.data
-      ? undefined
-      : normalizeMatchResponse(result.data);
+    for (const baseUrl of [
+      LIVE_API_BASE_URL,
+      MATCHMAKING_API_BASE_URL,
+      API_BASE_URL,
+    ]) {
+      try {
+        const result = await selectChampion({
+          baseUrl,
+          body: { champion },
+          path: { matchId },
+        });
+
+        if (!result.error && result.data) {
+          nextMatch = normalizeMatchResponse(result.data);
+
+          if (nextMatch) {
+            break;
+          }
+        }
+
+        attempts.push({
+          endpoint: `${baseUrl}/api/matches/${matchId}/champion-selection`,
+          error: result.error,
+          status: result.response?.status,
+        });
+      } catch (error) {
+        attempts.push({
+          endpoint: `${baseUrl}/api/matches/${matchId}/champion-selection`,
+          error,
+        });
+      }
+    }
 
     if (!nextMatch && typeof profilePublicId === "number") {
-      const fallbackResult = await selectChampionDuplicate({
-        baseUrl: MATCHMAKING_API_BASE_URL,
-        body: {
-          champion,
-          playerPublicId: profilePublicId,
-        },
-        path: { matchId: championSelectionMatch.matchId },
-      });
+      for (const baseUrl of [
+        MATCHMAKING_API_BASE_URL,
+        LIVE_API_BASE_URL,
+        API_BASE_URL,
+      ]) {
+        try {
+          const fallbackResult = await selectChampionDuplicate({
+            baseUrl,
+            body: {
+              champion,
+              playerPublicId: profilePublicId,
+            },
+            path: { matchId },
+          });
 
-      if (!fallbackResult.error && fallbackResult.data) {
-        nextMatch = fallbackResult.data;
+          if (!fallbackResult.error && fallbackResult.data) {
+            nextMatch = normalizeMatchResponse(fallbackResult.data);
+
+            if (nextMatch) {
+              break;
+            }
+          }
+
+          attempts.push({
+            endpoint: `${baseUrl}/internal/matches/${matchId}/champion-selections`,
+            error: fallbackResult.error,
+            status: fallbackResult.response?.status,
+          });
+        } catch (error) {
+          attempts.push({
+            endpoint: `${baseUrl}/internal/matches/${matchId}/champion-selections`,
+            error,
+          });
+        }
       }
     }
 
     if (!nextMatch) {
+      console.error("Champion selection failed on all known endpoints", {
+        attempts,
+        champion,
+        matchId,
+        profilePublicId,
+      });
       notifyLobbyError(t("match-decision-error"));
       return false;
     }

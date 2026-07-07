@@ -237,7 +237,82 @@ test("supports the client friend list and folder workflow", async ({ page }) => 
     .toBe(true);
 });
 
+test("shows incoming lobby invitations with live event field aliases", async ({ page }) => {
+  let invitationUpdatedAt = "2026-07-07T10:00:00.000Z";
+
+  await page.route(
+    /^(https:\/\/api\.tilt-us\.com|http:\/\/localhost:8082|http:\/\/localhost:8080|http:\/\/localhost:8083)\/(?:live\/|auth\/|match\/)?api\/lobbies\/invitations(?:\?.*)?$/,
+    async (route) => {
+      await route.fulfill({
+        contentType: "application/json",
+        json: [
+          {
+            invitee_public_id: "9001",
+            inviters: [{ publicId: "9101", displayName: "Lane Partner" }],
+            lobby: {
+              id: "invite-lobby-e2e",
+              mode: "RANKED",
+              members: [{ publicId: "9101", displayName: "Lane Partner" }],
+              ownerPublicId: "9101",
+            },
+            updatedAt: invitationUpdatedAt,
+          },
+        ],
+      });
+    },
+  );
+
+  await loginToClient(page);
+
+  const inviteCard = page.locator(".lobby-invite-card").filter({ hasText: "Lane Partner" });
+
+  await expect(inviteCard).toBeVisible();
+  await expect(page.getByRole("button", { name: "Einladung annehmen" })).toBeVisible();
+  await page.getByRole("button", { name: "Einladung ablehnen" }).click();
+  await expect(inviteCard).toBeHidden();
+  await page.waitForTimeout(3_200);
+  await expect(inviteCard).toBeHidden();
+
+  invitationUpdatedAt = "2026-07-07T10:00:01.000Z";
+
+  await expect(inviteCard).toBeVisible({ timeout: 5_000 });
+});
+
 test("opens close dialog and logs out", async ({ page }) => {
+  const statusUpdates: string[] = [];
+
+  await page.route(
+    /^(https:\/\/api\.tilt-us\.com|http:\/\/localhost:8082)\/(?:live\/)?api\/user-status\/me$/,
+    async (route) => {
+      if (route.request().method() === "PUT") {
+        const body = route.request().postDataJSON() as { status?: string } | null;
+
+        if (body?.status) {
+          statusUpdates.push(body.status);
+        }
+
+        await route.fulfill({
+          contentType: "application/json",
+          json: {
+            publicId: 9001,
+            status: body?.status ?? "ONLINE",
+            updatedAt: new Date().toISOString(),
+          },
+        });
+        return;
+      }
+
+      await route.fulfill({
+        contentType: "application/json",
+        json: {
+          publicId: 9001,
+          status: "ONLINE",
+          updatedAt: new Date().toISOString(),
+        },
+      });
+    },
+  );
+
   await loginToClient(page);
 
   await page.getByRole("button", { name: "Schliessen" }).click();
@@ -247,9 +322,44 @@ test("opens close dialog and logs out", async ({ page }) => {
 
   await expect(page.getByRole("heading", { name: "Mira Account" })).toBeVisible();
   await expect(page.getByLabel("Dashboard")).toBeHidden();
+  expect(statusUpdates).toContain("OFFLINE");
 });
 
 test("opens close dialog and requests quit", async ({ page }) => {
+  const statusUpdates: string[] = [];
+
+  await page.route(
+    /^(https:\/\/api\.tilt-us\.com|http:\/\/localhost:8082)\/(?:live\/)?api\/user-status\/me$/,
+    async (route) => {
+      if (route.request().method() === "PUT") {
+        const body = route.request().postDataJSON() as { status?: string } | null;
+
+        if (body?.status) {
+          statusUpdates.push(body.status);
+        }
+
+        await route.fulfill({
+          contentType: "application/json",
+          json: {
+            publicId: 9001,
+            status: body?.status ?? "ONLINE",
+            updatedAt: new Date().toISOString(),
+          },
+        });
+        return;
+      }
+
+      await route.fulfill({
+        contentType: "application/json",
+        json: {
+          publicId: 9001,
+          status: "ONLINE",
+          updatedAt: new Date().toISOString(),
+        },
+      });
+    },
+  );
+
   await page.addInitScript(() => {
     window.close = () => {
       (window as unknown as { __miraE2eCloseRequested?: boolean })
@@ -274,4 +384,5 @@ test("opens close dialog and requests quit", async ({ page }) => {
       );
     })
     .toBe(true);
+  expect(statusUpdates).toContain("OFFLINE");
 });
