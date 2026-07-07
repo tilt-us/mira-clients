@@ -120,6 +120,27 @@ describe("profile avatar helpers", () => {
     expect(getAvatarUrl()).toBeUndefined();
   });
 
+  test("builds Discord avatar URLs from user and avatar identifiers", () => {
+    expect(
+      getAvatarUrl({
+        discordAvatar: "avatar_hash",
+        discordUserId: "1234567890",
+      }),
+    ).toBe("https://cdn.discordapp.com/avatars/1234567890/avatar_hash.png");
+    expect(
+      getAvatarUrl({
+        discord_avatar: "a_animated_hash",
+        discord_user_id: "1234567890",
+      }),
+    ).toBe("https://cdn.discordapp.com/avatars/1234567890/a_animated_hash.gif");
+    expect(
+      getAvatarUrl({
+        discordAvatar: "../avatar",
+        discordUserId: "1234567890",
+      }),
+    ).toBeUndefined();
+  });
+
   test("rejects invalid and unsafe avatar URLs", () => {
     expect(getAvatarUrl({ avatarUrl: "notaurl" })).toBeUndefined();
     expect(getAvatarUrl({ avatarUrl: "file:///tmp/avatar.png" })).toBeUndefined();
@@ -145,6 +166,17 @@ describe("profile avatar helpers", () => {
         token,
       ),
     ).toBe("https://cdn.mira.test/profile-avatar.png");
+  });
+
+  test("falls back to Discord avatar claims in an access token", () => {
+    const token = createUnsignedJwt({
+      discordAvatar: "discord_hash",
+      discordUserId: "99887766",
+    });
+
+    expect(getProfileAvatarUrl({}, token)).toBe(
+      "https://cdn.discordapp.com/avatars/99887766/discord_hash.png",
+    );
   });
 
   test("ignores malformed token payloads", () => {

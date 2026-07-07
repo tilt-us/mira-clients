@@ -612,7 +612,16 @@
   display: grid;
   gap: 8px;
   min-width: 0;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  padding: 2px;
   overflow: visible;
+}
+
+.friend-folder-section.friend-folder-drop-target {
+  border-color: color-mix(in srgb, var(--accent-color) 72%, transparent);
+  background: color-mix(in srgb, var(--accent-color) 9%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-color) 18%, transparent);
 }
 
 .app-sidebar.collapsed .friend-folder-section {
@@ -647,6 +656,7 @@
 }
 
 .friend-folder-heading {
+  border: 1px solid transparent;
   grid-template-columns: minmax(0, 1fr) auto;
   padding: 0 8px;
   text-transform: uppercase;
@@ -659,7 +669,8 @@
 }
 
 .friend-folder-row:hover,
-.friend-folder-row.drag-over {
+.friend-folder-row.drag-over,
+.friend-folder-heading.drag-over {
   border-color: color-mix(in srgb, var(--accent-color) 55%, transparent);
   background: color-mix(in srgb, var(--accent-color) 12%, transparent);
 }

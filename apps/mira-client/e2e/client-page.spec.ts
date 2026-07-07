@@ -4,6 +4,10 @@ import { mockAuthenticatedClientApi } from "./support/mockClientApi";
 
 const friendSidebarStorageKey = "mira-client-friend-sidebar-v2";
 
+function folderButtonName(name: string) {
+  return new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s+\\d+$`);
+}
+
 test.beforeEach(async ({ page }) => {
   await mockAuthenticatedClientApi(page);
   await page.addInitScript(() => {
@@ -179,6 +183,52 @@ test("discovers incoming private chat rooms from the room last message", async (
 
 test("supports the client friend list and folder workflow", async ({ page }) => {
   const folderName = `E2E Squad ${Date.now()}`;
+  const secondFolderName = `${folderName} Two`;
+  const renamedSecondFolderName = `${folderName} Renamed`;
+  const folderFriendRequests: Array<{
+    folderName: string;
+    method: string;
+  }> = [];
+  const folderRenameRequests: Array<{
+    bodyName?: string;
+    folderName: string;
+    method: string;
+  }> = [];
+
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    const match = url.pathname.match(
+      /\/api\/me\/settings\/folders\/([^/]+)\/friends\/9101$/,
+    );
+
+    if (!match) {
+      return;
+    }
+
+    folderFriendRequests.push({
+      folderName: decodeURIComponent(match[1]),
+      method: request.method(),
+    });
+  });
+
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    const match = url.pathname.match(
+      /\/api\/me\/settings\/folders\/([^/]+)\/rename$/,
+    );
+
+    if (!match) {
+      return;
+    }
+
+    const body = request.postDataJSON() as { name?: string };
+
+    folderRenameRequests.push({
+      bodyName: body.name,
+      folderName: decodeURIComponent(match[1]),
+      method: request.method(),
+    });
+  });
 
   await loginToClient(page);
 
@@ -194,7 +244,7 @@ test("supports the client friend list and folder workflow", async ({ page }) => 
   await page.getByLabel("Ordnername").fill(folderName);
   await folderDialog.getByRole("button", { name: "Erstellen", exact: true }).click();
 
-  const folderButton = page.getByRole("button", { name: new RegExp(folderName) });
+  const folderButton = page.getByRole("button", { name: folderButtonName(folderName) });
   await expect(folderButton).toBeVisible();
   await expect(folderButton).toContainText("0");
 
@@ -211,12 +261,73 @@ test("supports the client friend list and folder workflow", async ({ page }) => 
   await expect(folderButton).toContainText("1");
   const folderSection = page
     .locator(".friend-folder-section")
-    .filter({ has: page.getByRole("button", { name: new RegExp(folderName) }) });
+    .filter({ has: page.getByRole("button", { name: folderButtonName(folderName) }) });
   await expect(folderSection.getByText("Lane Partner")).toBeVisible();
+
+  await page.getByRole("button", { name: "Ordner erstellen" }).click();
+  await expect(folderDialog).toBeVisible();
+  await page.getByLabel("Ordnername").fill(secondFolderName);
+  await folderDialog.getByRole("button", { name: "Erstellen", exact: true }).click();
+
+  const secondFolderButton = page.getByRole("button", {
+    name: folderButtonName(secondFolderName),
+  });
+  await expect(secondFolderButton).toBeVisible();
+  await expect(secondFolderButton).toContainText("0");
+
+  await folderSection
+    .locator(".friend-card")
+    .filter({ hasText: "Lane Partner" })
+    .getByRole("button", { name: "Freund-Aktionen" })
+    .click();
+  await page.getByRole("menuitem", { name: "Verschieben nach" }).hover();
+  await page.getByRole("menu", { name: "Verschieben nach" })
+    .getByRole("menuitem", { name: secondFolderName })
+    .click();
+
+  await expect(folderButton).toContainText("0");
+  await expect(secondFolderButton).toContainText("1");
+  await expect(folderSection.getByText("Lane Partner")).toBeHidden();
+
+  const secondFolderSection = page
+    .locator(".friend-folder-section")
+    .filter({
+      has: page.getByRole("button", { name: folderButtonName(secondFolderName) }),
+    });
+  await expect(secondFolderSection.getByText("Lane Partner")).toBeVisible();
+
+  await expect
+    .poll(() => folderFriendRequests)
+    .toEqual([
+      { folderName, method: "POST" },
+      { folderName, method: "DELETE" },
+      { folderName: secondFolderName, method: "POST" },
+    ]);
+
+  await secondFolderSection.getByRole("button", { name: "Ordner-Aktionen" }).click();
+  await page.getByRole("menuitem", { name: "Umbenennen" }).click();
+  const folderRenameInput = page.locator(".friend-folder-rename-input");
+  await folderRenameInput.fill(renamedSecondFolderName);
+  await folderRenameInput.press("Enter");
+
+  const renamedSecondFolderButton = page.getByRole("button", {
+    name: folderButtonName(renamedSecondFolderName),
+  });
+  await expect(renamedSecondFolderButton).toBeVisible();
+  await expect(renamedSecondFolderButton).toContainText("1");
+  await expect
+    .poll(() => folderRenameRequests)
+    .toEqual([
+      {
+        bodyName: renamedSecondFolderName,
+        folderName: secondFolderName,
+        method: "PUT",
+      },
+    ]);
 
   await expect
     .poll(async () => {
-      return page.evaluate(({ storageKey, folderName }) => {
+      return page.evaluate(({ renamedSecondFolderName, storageKey }) => {
         const storedSidebar = localStorage.getItem(storageKey);
 
         if (!storedSidebar) {
@@ -228,11 +339,11 @@ test("supports the client friend list and folder workflow", async ({ page }) => 
           friendFolders?: Record<string, string | undefined>;
         };
         const folder = parsedSidebar.folders?.find(
-          (currentFolder) => currentFolder.name === folderName,
+          (currentFolder) => currentFolder.name === renamedSecondFolderName,
         );
 
         return Boolean(folder && parsedSidebar.friendFolders?.["9101"] === folder.id);
-      }, { folderName, storageKey: friendSidebarStorageKey });
+      }, { renamedSecondFolderName, storageKey: friendSidebarStorageKey });
     })
     .toBe(true);
 });

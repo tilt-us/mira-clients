@@ -187,12 +187,6 @@ describe("remote settings mapping", () => {
       background: "lira",
       chatPosition: "left",
       clientAnimation: "none",
-      folders: [
-        {
-          friendPublicIds: [9101],
-          name: "Lane",
-        },
-      ],
       language: "en",
       resolution: "1400x800",
       screenMode: "window",

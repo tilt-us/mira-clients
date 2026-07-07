@@ -28,6 +28,7 @@ export type UpdateTagIdRequest = {
 
 export type ClientSettingsFolderRequest = {
     name: string;
+    moveHereWhen?: string;
     friendPublicIds?: Array<number>;
 };
 
@@ -48,6 +49,7 @@ export type UpdateClientSettingsRequest = {
 
 export type ClientSettingsFolderResponse = {
     name?: string;
+    moveHereWhen?: string;
     friendPublicIds?: Array<number>;
 };
 
@@ -64,6 +66,15 @@ export type ClientSettingsResponse = {
     showEmailPublic?: boolean;
     useFriendColors?: boolean;
     folders?: Array<ClientSettingsFolderResponse>;
+};
+
+export type ClientSettingsFolderUpsertRequest = {
+    moveHereWhen?: string;
+    friendPublicIds?: Array<number>;
+};
+
+export type ClientSettingsFolderRenameRequest = {
+    name: string;
 };
 
 export type UpdateLevelRequest = {
@@ -670,6 +681,108 @@ export type UpdateSettingsResponses = {
 
 export type UpdateSettingsResponse = UpdateSettingsResponses[keyof UpdateSettingsResponses];
 
+export type ListFoldersData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/me/settings/folders';
+};
+
+export type ListFoldersResponses = {
+    /**
+     * OK
+     */
+    200: Array<ClientSettingsFolderResponse>;
+};
+
+export type ListFoldersResponse = ListFoldersResponses[keyof ListFoldersResponses];
+
+export type ReplaceFoldersData = {
+    body: Array<ClientSettingsFolderRequest>;
+    path?: never;
+    query?: never;
+    url: '/api/me/settings/folders';
+};
+
+export type ReplaceFoldersResponses = {
+    /**
+     * OK
+     */
+    200: Array<ClientSettingsFolderResponse>;
+};
+
+export type ReplaceFoldersResponse = ReplaceFoldersResponses[keyof ReplaceFoldersResponses];
+
+export type DeleteFolderData = {
+    body?: never;
+    path: {
+        folderName: string;
+    };
+    query?: never;
+    url: '/api/me/settings/folders/{folderName}';
+};
+
+export type DeleteFolderResponses = {
+    /**
+     * OK
+     */
+    200: unknown;
+};
+
+export type GetFolderData = {
+    body?: never;
+    path: {
+        folderName: string;
+    };
+    query?: never;
+    url: '/api/me/settings/folders/{folderName}';
+};
+
+export type GetFolderResponses = {
+    /**
+     * OK
+     */
+    200: ClientSettingsFolderResponse;
+};
+
+export type GetFolderResponse = GetFolderResponses[keyof GetFolderResponses];
+
+export type UpsertFolderData = {
+    body: ClientSettingsFolderUpsertRequest;
+    path: {
+        folderName: string;
+    };
+    query?: never;
+    url: '/api/me/settings/folders/{folderName}';
+};
+
+export type UpsertFolderResponses = {
+    /**
+     * OK
+     */
+    200: ClientSettingsFolderResponse;
+};
+
+export type UpsertFolderResponse = UpsertFolderResponses[keyof UpsertFolderResponses];
+
+export type RenameFolderData = {
+    body: ClientSettingsFolderRenameRequest;
+    path: {
+        folderName: string;
+    };
+    query?: never;
+    url: '/api/me/settings/folders/{folderName}/rename';
+};
+
+export type RenameFolderResponses = {
+    /**
+     * OK
+     */
+    200: ClientSettingsFolderResponse;
+};
+
+export type RenameFolderResponse = RenameFolderResponses[keyof RenameFolderResponses];
+
 export type SetLevelData = {
     body: UpdateLevelRequest;
     path?: never;
@@ -717,6 +830,44 @@ export type RegisterResponses = {
 };
 
 export type RegisterResponse = RegisterResponses[keyof RegisterResponses];
+
+export type RemoveFriendFromFolderData = {
+    body?: never;
+    path: {
+        folderName: string;
+        friendPublicId: number;
+    };
+    query?: never;
+    url: '/api/me/settings/folders/{folderName}/friends/{friendPublicId}';
+};
+
+export type RemoveFriendFromFolderResponses = {
+    /**
+     * OK
+     */
+    200: ClientSettingsFolderResponse;
+};
+
+export type RemoveFriendFromFolderResponse = RemoveFriendFromFolderResponses[keyof RemoveFriendFromFolderResponses];
+
+export type AddFriendToFolderData = {
+    body?: never;
+    path: {
+        folderName: string;
+        friendPublicId: number;
+    };
+    query?: never;
+    url: '/api/me/settings/folders/{folderName}/friends/{friendPublicId}';
+};
+
+export type AddFriendToFolderResponses = {
+    /**
+     * OK
+     */
+    200: ClientSettingsFolderResponse;
+};
+
+export type AddFriendToFolderResponse = AddFriendToFolderResponses[keyof AddFriendToFolderResponses];
 
 export type IncreaseLevelData = {
     body: IncreaseLevelRequest;

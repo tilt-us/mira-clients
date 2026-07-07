@@ -39,6 +39,7 @@ type FriendCardProps = {
   onJoinParty: (friendId: string) => void;
   onMenuToggle: (friendId: string) => void;
   onMoveToFolder: (friendId: string, folderId: string) => void;
+  onRemoveFromFolder: (friendId: string) => void;
   onTooltipHide: () => void;
   onTooltipShow: (friendId: string, element: HTMLElement) => void;
   onUnfriend: (friendId: string) => void;
@@ -86,6 +87,7 @@ function FriendCard({
   onJoinParty,
   onMenuToggle,
   onMoveToFolder,
+  onRemoveFromFolder,
   onTooltipHide,
   onTooltipShow,
   onUnfriend,
@@ -329,6 +331,16 @@ function FriendCard({
                 <UserMinus size={15} />
                 <span>{t("friend-unfriend")}</span>
               </button>
+              {friend.folderId ? (
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => onRemoveFromFolder(friend.id)}
+                >
+                  <Folder size={15} />
+                  <span>{t("friend-remove-from-folder")}</span>
+                </button>
+              ) : null}
 
               <div className="friend-context-divider" />
               <div className="friend-context-submenu">

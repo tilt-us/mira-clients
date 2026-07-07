@@ -3,6 +3,7 @@ import { API_BASE_URL, CHAMPION_API_BASE_URL } from "./config";
 import { apiFetch, getClientDeviceType } from "./http";
 import { getValidAccessToken, getValidDesktopApiToken } from "../auth/keycloak";
 import type {
+  ClientSettingsFolder,
   ClientSettingsApiRequest,
   ClientSettingsApiResponse,
 } from "../settings";
@@ -66,6 +67,44 @@ type SetOwnedChampionOptions = {
 
 type UpdateClientSettingsOptions = {
   body: ClientSettingsApiRequest;
+};
+
+type ClientSettingsFolderBody = {
+  friendPublicIds?: number[];
+  moveHereWhen?: string;
+};
+
+type ReplaceClientSettingsFoldersOptions = {
+  body: Array<ClientSettingsFolderBody & { name: string }>;
+};
+
+type UpsertClientSettingsFolderOptions = {
+  body: ClientSettingsFolderBody;
+  path: {
+    folderName: string;
+  };
+};
+
+type RenameClientSettingsFolderOptions = {
+  body: {
+    name: string;
+  };
+  path: {
+    folderName: string;
+  };
+};
+
+type ClientSettingsFolderFriendOptions = {
+  path: {
+    folderName: string;
+    friendPublicId: number;
+  };
+};
+
+type DeleteClientSettingsFolderOptions = {
+  path: {
+    folderName: string;
+  };
 };
 
 export type UserSettingsSummaryResponse = {
@@ -216,6 +255,74 @@ export function updateClientSettings(options: UpdateClientSettingsOptions) {
     headers: {
       "Content-Type": "application/json",
     },
+  });
+}
+
+export function getClientSettingsFolders() {
+  return client.get<{ 200: ClientSettingsFolder[] }, unknown, false>({
+    url: "/api/me/settings/folders",
+    baseUrl: API_BASE_URL,
+  });
+}
+
+export function replaceClientSettingsFolders(options: ReplaceClientSettingsFoldersOptions) {
+  return client.put<{ 200: ClientSettingsFolder[] }, unknown, false>({
+    url: "/api/me/settings/folders",
+    baseUrl: API_BASE_URL,
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+    },
+  });
+}
+
+export function upsertClientSettingsFolder(options: UpsertClientSettingsFolderOptions) {
+  return client.put<{ 200: ClientSettingsFolder }, unknown, false>({
+    url: "/api/me/settings/folders/{folderName}",
+    baseUrl: API_BASE_URL,
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+    },
+  });
+}
+
+export function renameClientSettingsFolder(options: RenameClientSettingsFolderOptions) {
+  return client.put<{ 200: ClientSettingsFolder }, unknown, false>({
+    url: "/api/me/settings/folders/{folderName}/rename",
+    baseUrl: API_BASE_URL,
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+    },
+  });
+}
+
+export function addClientSettingsFolderFriend(
+  options: ClientSettingsFolderFriendOptions,
+) {
+  return client.post<{ 200: ClientSettingsFolder }, unknown, false>({
+    url: "/api/me/settings/folders/{folderName}/friends/{friendPublicId}",
+    baseUrl: API_BASE_URL,
+    ...options,
+  });
+}
+
+export function removeClientSettingsFolderFriend(
+  options: ClientSettingsFolderFriendOptions,
+) {
+  return client.delete<{ 200: ClientSettingsFolder }, unknown, false>({
+    url: "/api/me/settings/folders/{folderName}/friends/{friendPublicId}",
+    baseUrl: API_BASE_URL,
+    ...options,
+  });
+}
+
+export function deleteClientSettingsFolder(options: DeleteClientSettingsFolderOptions) {
+  return client.delete<{ 204: void }, unknown, false>({
+    url: "/api/me/settings/folders/{folderName}",
+    baseUrl: API_BASE_URL,
+    ...options,
   });
 }
 

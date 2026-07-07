@@ -258,6 +258,8 @@ type ClientProps = {
   uiScale: UiScale;
 };
 
+type ClientBackTarget = "main" | "gameSelector" | "lobby";
+
 function Client({
   accentColor,
   backgroundChampion,
@@ -298,6 +300,10 @@ function Client({
 }: ClientProps) {
   const [gameSelectorOpen, setGameSelectorOpen] = useState(false);
   const [lobbyPageOpen, setLobbyPageOpen] = useState(false);
+  const [gameSelectorBackTarget, setGameSelectorBackTarget] =
+    useState<ClientBackTarget>("main");
+  const [lobbyPageBackTarget, setLobbyPageBackTarget] =
+    useState<ClientBackTarget>("main");
   const [lobbyRosterOpen, setLobbyRosterOpen] = useState(false);
   const [userPageOpen, setUserPageOpen] = useState(false);
   const [viewedUserPageProfile, setViewedUserPageProfile] =
@@ -590,7 +596,9 @@ function Client({
   }, [
     closeDialogOpen,
     championTabFocused,
+    gameSelectorBackTarget,
     gameSelectorOpen,
+    lobbyPageBackTarget,
     lobbyPageOpen,
     settingsOpen,
     userPageOpen,
@@ -2546,6 +2554,8 @@ function Client({
     setActiveLobby(undefined);
     setLobbyPageOpen(false);
     setGameSelectorOpen(false);
+    setGameSelectorBackTarget("main");
+    setLobbyPageBackTarget("main");
     setPresenceStatus("online");
     void publishPresence("ONLINE");
   }
@@ -2560,6 +2570,8 @@ function Client({
     setPartyInviteOpen(false);
     setActiveLobby(undefined);
     setLobbyPageOpen(false);
+    setGameSelectorBackTarget("main");
+    setLobbyPageBackTarget("main");
     setPresenceStatus("online");
     void publishPresence("ONLINE");
   }
@@ -2809,6 +2821,8 @@ function Client({
     setActiveLobby(undefined);
     setLobbyPageOpen(false);
     setGameSelectorOpen(false);
+    setGameSelectorBackTarget("main");
+    setLobbyPageBackTarget("main");
     syncPresenceWithActivity();
   }
 
@@ -2966,11 +2980,26 @@ function Client({
     }
 
     if (lobbyPageOpen) {
+      if (lobbyPageBackTarget === "gameSelector") {
+        setLobbyPageOpen(false);
+        setGameSelectorBackTarget("main");
+        setGameSelectorOpen(true);
+        return;
+      }
+
       setLobbyPageOpen(false);
       return;
     }
 
+    if (gameSelectorBackTarget === "lobby" && activeLobby) {
+      setGameSelectorOpen(false);
+      setLobbyPageBackTarget("main");
+      setLobbyPageOpen(true);
+      return;
+    }
+
     setGameSelectorOpen(false);
+    setGameSelectorBackTarget("main");
   }
 
   function handlePlayButtonClick() {
@@ -2978,22 +3007,26 @@ function Client({
 
     if (activeLobby) {
       setGameSelectorOpen(false);
+      setLobbyPageBackTarget("main");
       setLobbyPageOpen(true);
       return;
     }
 
+    setGameSelectorBackTarget("main");
     setGameSelectorOpen(true);
   }
 
   function handleChangeModeClick() {
     setUserPageOpen(false);
     setLobbyPageOpen(false);
+    setGameSelectorBackTarget("lobby");
     setGameSelectorOpen(true);
   }
 
   function handleGameModePrimaryAction() {
     if (activeLobby) {
       setGameSelectorOpen(false);
+      setLobbyPageBackTarget("gameSelector");
       setLobbyPageOpen(true);
       return;
     }
@@ -3195,6 +3228,7 @@ function Client({
     setLobbySearchAbortedLobbyId(undefined);
     setLobbySearchStartedAt(undefined);
     setActiveLobby(result.data);
+    setLobbyPageBackTarget("gameSelector");
     setLobbyPageOpen(true);
     setGameSelectorOpen(false);
   }
@@ -3866,6 +3900,7 @@ function Client({
     }
 
     setActiveLobby(result.data);
+    setLobbyPageBackTarget("main");
     setLobbyPageOpen(true);
     setGameSelectorOpen(false);
   }
@@ -3888,6 +3923,7 @@ function Client({
     }
 
     setActiveLobby(result.data);
+    setLobbyPageBackTarget("main");
     setLobbyPageOpen(true);
     setLobbyInvitations((currentInvitations) =>
       currentInvitations.filter(
@@ -4349,6 +4385,8 @@ function Client({
     setActiveLobby(undefined);
     setLobbyPageOpen(false);
     setGameSelectorOpen(false);
+    setGameSelectorBackTarget("main");
+    setLobbyPageBackTarget("main");
     setGameInProgress(true);
     setPresenceStatus("ingame");
     publishActivePresence("IN_GAME");
