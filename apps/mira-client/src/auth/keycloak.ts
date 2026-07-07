@@ -30,6 +30,7 @@ type TokenResponse = {
 
 const accessTokenRefreshMarginMs = 60_000;
 const keycloakLogoutTimeoutMs = 15_000;
+export const passwordResetSentParam = "mira_password_reset";
 
 let refreshPromise: Promise<AuthTokens | undefined> | undefined;
 
@@ -244,6 +245,12 @@ function addKeycloakThemeParams(
   searchParams.set("ui_locales", localeCode);
 }
 
+function getPasswordResetRedirectUri() {
+  const redirectUrl = new URL(getRedirectUri());
+  redirectUrl.searchParams.set(passwordResetSentParam, "sent");
+  return redirectUrl.toString();
+}
+
 async function startProviderLogin(
   provider: OAuthProvider,
   options?: KeycloakThemeOptions,
@@ -332,6 +339,36 @@ export function startDiscordLogin(options?: KeycloakThemeOptions) {
     },
     options,
   );
+}
+
+export async function startPasswordReset(options?: KeycloakThemeOptions) {
+  const redirectUri = getRedirectUri();
+  const passwordResetRedirectUri = getPasswordResetRedirectUri();
+  const searchParams = new URLSearchParams({
+    client_id: KEYCLOAK_CLIENT_ID,
+    redirect_uri: passwordResetRedirectUri,
+  });
+
+  addKeycloakThemeParams(searchParams, options);
+
+  const resetUrl = `${KEYCLOAK_ISSUER_URL}/login-actions/reset-credentials?${searchParams.toString()}`;
+
+  console.info("[mira-client] Starting password reset", {
+    keycloakClientRedirectUri: passwordResetRedirectUri,
+    resetUrl,
+  });
+
+  if (isTauri()) {
+    return invoke<OAuthStartResult>("start_oauth_window", {
+      request: {
+        authUrl: resetUrl,
+        passwordReset: true,
+        redirectUri,
+      },
+    });
+  }
+
+  window.location.assign(resetUrl);
 }
 
 type OAuthCallbackPayload = {

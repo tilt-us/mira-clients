@@ -145,6 +145,8 @@ struct OAuthWindowRequest {
     #[serde(default)]
     clear_session_before_login: bool,
     id_token_hint: Option<String>,
+    #[serde(default)]
+    password_reset: bool,
     #[serde(default = "default_oauth_window_visible")]
     visible: bool,
 }
@@ -460,6 +462,7 @@ fn start_oauth_window(
     let window_label_for_navigation = window_label.clone();
     let redirect_uri_for_navigation = redirect_uri.clone();
     let auth_url_for_navigation = auth_url.clone();
+    let password_reset_for_navigation = request.password_reset;
     let use_native_oauth_window_frame = cfg!(windows);
     let mut modal_width = OAUTH_MODAL_FALLBACK_WIDTH;
     let mut modal_height = OAUTH_MODAL_FALLBACK_HEIGHT;
@@ -484,6 +487,24 @@ fn start_oauth_window(
                         let _ = oauth_window.show();
                         let _ = oauth_window.set_focus();
                         let _ = oauth_window.navigate(auth_url_for_navigation.clone());
+                    }
+
+                    return false;
+                }
+
+                if password_reset_for_navigation && is_keycloak_password_reset_login_url(target_url)
+                {
+                    let _ = app_for_navigation.emit(
+                        "mira-oauth-callback",
+                        OAuthCallbackPayload {
+                            url: password_reset_sent_redirect_uri(&redirect_uri_for_navigation),
+                        },
+                    );
+
+                    if let Some(oauth_window) =
+                        app_for_navigation.get_webview_window(&window_label_for_navigation)
+                    {
+                        let _ = oauth_window.close();
                     }
 
                     return false;
@@ -514,6 +535,7 @@ fn start_oauth_window(
             &redirect_uri,
             oauth_theme.clone(),
             request.clear_session_before_login,
+            request.password_reset,
         )
         .map_err(|error| format!("OAuth-Fenster konnte nicht vorbereitet werden: {error}"))?;
         oauth_window_builder = oauth_window_builder.initialization_script(oauth_init_script);
@@ -665,6 +687,20 @@ fn is_oauth_redirect_url(target_url: &str, redirect_uri: &str) -> bool {
             .is_some_and(|rest| rest.starts_with('?') || rest.starts_with('#'))
 }
 
+fn is_keycloak_password_reset_login_url(target_url: &str) -> bool {
+    let Ok(url) = target_url.parse::<tauri::Url>() else {
+        return false;
+    };
+    let path = url.path();
+
+    path.contains("/protocol/openid-connect/auth") || path.contains("/login-actions/authenticate")
+}
+
+fn password_reset_sent_redirect_uri(redirect_uri: &str) -> String {
+    let separator = if redirect_uri.contains('?') { '&' } else { '?' };
+    format!("{redirect_uri}{separator}mira_password_reset=sent")
+}
+
 fn oauth_start_redirect_uri(redirect_uri: &str) -> String {
     format!("{}mira-oauth-start", redirect_uri)
 }
@@ -725,7 +761,7 @@ fn start_windows_browser_oauth(
 
     query_pairs.push(("redirect_uri".to_string(), redirect_uri.clone()));
 
-    if !is_discord_oauth {
+    if !is_discord_oauth && !request.password_reset {
         query_pairs.push(("prompt".to_string(), "login select_account".to_string()));
         query_pairs.push(("max_age".to_string(), "0".to_string()));
     }
@@ -747,6 +783,7 @@ fn start_windows_browser_oauth(
     let auth_url_for_redirect = auth_url.to_string();
     let app_for_callback = app.clone();
     let redirect_uri_for_callback = redirect_uri.clone();
+    let password_reset = request.password_reset;
 
     thread::spawn(move || {
         let _ = listener.set_nonblocking(true);
@@ -767,6 +804,11 @@ fn start_windows_browser_oauth(
                         }
                         WindowsBrowserOAuthRequest::Callback(callback_url) => {
                             let _ = write_windows_browser_oauth_response(&mut stream);
+                            let callback_url = if password_reset {
+                                password_reset_sent_redirect_uri(&redirect_uri_for_callback)
+                            } else {
+                                callback_url
+                            };
                             let _ = app_for_callback.emit(
                                 "mira-oauth-callback",
                                 OAuthCallbackPayload { url: callback_url },
@@ -1057,20 +1099,27 @@ fn oauth_window_init_script(
     redirect_uri: &str,
     theme: OAuthTheme,
     auto_submit_logout: bool,
+    password_reset: bool,
 ) -> Result<String, serde_json::Error> {
+    let password_reset_redirect_uri =
+        serde_json::to_string(&password_reset_sent_redirect_uri(redirect_uri))?;
     let redirect_uri = serde_json::to_string(redirect_uri)?;
     let accent_color = serde_json::to_string(&theme.accent_color)?;
     let font_color = serde_json::to_string(&theme.font_color)?;
     let auto_submit_logout = serde_json::to_string(&auto_submit_logout)?;
+    let password_reset = serde_json::to_string(&password_reset)?;
 
     Ok(r###"
 (function () {
   var redirectUri = __MIRA_REDIRECT_URI__;
+  var passwordResetRedirectUri = __MIRA_PASSWORD_RESET_REDIRECT_URI__;
   var accentColor = __MIRA_ACCENT_COLOR__;
   var accentForegroundColor = __MIRA_ACCENT_FOREGROUND_COLOR__;
   var autoSubmitLogout = __MIRA_AUTO_SUBMIT_LOGOUT__;
+  var passwordReset = __MIRA_PASSWORD_RESET__;
   var backButtonId = "mira-oauth-back-button";
   var closeButtonId = "mira-oauth-close-button";
+  var passwordResetSubmittedKey = "mira-password-reset-submitted";
   var themeStyleId = "mira-oauth-theme-style";
   var svgNamespace = "http://www.w3.org/2000/svg";
 
@@ -1088,6 +1137,95 @@ fn oauth_window_init_script(
     return /\/realms\/[^/]+\/protocol\/openid-connect\/logout(\/|$)/.test(
       window.location.pathname
     );
+  }
+
+  function isKeycloakResetCredentialsPage() {
+    return /\/realms\/[^/]+\/login-actions\/reset-credentials(\/|$)/.test(
+      window.location.pathname
+    );
+  }
+
+  function isPasswordResetSubmitted() {
+    try {
+      return sessionStorage.getItem(passwordResetSubmittedKey) === "1";
+    } catch (error) {
+      return Boolean(window.__miraPasswordResetSubmitted);
+    }
+  }
+
+  function markPasswordResetSubmitted() {
+    window.__miraPasswordResetSubmitted = true;
+
+    try {
+      sessionStorage.setItem(passwordResetSubmittedKey, "1");
+    } catch (error) {
+      // Ignore storage failures; the window flag still handles this document.
+    }
+  }
+
+  function clearPasswordResetSubmitted() {
+    window.__miraPasswordResetSubmitted = false;
+
+    try {
+      sessionStorage.removeItem(passwordResetSubmittedKey);
+    } catch (error) {
+      // Ignore storage failures.
+    }
+  }
+
+  function redirectPasswordResetSent() {
+    if (window.__miraPasswordResetCompleted) {
+      return;
+    }
+
+    window.__miraPasswordResetCompleted = true;
+    clearPasswordResetSubmitted();
+    window.location.href = passwordResetRedirectUri;
+  }
+
+  function handlePasswordResetSubmit() {
+    if (!passwordReset || !isKeycloakResetCredentialsPage()) {
+      return;
+    }
+
+    markPasswordResetSubmitted();
+    window.setTimeout(redirectPasswordResetSent, 1200);
+  }
+
+  function completePasswordResetRequest() {
+    if (!passwordReset || window.__miraPasswordResetCompleted) {
+      return;
+    }
+
+    if (isPasswordResetSubmitted() && isKeycloakPage() && !isKeycloakResetCredentialsPage()) {
+      redirectPasswordResetSent();
+      return;
+    }
+
+    if (!isKeycloakResetCredentialsPage()) {
+      return;
+    }
+
+    var bodyText = document.body ? document.body.textContent.replace(/\s+/g, " ").trim().toLowerCase() : "";
+    var hasEnglishSuccess =
+      bodyText.indexOf("receive an email") !== -1 ||
+      bodyText.indexOf("email shortly") !== -1 ||
+      bodyText.indexOf("e-mail shortly") !== -1 ||
+      bodyText.indexOf("check your email") !== -1 ||
+      bodyText.indexOf("sent you an email") !== -1;
+    var hasGermanSuccess =
+      bodyText.indexOf("e-mail erhalten") !== -1 ||
+      bodyText.indexOf("email erhalten") !== -1 ||
+      bodyText.indexOf("prüfen sie") !== -1 ||
+      bodyText.indexOf("pruefen sie") !== -1 ||
+      bodyText.indexOf("posteingang") !== -1 ||
+      bodyText.indexOf("weitere anweisungen") !== -1;
+
+    if (!hasEnglishSuccess && !hasGermanSuccess) {
+      return;
+    }
+
+    redirectPasswordResetSent();
   }
 
   function autoSubmitKeycloakLogout() {
@@ -1306,6 +1444,7 @@ fn oauth_window_init_script(
   function ensureAuthControls() {
     applyTheme();
     detectAccountProviderConflict();
+    completePasswordResetRequest();
     autoSubmitKeycloakLogout();
 
     if (!document.documentElement) {
@@ -1355,6 +1494,7 @@ fn oauth_window_init_script(
 
   applyTheme();
   ensureLoader();
+  document.addEventListener("submit", handlePasswordResetSubmit, true);
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", ensureAuthControls, { once: true });
@@ -1367,12 +1507,18 @@ fn oauth_window_init_script(
   window.setTimeout(ensureAuthControls, 250);
   window.setTimeout(ensureAuthControls, 750);
   window.setInterval(detectAccountProviderConflict, 500);
+  window.setInterval(completePasswordResetRequest, 500);
 })();
 "###
     .replace("__MIRA_REDIRECT_URI__", &redirect_uri)
+    .replace(
+        "__MIRA_PASSWORD_RESET_REDIRECT_URI__",
+        &password_reset_redirect_uri,
+    )
     .replace("__MIRA_ACCENT_COLOR__", &accent_color)
     .replace("__MIRA_ACCENT_FOREGROUND_COLOR__", &font_color)
-    .replace("__MIRA_AUTO_SUBMIT_LOGOUT__", &auto_submit_logout))
+    .replace("__MIRA_AUTO_SUBMIT_LOGOUT__", &auto_submit_logout)
+    .replace("__MIRA_PASSWORD_RESET__", &password_reset))
 }
 
 fn stop_game_child(child: &mut Child) -> Result<(), String> {
@@ -1635,7 +1781,12 @@ impl ClientConfigFile {
 
 fn env_flag_enabled(name: &str) -> bool {
     std::env::var(name)
-        .map(|value| matches!(value.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+        .map(|value| {
+            matches!(
+                value.to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
         .unwrap_or(false)
 }
 
@@ -1655,10 +1806,7 @@ fn launch_stage_for_base_url(base_url: &str) -> &'static str {
 fn localhost_matches_stage(host: &str) -> &'static str {
     let host = host.trim().trim_matches(['[', ']']).to_ascii_lowercase();
 
-    if host == "localhost"
-        || host == "::1"
-        || host == "0:0:0:0:0:0:0:1"
-        || host.starts_with("127.")
+    if host == "localhost" || host == "::1" || host == "0:0:0:0:0:0:0:1" || host.starts_with("127.")
     {
         "Local"
     } else {

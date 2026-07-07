@@ -970,12 +970,29 @@ export function normalizeLobbySnapshot(lobby?: LobbySnapshot): LobbySnapshot | u
 
 export function normalizeLobbyInvitation(invitation: LobbyInvitation): LobbyInvitation {
   const lobby = normalizeLobbySnapshot(invitation.lobby);
+  const invitationWithAliases = invitation as LobbyInvitation & {
+    id?: unknown;
+    lobby_id?: unknown;
+    invitee_public_id?: unknown;
+  };
+  const lobbyId =
+    invitation.lobbyId ??
+    (typeof invitationWithAliases.lobby_id === "string"
+      ? invitationWithAliases.lobby_id
+      : undefined) ??
+    lobby?.id ??
+    (typeof invitationWithAliases.id === "string"
+      ? invitationWithAliases.id
+      : undefined);
+  const inviteePublicId =
+    toPublicId(invitation.inviteePublicId) ??
+    toPublicId(invitationWithAliases.invitee_public_id);
 
   return {
     ...invitation,
-    inviteePublicId: toPublicId(invitation.inviteePublicId),
+    inviteePublicId,
     lobby,
-    lobbyId: invitation.lobbyId ?? lobby?.id,
+    lobbyId,
     inviters: invitation.inviters?.map(normalizeLobbyMember),
   };
 }
@@ -1123,20 +1140,32 @@ export function findLobbyInvitation(value: unknown, depth = 0): LobbyInvitation 
   const lobbyRecord =
     lobby && typeof lobby === "object" ? (lobby as Record<string, unknown>) : undefined;
 
+  const recordLobbyId =
+    typeof record.lobbyId === "string"
+      ? record.lobbyId
+      : typeof record.lobby_id === "string"
+        ? record.lobby_id
+        : undefined;
+
   if (
-    typeof record.lobbyId === "string" &&
+    recordLobbyId &&
     ("inviteePublicId" in record ||
+      "invitee_public_id" in record ||
       "inviters" in record ||
       "lobby" in record ||
       "updatedAt" in record) &&
     !("players" in record)
   ) {
-    return normalizeLobbyInvitation(record as LobbyInvitation);
+    return normalizeLobbyInvitation({
+      ...(record as LobbyInvitation),
+      lobbyId: recordLobbyId,
+    });
   }
 
   if (
     typeof lobbyRecord?.id === "string" &&
     ("inviteePublicId" in record ||
+      "invitee_public_id" in record ||
       "inviters" in record ||
       "updatedAt" in record ||
       "mode" in record)
