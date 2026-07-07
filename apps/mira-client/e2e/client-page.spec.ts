@@ -194,6 +194,7 @@ test("supports the client friend list and folder workflow", async ({ page }) => 
     folderName: string;
     method: string;
   }> = [];
+  const folderOrderRequests: Array<{ folderNames?: string[] }> = [];
 
   page.on("request", (request) => {
     const url = new URL(request.url());
@@ -228,6 +229,16 @@ test("supports the client friend list and folder workflow", async ({ page }) => 
       folderName: decodeURIComponent(match[1]),
       method: request.method(),
     });
+  });
+
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+
+    if (!url.pathname.endsWith("/api/me/settings/folders/order")) {
+      return;
+    }
+
+    folderOrderRequests.push(request.postDataJSON() as { folderNames?: string[] });
   });
 
   await loginToClient(page);
@@ -324,6 +335,30 @@ test("supports the client friend list and folder workflow", async ({ page }) => 
         method: "PUT",
       },
     ]);
+
+  const renamedSecondFolderBox = await renamedSecondFolderButton.boundingBox();
+  const firstFolderBox = await folderButton.boundingBox();
+
+  expect(renamedSecondFolderBox).not.toBeNull();
+  expect(firstFolderBox).not.toBeNull();
+
+  if (renamedSecondFolderBox && firstFolderBox) {
+    await page.mouse.move(
+      renamedSecondFolderBox.x + renamedSecondFolderBox.width / 2,
+      renamedSecondFolderBox.y + renamedSecondFolderBox.height / 2,
+    );
+    await page.mouse.down();
+    await page.mouse.move(
+      firstFolderBox.x + firstFolderBox.width / 2,
+      firstFolderBox.y + 2,
+      { steps: 8 },
+    );
+    await page.mouse.up();
+  }
+
+  await expect
+    .poll(() => folderOrderRequests)
+    .toEqual([{ folderNames: [renamedSecondFolderName, folderName] }]);
 
   await expect
     .poll(async () => {

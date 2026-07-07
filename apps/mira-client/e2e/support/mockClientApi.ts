@@ -116,6 +116,28 @@ async function fulfillMockApiRequest(route: Route) {
     return;
   }
 
+  if (pathname === "/api/me/settings/folders/order") {
+    const body = request.postDataJSON() as { folderNames?: unknown } | null;
+    const reorderedFolders = reorderMockClientSettingsFolders(body?.folderNames);
+
+    if (!reorderedFolders) {
+      await route.fulfill({
+        contentType: "application/json",
+        json: { message: "Invalid folder order." },
+        status: 400,
+      });
+      return;
+    }
+
+    mockClientSettingsFolders = reorderedFolders;
+
+    await route.fulfill({
+      contentType: "application/json",
+      json: mockClientSettingsFolders,
+    });
+    return;
+  }
+
   const folderFriendMatch = pathname.match(
     /^\/api\/me\/settings\/folders\/([^/]+)\/friends\/(\d+)$/,
   );
@@ -540,4 +562,37 @@ function renameMockClientSettingsFolder(folderName: string, value: unknown) {
   folder.name = nextName;
 
   return folder;
+}
+
+function reorderMockClientSettingsFolders(value: unknown) {
+  if (!Array.isArray(value) || value.length !== mockClientSettingsFolders.length) {
+    return undefined;
+  }
+
+  const foldersByName = new Map(
+    mockClientSettingsFolders.map((folder) => [
+      folder.name.toLocaleLowerCase(),
+      folder,
+    ]),
+  );
+  const seenNames = new Set<string>();
+  const reorderedFolders: MockClientSettingsFolder[] = [];
+
+  for (const folderName of value) {
+    if (typeof folderName !== "string" || !folderName.trim()) {
+      return undefined;
+    }
+
+    const folderNameKey = folderName.trim().toLocaleLowerCase();
+    const folder = foldersByName.get(folderNameKey);
+
+    if (!folder || seenNames.has(folderNameKey)) {
+      return undefined;
+    }
+
+    seenNames.add(folderNameKey);
+    reorderedFolders.push(folder);
+  }
+
+  return reorderedFolders;
 }

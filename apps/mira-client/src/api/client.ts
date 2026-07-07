@@ -94,6 +94,12 @@ type RenameClientSettingsFolderOptions = {
   };
 };
 
+type ReorderClientSettingsFoldersOptions = {
+  body: {
+    folderNames: string[];
+  };
+};
+
 type ClientSettingsFolderFriendOptions = {
   path: {
     folderName: string;
@@ -290,6 +296,17 @@ export function upsertClientSettingsFolder(options: UpsertClientSettingsFolderOp
 export function renameClientSettingsFolder(options: RenameClientSettingsFolderOptions) {
   return client.put<{ 200: ClientSettingsFolder }, unknown, false>({
     url: "/api/me/settings/folders/{folderName}/rename",
+    baseUrl: API_BASE_URL,
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+    },
+  });
+}
+
+export function reorderClientSettingsFolders(options: ReorderClientSettingsFoldersOptions) {
+  return client.put<{ 200: ClientSettingsFolder[] }, unknown, false>({
+    url: "/api/me/settings/folders/order",
     baseUrl: API_BASE_URL,
     ...options,
     headers: {

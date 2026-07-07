@@ -77,6 +77,10 @@ export type ClientSettingsFolderRenameRequest = {
     name: string;
 };
 
+export type ClientSettingsFolderOrderRequest = {
+    folderNames: Array<string>;
+};
+
 export type UpdateLevelRequest = {
     level: number;
 };
@@ -782,6 +786,22 @@ export type RenameFolderResponses = {
 };
 
 export type RenameFolderResponse = RenameFolderResponses[keyof RenameFolderResponses];
+
+export type ReorderFoldersData = {
+    body: ClientSettingsFolderOrderRequest;
+    path?: never;
+    query?: never;
+    url: '/api/me/settings/folders/order';
+};
+
+export type ReorderFoldersResponses = {
+    /**
+     * OK
+     */
+    200: Array<ClientSettingsFolderResponse>;
+};
+
+export type ReorderFoldersResponse = ReorderFoldersResponses[keyof ReorderFoldersResponses];
 
 export type SetLevelData = {
     body: UpdateLevelRequest;

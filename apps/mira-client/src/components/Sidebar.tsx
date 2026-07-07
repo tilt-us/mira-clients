@@ -44,6 +44,7 @@ import {
   liveSendRequest,
   removeClientSettingsFolderFriend,
   renameClientSettingsFolder,
+  reorderClientSettingsFolders,
   replaceClientSettingsFolders,
   search as searchUsers,
   upsertClientSettingsFolder,
@@ -1646,6 +1647,22 @@ function Sidebar({
     await refreshClientSettingsFoldersFromApi();
   }
 
+  async function saveRemoteClientSettingsFolderOrder(nextFolders: FriendFolder[]) {
+    const result = await reorderClientSettingsFolders({
+      body: {
+        folderNames: nextFolders.map((folder) => folder.name),
+      },
+    });
+
+    if (result.error || !result.data) {
+      notifyFriendApiError(t("friend-api-error"));
+      await refreshClientSettingsFoldersFromApi();
+      return;
+    }
+
+    applyClientSettingsFolders(result.data);
+  }
+
   function handleCreateFolder() {
     const folderNumber = folders.length + 1;
 
@@ -2111,35 +2128,36 @@ function Sidebar({
       return;
     }
 
-    setFolders((currentFolders) => {
-      const sourceFolder = currentFolders.find(
-        (folder) => folder.id === sourceFolderId,
-      );
+    const currentFolders = foldersRef.current;
+    const sourceFolder = currentFolders.find(
+      (folder) => folder.id === sourceFolderId,
+    );
 
-      if (!sourceFolder) {
-        return currentFolders;
-      }
+    if (!sourceFolder) {
+      return;
+    }
 
-      const foldersWithoutSource = currentFolders.filter(
-        (folder) => folder.id !== sourceFolderId,
-      );
-      const targetIndex = foldersWithoutSource.findIndex(
-        (folder) => folder.id === targetFolderId,
-      );
+    const foldersWithoutSource = currentFolders.filter(
+      (folder) => folder.id !== sourceFolderId,
+    );
+    const targetIndex = foldersWithoutSource.findIndex(
+      (folder) => folder.id === targetFolderId,
+    );
 
-      if (targetIndex === -1) {
-        return currentFolders;
-      }
+    if (targetIndex === -1) {
+      return;
+    }
 
-      const nextFolders = [...foldersWithoutSource];
-      nextFolders.splice(
-        position === "after" ? targetIndex + 1 : targetIndex,
-        0,
-        sourceFolder,
-      );
+    const nextFolders = [...foldersWithoutSource];
+    nextFolders.splice(
+      position === "after" ? targetIndex + 1 : targetIndex,
+      0,
+      sourceFolder,
+    );
 
-      return nextFolders;
-    });
+    foldersRef.current = nextFolders;
+    setFolders(nextFolders);
+    void saveRemoteClientSettingsFolderOrder(nextFolders);
   }
 
   function toggleFolder(folderId: string) {
