@@ -1,5 +1,6 @@
 use bevy::app::AppExit;
 use bevy::asset::AssetMetaCheck;
+use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
 use bevy::feathers::{FeathersPlugins, dark_theme::create_dark_theme, theme::UiTheme};
 use bevy::prelude::*;
 use bevy::ui::IsDefaultUiCamera;
@@ -98,8 +99,11 @@ impl Plugin for ClientAppPlugins {
             ));
 
         if ui_enabled {
-            app.add_systems(Startup, setup_ui_camera)
-                .add_plugins((MainHudPlugin, LeaveMenuPlugin));
+            app.add_systems(Startup, setup_ui_camera).add_plugins((
+                FrameTimeDiagnosticsPlugin::default(),
+                MainHudPlugin,
+                LeaveMenuPlugin,
+            ));
         }
     }
 }

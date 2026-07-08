@@ -1,6 +1,7 @@
 use super::loading_screen::LoadingScreenState;
 use super::settings::ClientLaunchSettings;
 use bevy::asset::RenderAssetUsages;
+use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use game_logic::MiraHudState;
@@ -27,6 +28,7 @@ enum HudText {
     Static,
     Status,
     Ping,
+    Fps,
     MatchTime,
     ChampionName,
     Health,
@@ -203,7 +205,19 @@ fn top_time_segment() -> impl Bundle {
                     ..default()
                 },
                 children![
-                    text("0ms", 13.0, Color::srgb_u8(0x2B, 0xB8, 0x61), HudText::Ping),
+                    (
+                        Node {
+                            display: Display::Flex,
+                            flex_direction: FlexDirection::Column,
+                            align_items: AlignItems::FlexEnd,
+                            row_gap: px(1),
+                            ..default()
+                        },
+                        children![
+                            text("0ms", 13.0, Color::srgb_u8(0x2B, 0xB8, 0x61), HudText::Ping),
+                            text("FPS --", 9.0, muted_strong(), HudText::Fps),
+                        ],
+                    ),
                     value_text("00:00", 15.0, HudText::MatchTime),
                 ],
             ),
@@ -539,6 +553,7 @@ fn sync_main_hud(
     launch_settings: Res<ClientLaunchSettings>,
     loading_state: Res<LoadingScreenState>,
     network_ping: Res<NetworkPingState>,
+    diagnostics: Res<DiagnosticsStore>,
     images: Res<HudImages>,
     top_bar_shape: Res<TopBarShapeImage>,
     mut ui_images: ResMut<Assets<Image>>,
@@ -572,6 +587,7 @@ fn sync_main_hud(
 
     let ping_text = ping_text(&network_ping);
     let ping_color = ping_color(&network_ping);
+    let fps_text = fps_text(&diagnostics);
 
     for (kind, mut text, mut color) in &mut texts {
         text.0 = match kind {
@@ -581,6 +597,7 @@ fn sync_main_hud(
                 *color = TextColor(ping_color);
                 ping_text.clone()
             }
+            HudText::Fps => fps_text.clone(),
             HudText::MatchTime => match_time.clone(),
             HudText::ChampionName => hud_state.champion_name.to_ascii_uppercase(),
             HudText::Health => health_text.clone(),
@@ -626,6 +643,21 @@ fn sync_main_hud(
     }
 
     portrait.image = champion_portrait(&images, &hud_state.champion_name).clone();
+}
+
+fn fps_text(diagnostics: &DiagnosticsStore) -> String {
+    let fps = diagnostics
+        .get(&FrameTimeDiagnosticsPlugin::FPS)
+        .and_then(|fps| fps.smoothed())
+        .unwrap_or(0.0)
+        .round()
+        .max(0.0) as u32;
+
+    if fps == 0 {
+        "FPS --".to_string()
+    } else {
+        format!("FPS {fps}")
+    }
 }
 
 fn champion_portrait<'a>(images: &'a HudImages, champion_name: &str) -> &'a Handle<Image> {
