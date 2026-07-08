@@ -6,7 +6,17 @@ const apiRequestPattern =
 
 const now = new Date("2026-06-25T10:00:00.000Z").toISOString();
 
+type MockClientSettingsFolder = {
+  friendPublicIds: number[];
+  moveHereWhen?: string;
+  name: string;
+};
+
+let mockClientSettingsFolders: MockClientSettingsFolder[] = [];
+
 export async function mockAuthenticatedClientApi(page: Page) {
+  mockClientSettingsFolders = [];
+
   await page.route(apiRequestPattern, async (route) => {
     await fulfillMockApiRequest(route);
   });
@@ -92,6 +102,124 @@ async function fulfillMockApiRequest(route: Route) {
     return;
   }
 
+  if (pathname === "/api/me/settings/folders") {
+    if (request.method() === "PUT") {
+      mockClientSettingsFolders = normalizeMockClientSettingsFolders(
+        request.postDataJSON() as MockClientSettingsFolder[] | null,
+      );
+    }
+
+    await route.fulfill({
+      contentType: "application/json",
+      json: mockClientSettingsFolders,
+    });
+    return;
+  }
+
+  if (pathname === "/api/me/settings/folders/order") {
+    const body = request.postDataJSON() as { folderNames?: unknown } | null;
+    const reorderedFolders = reorderMockClientSettingsFolders(body?.folderNames);
+
+    if (!reorderedFolders) {
+      await route.fulfill({
+        contentType: "application/json",
+        json: { message: "Invalid folder order." },
+        status: 400,
+      });
+      return;
+    }
+
+    mockClientSettingsFolders = reorderedFolders;
+
+    await route.fulfill({
+      contentType: "application/json",
+      json: mockClientSettingsFolders,
+    });
+    return;
+  }
+
+  const folderFriendMatch = pathname.match(
+    /^\/api\/me\/settings\/folders\/([^/]+)\/friends\/(\d+)$/,
+  );
+
+  if (folderFriendMatch) {
+    const folderName = decodeURIComponent(folderFriendMatch[1]);
+    const friendPublicId = Number(folderFriendMatch[2]);
+    const folder = upsertMockClientSettingsFolder(folderName, {});
+
+    if (request.method() === "DELETE") {
+      folder.friendPublicIds = folder.friendPublicIds.filter(
+        (currentFriendPublicId) => currentFriendPublicId !== friendPublicId,
+      );
+    } else {
+      folder.friendPublicIds = [...new Set([...folder.friendPublicIds, friendPublicId])];
+    }
+
+    await route.fulfill({
+      contentType: "application/json",
+      json: folder,
+    });
+    return;
+  }
+
+  const folderRenameMatch = pathname.match(
+    /^\/api\/me\/settings\/folders\/([^/]+)\/rename$/,
+  );
+
+  if (folderRenameMatch) {
+    const folderName = decodeURIComponent(folderRenameMatch[1]);
+    const body = request.postDataJSON() as { name?: unknown } | null;
+    const renamedFolder = renameMockClientSettingsFolder(folderName, body?.name);
+
+    if (!renamedFolder) {
+      await route.fulfill({
+        contentType: "application/json",
+        json: { message: "Invalid folder rename." },
+        status: 400,
+      });
+      return;
+    }
+
+    if (renamedFolder === "conflict") {
+      await route.fulfill({
+        contentType: "application/json",
+        json: { message: "A folder with this name already exists." },
+        status: 409,
+      });
+      return;
+    }
+
+    await route.fulfill({
+      contentType: "application/json",
+      json: renamedFolder,
+    });
+    return;
+  }
+
+  const folderMatch = pathname.match(/^\/api\/me\/settings\/folders\/([^/]+)$/);
+
+  if (folderMatch) {
+    const folderName = decodeURIComponent(folderMatch[1]);
+
+    if (request.method() === "DELETE") {
+      mockClientSettingsFolders = mockClientSettingsFolders.filter(
+        (folder) => folder.name.toLocaleLowerCase() !== folderName.toLocaleLowerCase(),
+      );
+
+      await route.fulfill({ status: 204 });
+      return;
+    }
+
+    const body = request.postDataJSON() as Partial<MockClientSettingsFolder> | null;
+    const folder = upsertMockClientSettingsFolder(folderName, body ?? {});
+
+    await route.fulfill({
+      contentType: "application/json",
+      json: folder,
+    });
+    return;
+  }
+
   const settingsSummaryMatch = pathname.match(
     /^\/api\/users\/(\d+)\/settings-summary$/,
   );
@@ -108,6 +236,30 @@ async function fulfillMockApiRequest(route: Route) {
     return;
   }
 
+  if (pathname === "/api/users/by-public-ids") {
+    const publicIds = getPublicIdsFromQuery(url);
+    const users = [
+      {
+        publicId: 9101,
+        displayName: "Lane Partner",
+        email: "lane.partner@mira.de",
+        tagId: "LANE",
+      },
+      {
+        publicId: 9102,
+        displayName: "Jungle Buddy",
+        email: "jungle.buddy@mira.de",
+        tagId: "JGL",
+      },
+    ].filter((user) => publicIds.includes(user.publicId));
+
+    await route.fulfill({
+      contentType: "application/json",
+      json: { users },
+    });
+    return;
+  }
+
   if (pathname === "/api/live/bootstrap") {
     await route.fulfill({
       contentType: "application/json",
@@ -118,11 +270,13 @@ async function fulfillMockApiRequest(route: Route) {
               displayName: "Lane Partner",
               email: "lane.partner@mira.de",
               publicId: 9101,
+              tagId: "LANE",
             },
             {
               displayName: "Jungle Buddy",
               email: "jungle.buddy@mira.de",
               publicId: 9102,
+              tagId: "JGL",
             },
           ],
         },
@@ -190,12 +344,14 @@ async function fulfillMockApiRequest(route: Route) {
         publicId: 9101,
         displayName: "Lane Partner",
         status: "ONLINE",
+        tagId: "LANE",
         updatedAt: now,
       },
       {
         publicId: 9102,
         displayName: "Jungle Buddy",
         status: "AFK",
+        tagId: "JGL",
         updatedAt: now,
       },
     ];
@@ -322,4 +478,169 @@ async function fulfillMockApiRequest(route: Route) {
 
 function stripServicePrefix(pathname: string) {
   return pathname.replace(/^\/(?:auth|live|match|game|champions|chat)(?=\/api\/)/, "");
+}
+
+function getPublicIdsFromQuery(url: URL) {
+  const values = [
+    ...url.searchParams.getAll("publicIds"),
+    ...url.searchParams.getAll("publicIds[]"),
+  ];
+
+  if (values.length === 0) {
+    const singleValue = url.searchParams.get("publicIds");
+
+    if (singleValue) {
+      values.push(singleValue);
+    }
+  }
+
+  return values
+    .flatMap((value) => value.split(","))
+    .map((value) => Number.parseInt(value, 10))
+    .filter((publicId) => Number.isInteger(publicId));
+}
+
+function normalizeMockClientSettingsFolders(value: MockClientSettingsFolder[] | null) {
+  const foldersByName = new Map<string, MockClientSettingsFolder>();
+
+  for (const folder of Array.isArray(value) ? value : []) {
+    if (!folder?.name?.trim()) {
+      continue;
+    }
+
+    const name = folder.name.trim();
+    const nameKey = name.toLocaleLowerCase();
+    const existingFolder = foldersByName.get(nameKey);
+    const friendPublicIds = normalizeMockFriendPublicIds(folder.friendPublicIds);
+    const moveHereWhen =
+      typeof folder.moveHereWhen === "string" && folder.moveHereWhen.trim()
+        ? folder.moveHereWhen.trim().slice(0, 30)
+        : undefined;
+
+    foldersByName.set(nameKey, {
+      friendPublicIds: [
+        ...new Set([...(existingFolder?.friendPublicIds ?? []), ...friendPublicIds]),
+      ],
+      moveHereWhen: existingFolder?.moveHereWhen ?? moveHereWhen,
+      name: existingFolder?.name ?? name,
+    });
+  }
+
+  return [...foldersByName.values()];
+}
+
+function normalizeMockFriendPublicIds(value: unknown) {
+  return Array.isArray(value)
+    ? [
+        ...new Set(
+          value.filter(
+            (friendPublicId): friendPublicId is number =>
+              Number.isInteger(friendPublicId) && friendPublicId > 0,
+          ),
+        ),
+      ]
+    : [];
+}
+
+function upsertMockClientSettingsFolder(
+  folderName: string,
+  body: Partial<MockClientSettingsFolder>,
+) {
+  const name = folderName.trim();
+  const nameKey = name.toLocaleLowerCase();
+  const existingFolder = mockClientSettingsFolders.find(
+    (folder) => folder.name.toLocaleLowerCase() === nameKey,
+  );
+
+  if (existingFolder) {
+    existingFolder.friendPublicIds =
+      body.friendPublicIds === undefined
+        ? existingFolder.friendPublicIds
+        : normalizeMockFriendPublicIds(body.friendPublicIds);
+    existingFolder.moveHereWhen =
+      body.moveHereWhen === undefined
+        ? existingFolder.moveHereWhen
+        : typeof body.moveHereWhen === "string" && body.moveHereWhen.trim()
+          ? body.moveHereWhen.trim().slice(0, 30)
+          : undefined;
+
+    return existingFolder;
+  }
+
+  const folder: MockClientSettingsFolder = {
+    friendPublicIds: normalizeMockFriendPublicIds(body.friendPublicIds),
+    moveHereWhen:
+      typeof body.moveHereWhen === "string" && body.moveHereWhen.trim()
+        ? body.moveHereWhen.trim().slice(0, 30)
+        : undefined,
+    name,
+  };
+
+  mockClientSettingsFolders = [...mockClientSettingsFolders, folder];
+
+  return folder;
+}
+
+function renameMockClientSettingsFolder(folderName: string, value: unknown) {
+  if (typeof value !== "string" || !value.trim()) {
+    return undefined;
+  }
+
+  const currentNameKey = folderName.trim().toLocaleLowerCase();
+  const nextName = value.trim();
+  const nextNameKey = nextName.toLocaleLowerCase();
+  const folder = mockClientSettingsFolders.find(
+    (currentFolder) => currentFolder.name.toLocaleLowerCase() === currentNameKey,
+  );
+
+  if (!folder) {
+    return undefined;
+  }
+
+  const duplicateFolder = mockClientSettingsFolders.find(
+    (currentFolder) =>
+      currentFolder.name.toLocaleLowerCase() === nextNameKey &&
+      currentFolder !== folder,
+  );
+
+  if (duplicateFolder) {
+    return "conflict" as const;
+  }
+
+  folder.name = nextName;
+
+  return folder;
+}
+
+function reorderMockClientSettingsFolders(value: unknown) {
+  if (!Array.isArray(value) || value.length !== mockClientSettingsFolders.length) {
+    return undefined;
+  }
+
+  const foldersByName = new Map(
+    mockClientSettingsFolders.map((folder) => [
+      folder.name.toLocaleLowerCase(),
+      folder,
+    ]),
+  );
+  const seenNames = new Set<string>();
+  const reorderedFolders: MockClientSettingsFolder[] = [];
+
+  for (const folderName of value) {
+    if (typeof folderName !== "string" || !folderName.trim()) {
+      return undefined;
+    }
+
+    const folderNameKey = folderName.trim().toLocaleLowerCase();
+    const folder = foldersByName.get(folderNameKey);
+
+    if (!folder || seenNames.has(folderNameKey)) {
+      return undefined;
+    }
+
+    seenNames.add(folderNameKey);
+    reorderedFolders.push(folder);
+  }
+
+  return reorderedFolders;
 }

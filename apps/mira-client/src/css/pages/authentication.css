@@ -160,7 +160,7 @@ input:focus {
   display: inline-flex;
   width: fit-content;
   align-items: center;
-  justify-self: center;
+  justify-self: start;
   gap: 8px;
   border: 0;
   padding: 2px 4px;

@@ -5,6 +5,10 @@ type AvatarFields = {
   avatarRightsConsentedAt?: null | string;
   avatarUrl?: string;
   consentedAt?: null | string;
+  discordAvatar?: string;
+  discord_avatar?: string;
+  discordUserId?: string;
+  discord_user_id?: string;
   imageUrl?: string;
   picture?: string;
   pictureUrl?: string;
@@ -45,7 +49,8 @@ export function getProfileAvatarUrl(
 ) {
   return (
     getAvatarUrl(profile as AvatarFields) ??
-    getSafeImageUrl(getTokenPicture(accessToken))
+    getSafeImageUrl(getTokenPicture(accessToken)) ??
+    getTokenDiscordAvatarUrl(accessToken)
   );
 }
 
@@ -79,7 +84,8 @@ function getRawAvatarUrl(profile?: AvatarFields) {
     getSafeImageUrl(profile?.picture) ??
     getSafeImageUrl(profile?.imageUrl) ??
     getSafeImageUrl(profile?.pictureUrl) ??
-    getSafeImageUrl(profile?.profileImageUrl)
+    getSafeImageUrl(profile?.profileImageUrl) ??
+    getDiscordAvatarUrl(profile)
   );
 }
 
@@ -126,6 +132,50 @@ function getTokenPicture(accessToken?: string) {
   const picture = payload?.picture;
 
   return typeof picture === "string" ? picture : undefined;
+}
+
+function getTokenDiscordAvatarUrl(accessToken?: string) {
+  const payload = getTokenPayload(accessToken);
+
+  return getDiscordAvatarUrl({
+    discordAvatar:
+      typeof payload?.discordAvatar === "string"
+        ? payload.discordAvatar
+        : typeof payload?.discord_avatar === "string"
+          ? payload.discord_avatar
+          : undefined,
+    discordUserId:
+      typeof payload?.discordUserId === "string"
+        ? payload.discordUserId
+        : typeof payload?.discord_user_id === "string"
+          ? payload.discord_user_id
+          : undefined,
+  });
+}
+
+function getDiscordAvatarUrl(profile?: AvatarFields) {
+  const userId = normalizeDiscordIdentifier(
+    profile?.discordUserId ?? profile?.discord_user_id,
+  );
+  const avatar = normalizeDiscordIdentifier(
+    profile?.discordAvatar ?? profile?.discord_avatar,
+  );
+
+  if (!userId || !avatar) {
+    return undefined;
+  }
+
+  const extension = avatar.startsWith("a_") ? "gif" : "png";
+
+  return `https://cdn.discordapp.com/avatars/${userId}/${avatar}.${extension}`;
+}
+
+function normalizeDiscordIdentifier(value?: string) {
+  const normalizedValue = value?.trim();
+
+  return normalizedValue && /^[A-Za-z0-9_-]+$/.test(normalizedValue)
+    ? normalizedValue
+    : undefined;
 }
 
 function getTokenPayload(accessToken?: string) {

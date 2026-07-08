@@ -107,6 +107,7 @@ friend-block-tooltip = Block user
 friend-report-tooltip = Report user
 friend-report-submitted = Report submitted.
 friend-move-to = Move To
+friend-remove-from-folder = Remove from folder
 friend-no-folders = No folders
 friend-confirm-cancel = Cancel
 friend-confirm-unfriend-title = Remove friend

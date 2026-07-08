@@ -107,6 +107,7 @@ friend-block-tooltip = Nutzer blockieren
 friend-report-tooltip = Nutzer melden
 friend-report-submitted = Meldung wurde erfasst.
 friend-move-to = Verschieben nach
+friend-remove-from-folder = Aus Ordner entfernen
 friend-no-folders = Keine Ordner
 friend-confirm-cancel = Abbrechen
 friend-confirm-unfriend-title = Freund entfernen

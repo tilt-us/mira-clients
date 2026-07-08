@@ -105,6 +105,7 @@ import type { FriendProfile, PresenceStatus, Translate } from "../types/ui";
 import {
   formatTagId,
   getProfileInitials,
+  getPublicAvatarUrl,
   getPublicDisplayName,
   normalizeTagId,
 } from "../utils/profile";
@@ -158,6 +159,9 @@ import {
   getLobbyModeLabel,
   getLobbySlotMembers,
   getMatchFoundOverlayStroke,
+  getFriendUserLevel,
+  getFriendUserName,
+  getFriendUserTagId,
   getShortestRotationDegrees,
   getUserPageNameClassName,
   enrichMatchPlayers,
@@ -258,6 +262,8 @@ type ClientProps = {
   uiScale: UiScale;
 };
 
+type ClientBackTarget = "main" | "gameSelector" | "lobby";
+
 function Client({
   accentColor,
   backgroundChampion,
@@ -298,6 +304,10 @@ function Client({
 }: ClientProps) {
   const [gameSelectorOpen, setGameSelectorOpen] = useState(false);
   const [lobbyPageOpen, setLobbyPageOpen] = useState(false);
+  const [gameSelectorBackTarget, setGameSelectorBackTarget] =
+    useState<ClientBackTarget>("main");
+  const [lobbyPageBackTarget, setLobbyPageBackTarget] =
+    useState<ClientBackTarget>("main");
   const [lobbyRosterOpen, setLobbyRosterOpen] = useState(false);
   const [userPageOpen, setUserPageOpen] = useState(false);
   const [viewedUserPageProfile, setViewedUserPageProfile] =
@@ -590,7 +600,9 @@ function Client({
   }, [
     closeDialogOpen,
     championTabFocused,
+    gameSelectorBackTarget,
     gameSelectorOpen,
+    lobbyPageBackTarget,
     lobbyPageOpen,
     settingsOpen,
     userPageOpen,
@@ -2546,6 +2558,8 @@ function Client({
     setActiveLobby(undefined);
     setLobbyPageOpen(false);
     setGameSelectorOpen(false);
+    setGameSelectorBackTarget("main");
+    setLobbyPageBackTarget("main");
     setPresenceStatus("online");
     void publishPresence("ONLINE");
   }
@@ -2560,6 +2574,8 @@ function Client({
     setPartyInviteOpen(false);
     setActiveLobby(undefined);
     setLobbyPageOpen(false);
+    setGameSelectorBackTarget("main");
+    setLobbyPageBackTarget("main");
     setPresenceStatus("online");
     void publishPresence("ONLINE");
   }
@@ -2809,6 +2825,8 @@ function Client({
     setActiveLobby(undefined);
     setLobbyPageOpen(false);
     setGameSelectorOpen(false);
+    setGameSelectorBackTarget("main");
+    setLobbyPageBackTarget("main");
     syncPresenceWithActivity();
   }
 
@@ -2966,11 +2984,26 @@ function Client({
     }
 
     if (lobbyPageOpen) {
+      if (lobbyPageBackTarget === "gameSelector") {
+        setLobbyPageOpen(false);
+        setGameSelectorBackTarget("main");
+        setGameSelectorOpen(true);
+        return;
+      }
+
       setLobbyPageOpen(false);
       return;
     }
 
+    if (gameSelectorBackTarget === "lobby" && activeLobby) {
+      setGameSelectorOpen(false);
+      setLobbyPageBackTarget("main");
+      setLobbyPageOpen(true);
+      return;
+    }
+
     setGameSelectorOpen(false);
+    setGameSelectorBackTarget("main");
   }
 
   function handlePlayButtonClick() {
@@ -2978,22 +3011,26 @@ function Client({
 
     if (activeLobby) {
       setGameSelectorOpen(false);
+      setLobbyPageBackTarget("main");
       setLobbyPageOpen(true);
       return;
     }
 
+    setGameSelectorBackTarget("main");
     setGameSelectorOpen(true);
   }
 
   function handleChangeModeClick() {
     setUserPageOpen(false);
     setLobbyPageOpen(false);
+    setGameSelectorBackTarget("lobby");
     setGameSelectorOpen(true);
   }
 
   function handleGameModePrimaryAction() {
     if (activeLobby) {
       setGameSelectorOpen(false);
+      setLobbyPageBackTarget("gameSelector");
       setLobbyPageOpen(true);
       return;
     }
@@ -3044,24 +3081,81 @@ function Client({
     return true;
   }
 
+  function mergeUserPageProfileWithPublicUser(
+    userPageProfile: UserPageProfile,
+    publicUser: FriendUserResponse,
+  ): UserPageProfile {
+    return {
+      avatarUrl:
+        getPublicAvatarUrl(publicUser) ??
+        userPageProfile.avatarUrl,
+      level: getFriendUserLevel(publicUser) ?? userPageProfile.level,
+      name: getFriendUserName(publicUser) || userPageProfile.name,
+      publicId: publicUser.publicId ?? userPageProfile.publicId,
+      tagId: getFriendUserTagId(publicUser) ?? userPageProfile.tagId,
+    };
+  }
+
+  async function loadUserPagePublicProfile(publicId: number) {
+    const result = await usersByPublicIds({
+      baseUrl: API_BASE_URL,
+      query: { publicIds: [publicId] },
+    });
+
+    if (result.error) {
+      return;
+    }
+
+    const publicUser = result.data?.users?.find(
+      (user) => user.publicId === publicId,
+    );
+
+    if (!publicUser) {
+      return;
+    }
+
+    setPublicUsersByPublicId((currentUsers) => {
+      const nextUsers = new Map(currentUsers);
+      nextUsers.set(publicId, publicUser);
+      return nextUsers;
+    });
+    setViewedUserPageProfile((currentProfile) =>
+      currentProfile?.publicId === publicId
+        ? mergeUserPageProfileWithPublicUser(currentProfile, publicUser)
+        : currentProfile,
+    );
+  }
+
   function handleProfileOpen(profile?: Partial<UserPageProfile>) {
     setLobbyIdContextMenuOpen(false);
     setLobbyMemberContextMenu(undefined);
     setPartyInviteOpen(false);
+    const nextProfile = profile?.name
+      ? {
+          avatarUrl: profile.avatarUrl,
+          level: profile.level ?? 1,
+          name: profile.name,
+          publicId: profile.publicId,
+          tagId: profile.tagId,
+        } satisfies UserPageProfile
+      : undefined;
+    const cachedPublicUser =
+      typeof nextProfile?.publicId === "number"
+        ? publicUsersByPublicId.get(nextProfile.publicId)
+        : undefined;
+
     setViewedUserPageProfile(
-      profile?.name
-        ? {
-            avatarUrl: profile.avatarUrl,
-            level: profile.level ?? 1,
-            name: profile.name,
-            publicId: profile.publicId,
-            tagId: profile.tagId,
-          }
-        : undefined,
+      nextProfile && cachedPublicUser
+        ? mergeUserPageProfileWithPublicUser(nextProfile, cachedPublicUser)
+        : nextProfile,
     );
     setActiveUserPageCategory("overview");
     setChampionTabFocused(false);
     setUserPageOpen(true);
+
+    if (typeof nextProfile?.publicId === "number") {
+      void loadUserPagePublicProfile(nextProfile.publicId);
+    }
   }
 
   async function leaveActiveChampionSelection(status: ChampionSelectionLeaveStatus) {
@@ -3195,6 +3289,7 @@ function Client({
     setLobbySearchAbortedLobbyId(undefined);
     setLobbySearchStartedAt(undefined);
     setActiveLobby(result.data);
+    setLobbyPageBackTarget("gameSelector");
     setLobbyPageOpen(true);
     setGameSelectorOpen(false);
   }
@@ -3866,6 +3961,7 @@ function Client({
     }
 
     setActiveLobby(result.data);
+    setLobbyPageBackTarget("main");
     setLobbyPageOpen(true);
     setGameSelectorOpen(false);
   }
@@ -3888,6 +3984,7 @@ function Client({
     }
 
     setActiveLobby(result.data);
+    setLobbyPageBackTarget("main");
     setLobbyPageOpen(true);
     setLobbyInvitations((currentInvitations) =>
       currentInvitations.filter(
@@ -4349,6 +4446,8 @@ function Client({
     setActiveLobby(undefined);
     setLobbyPageOpen(false);
     setGameSelectorOpen(false);
+    setGameSelectorBackTarget("main");
+    setLobbyPageBackTarget("main");
     setGameInProgress(true);
     setPresenceStatus("ingame");
     publishActivePresence("IN_GAME");
@@ -4776,21 +4875,19 @@ function Client({
                       {activeUserPageProfile.name}
                     </h1>
                     {activeUserPageProfile.tagId ? (
-                      <>
-                        <span className="user-page-inline-tag">
-                          {formatTagId(activeUserPageProfile.tagId)}
-                        </span>
-                        <button
-                          aria-label={t("profile-copy-name-tag")}
-                          className="user-page-copy-id-button"
-                          title={t("profile-copy-name-tag")}
-                          type="button"
-                          onClick={() => void handleCopyUserPageNameTag()}
-                        >
-                          <Copy size={15} />
-                        </button>
-                      </>
+                      <span className="user-page-inline-tag">
+                        {formatTagId(activeUserPageProfile.tagId)}
+                      </span>
                     ) : null}
+                    <button
+                      aria-label={t("profile-copy-name-tag")}
+                      className="user-page-copy-id-button"
+                      title={t("profile-copy-name-tag")}
+                      type="button"
+                      onClick={() => void handleCopyUserPageNameTag()}
+                    >
+                      <Copy size={15} />
+                    </button>
                   </div>
                   {typeof activeUserPageProfile.publicId === "number" ? (
                     <div className="user-page-meta-row user-page-user-id-row">

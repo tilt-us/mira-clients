@@ -56,6 +56,7 @@ export type StoredSettings = {
 
 export type ClientSettingsFolder = {
   friendPublicIds: number[];
+  moveHereWhen?: string;
   name: string;
 };
 
@@ -174,7 +175,6 @@ export function toClientSettingsApiRequest(
     background: settings.backgroundChampion,
     chatPosition: settings.chatPosition,
     clientAnimation: settings.clientAnimation,
-    folders: settings.folders,
     language: settings.locale,
     resolution: settings.resolution,
     screenMode: settings.gameScreenMode,
@@ -293,10 +293,15 @@ function normalizeClientSettingsFolders(value: unknown) {
       const record = folder as {
         friendPublicIds?: unknown;
         friend_public_ids?: unknown;
+        moveHereWhen?: unknown;
+        move_here_when?: unknown;
         name?: unknown;
       };
       const name = typeof record.name === "string" ? record.name.trim() : "";
       const publicIds = record.friendPublicIds ?? record.friend_public_ids;
+      const moveHereWhen = normalizeFolderMoveRule(
+        record.moveHereWhen ?? record.move_here_when,
+      );
 
       if (!name) {
         return undefined;
@@ -304,10 +309,21 @@ function normalizeClientSettingsFolders(value: unknown) {
 
       return {
         friendPublicIds: normalizeFriendPublicIds(publicIds),
+        ...(moveHereWhen ? { moveHereWhen } : {}),
         name,
       };
     })
     .filter((folder): folder is ClientSettingsFolder => Boolean(folder));
+}
+
+function normalizeFolderMoveRule(value: unknown) {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const normalizedValue = value.trim().slice(0, 30);
+
+  return normalizedValue || undefined;
 }
 
 function normalizeFriendPublicIds(value: unknown) {

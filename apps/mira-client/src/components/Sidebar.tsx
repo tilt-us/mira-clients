@@ -31,15 +31,23 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import {
+  addClientSettingsFolderFriend,
   bootstrap as liveBootstrap,
   client,
+  deleteClientSettingsFolder,
   friends as fetchFriendStatuses,
+  getClientSettingsFolders,
   liveAcceptRequest,
   liveDeclineRequest,
   liveRemoveFriend,
   liveRevokeRequest,
   liveSendRequest,
+  removeClientSettingsFolderFriend,
+  renameClientSettingsFolder,
+  reorderClientSettingsFolders,
+  replaceClientSettingsFolders,
   search as searchUsers,
+  upsertClientSettingsFolder,
   type FriendRequest,
   type FriendRequestResponse,
   type FriendUser,
@@ -52,7 +60,6 @@ import FriendCard from "./FriendCard";
 import type { ClientSettingsFolder } from "../settings";
 import type {
   FriendFolder,
-  FriendFolderMoveRule,
   FriendProfile,
   PresenceStatus,
   SidebarTab,
@@ -77,14 +84,16 @@ const initialFolders: FriendFolder[] = [
   },
 ];
 
-const folderMoveRuleOptions: FriendFolderMoveRule[] = [
+const folderMoveRuleOptions = [
   "none",
   "new-friend",
   "new-tagged",
-];
+] as const;
 
 const friendSidebarStorageKey = "mira-client-friend-sidebar-v2";
 const blockedFriendPublicIdsStorageKey = "mira-client-blocked-public-ids-v1";
+const folderMoveRuleMaxLength = 30;
+const unfiledFolderDropId = "__unfiled";
 const activeFriendStatusCacheTtlMs = 10 * 1000;
 const transientFriendStatusCacheTtlMs = 10 * 1000;
 const lobbyPresenceFallbackMaxAgeMs = 15 * 1000;
@@ -168,8 +177,13 @@ type ProfileOpenTarget = {
 };
 
 type TaggedFriendUserItem = FriendUserItem & {
+  displayTag?: unknown;
+  gameTag?: unknown;
   level?: unknown;
+  tag?: unknown;
+  tagID?: unknown;
   tagId?: unknown;
+  tag_id?: unknown;
 };
 
 type SidebarProps = {
@@ -202,7 +216,10 @@ function isStoredFolder(value: unknown): value is FriendFolder {
     typeof folder.open === "boolean" &&
     (
       folder.moveRule === undefined ||
-      folderMoveRuleOptions.includes(folder.moveRule)
+      (
+        typeof folder.moveRule === "string" &&
+        folder.moveRule.length <= folderMoveRuleMaxLength
+      )
     )
   );
 }
@@ -248,21 +265,27 @@ function getClientSettingsFolderId(folder: ClientSettingsFolder, index: number) 
   return `settings-folder-${index}-${normalizedName || "folder"}`;
 }
 
+function getClientSettingsFolderNameKey(name: string) {
+  return name.trim().toLocaleLowerCase();
+}
+
 function getSidebarStateFromClientSettingsFolders(
   clientSettingsFolders: ClientSettingsFolder[],
   currentFolders: FriendFolder[] = [],
 ) {
   const currentFoldersByName = new Map(
-    currentFolders.map((folder) => [folder.name, folder]),
+    currentFolders.map((folder) => [getClientSettingsFolderNameKey(folder.name), folder]),
   );
   const folders = clientSettingsFolders.map((folder, index) => {
-    const currentFolder = currentFoldersByName.get(folder.name);
+    const currentFolder = currentFoldersByName.get(
+      getClientSettingsFolderNameKey(folder.name),
+    );
 
     return {
       id: currentFolder?.id ?? getClientSettingsFolderId(folder, index),
       name: folder.name,
       open: currentFolder?.open ?? true,
-      moveRule: currentFolder?.moveRule ?? "none",
+      moveRule: folder.moveHereWhen?.trim() || "none",
     } satisfies FriendFolder;
   });
   const friendFolders = Object.fromEntries(
@@ -296,6 +319,9 @@ function serializeClientSettingsFolders(
 
     return {
       friendPublicIds: [...new Set(friendPublicIds)],
+      ...(folder.moveRule && folder.moveRule !== "none"
+        ? { moveHereWhen: folder.moveRule.slice(0, 30) }
+        : {}),
       name: folder.name,
     } satisfies ClientSettingsFolder;
   });
@@ -308,6 +334,38 @@ function areClientSettingsFoldersEqual(
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
+function getClientSettingsFolderMoveHereWhen(folder: FriendFolder) {
+  const moveHereWhen = folder.moveRule?.trim().slice(0, 30);
+
+  return moveHereWhen && moveHereWhen !== "none" ? moveHereWhen : "";
+}
+
+function getClientSettingsFolderFriendPublicIds(
+  folderId: string,
+  friendFolders: Record<string, string | undefined>,
+) {
+  return [
+    ...new Set(
+      Object.entries(friendFolders)
+        .filter(([, currentFolderId]) => currentFolderId === folderId)
+        .map(([friendId]) => Number.parseInt(friendId, 10))
+        .filter((friendPublicId) =>
+          Number.isInteger(friendPublicId) && friendPublicId > 0,
+        ),
+    ),
+  ];
+}
+
+function toClientSettingsFolderApiBody(
+  folder: FriendFolder,
+  friendFolders: Record<string, string | undefined>,
+) {
+  return {
+    friendPublicIds: getClientSettingsFolderFriendPublicIds(folder.id, friendFolders),
+    moveHereWhen: getClientSettingsFolderMoveHereWhen(folder),
+  };
+}
+
 function getFriendUserId(user: FriendUserItem) {
   if (typeof user.publicId === "number") {
     return String(user.publicId);
@@ -317,18 +375,43 @@ function getFriendUserId(user: FriendUserItem) {
 }
 
 function getFriendUserName(user: FriendUserItem) {
-  return getPublicDisplayName(
+  return stripNameTagSuffix(getPublicDisplayName(
     user.displayName,
     `User ${user.publicId ?? ""}`.trim(),
-  );
+  ));
 }
 
 function getFriendUserSubtitle(user: FriendUserItem) {
-  return formatTagId((user as TaggedFriendUserItem).tagId);
+  const taggedUser = user as TaggedFriendUserItem;
+
+  return formatTagId(getFriendUserTagId(taggedUser));
 }
 
 function getFriendUserTagId(user: FriendUserItem) {
-  return normalizeTagId((user as TaggedFriendUserItem).tagId);
+  const taggedUser = user as TaggedFriendUserItem;
+
+  return normalizeTagId(
+    taggedUser.tagId ??
+      taggedUser.tag_id ??
+      taggedUser.tagID ??
+      taggedUser.tag ??
+      taggedUser.displayTag ??
+      taggedUser.gameTag,
+  ) ?? parseNameTagSuffix(taggedUser.displayName);
+}
+
+function parseNameTagSuffix(value: unknown) {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const match = value.trim().match(/#([A-Za-z0-9_-]+)$/);
+
+  return match ? normalizeTagId(match[1]) : undefined;
+}
+
+function stripNameTagSuffix(value: string) {
+  return value.replace(/#[A-Za-z0-9_-]+$/, "").trim() || value;
 }
 
 function getFriendUserLevel(user: FriendUserItem) {
@@ -776,8 +859,7 @@ function Sidebar({
   const [renamingFolderId, setRenamingFolderId] = useState<string>();
   const [folderRenameInput, setFolderRenameInput] = useState("");
   const [editingFolderRulesId, setEditingFolderRulesId] = useState<string>();
-  const [folderRuleDraft, setFolderRuleDraft] =
-    useState<FriendFolderMoveRule>("none");
+  const [folderRuleDraft, setFolderRuleDraft] = useState("none");
   const [folderRuleDropdownOpen, setFolderRuleDropdownOpen] = useState(false);
   const [friendTooltip, setFriendTooltip] = useState<FriendTooltipState>();
   const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -954,23 +1036,7 @@ function Sidebar({
       return;
     }
 
-    const nextSidebarState = getSidebarStateFromClientSettingsFolders(
-      clientSettingsFolders,
-      foldersRef.current,
-    );
-
-    foldersRef.current = nextSidebarState.folders;
-    friendFoldersRef.current = nextSidebarState.friendFolders;
-    skipNextClientSettingsFoldersPublishRef.current = true;
-    setFolders(nextSidebarState.folders);
-    setFriendFolders(nextSidebarState.friendFolders);
-    setFriends((currentFriends) =>
-      currentFriends.map((friend) => ({
-        ...friend,
-        folderId: nextSidebarState.friendFolders[friend.id],
-      })),
-    );
-    lastPublishedClientSettingsFoldersRef.current = clientSettingsFolders;
+    applyClientSettingsFolders(clientSettingsFolders);
   }, [clientSettingsFolders]);
 
   useEffect(() => {
@@ -1223,10 +1289,14 @@ function Sidebar({
       }
 
       if (currentDragState.active && currentDragState.overFolderId) {
-        moveFriendToFolder(
-          currentDragState.friendId,
-          currentDragState.overFolderId,
-        );
+        if (currentDragState.overFolderId === unfiledFolderDropId) {
+          removeFriendFromFolder(currentDragState.friendId);
+        } else {
+          moveFriendToFolder(
+            currentDragState.friendId,
+            currentDragState.overFolderId,
+          );
+        }
       }
 
       if (currentDragState.active) {
@@ -1448,6 +1518,20 @@ function Sidebar({
       }
 
       nextRuleFriendFolders[friendId] = newFriendFolder.id;
+      const friendPublicId = Number.parseInt(friendId, 10);
+
+      if (Number.isInteger(friendPublicId) && friendPublicId > 0) {
+        void addClientSettingsFolderFriend({
+          path: {
+            folderName: newFriendFolder.name,
+            friendPublicId,
+          },
+        }).then((result) => {
+          if (result.error) {
+            notifyFriendApiError(t("friend-api-error"));
+          }
+        });
+      }
     }
 
     if (nextRuleFriendFolders !== nextFriendFolders) {
@@ -1456,6 +1540,157 @@ function Sidebar({
     }
 
     return nextRuleFriendFolders;
+  }
+
+  function applyClientSettingsFolders(nextClientSettingsFolders: ClientSettingsFolder[]) {
+    const nextSidebarState = getSidebarStateFromClientSettingsFolders(
+      nextClientSettingsFolders,
+      foldersRef.current,
+    );
+
+    foldersRef.current = nextSidebarState.folders;
+    friendFoldersRef.current = nextSidebarState.friendFolders;
+    skipNextClientSettingsFoldersPublishRef.current = true;
+    lastPublishedClientSettingsFoldersRef.current = nextClientSettingsFolders;
+    setFolders(nextSidebarState.folders);
+    setFriendFolders(nextSidebarState.friendFolders);
+    setFriends((currentFriends) =>
+      currentFriends.map((friend) => ({
+        ...friend,
+        folderId: nextSidebarState.friendFolders[friend.id],
+      })),
+    );
+    onClientSettingsFoldersChange?.(nextClientSettingsFolders);
+  }
+
+  async function refreshClientSettingsFoldersFromApi() {
+    const result = await getClientSettingsFolders();
+
+    if (result.error || !result.data) {
+      notifyFriendApiError(t("friend-api-error"));
+      return;
+    }
+
+    applyClientSettingsFolders(result.data);
+  }
+
+  async function saveClientSettingsFolder(
+    folder: FriendFolder,
+    nextFriendFolders = friendFoldersRef.current,
+  ) {
+    const result = await upsertClientSettingsFolder({
+      body: toClientSettingsFolderApiBody(folder, nextFriendFolders),
+      path: { folderName: folder.name },
+    });
+
+    if (result.error) {
+      notifyFriendApiError(t("friend-api-error"));
+      return;
+    }
+
+    await refreshClientSettingsFoldersFromApi();
+  }
+
+  async function replaceRemoteClientSettingsFolders(
+    nextFolders: FriendFolder[],
+    nextFriendFolders = friendFoldersRef.current,
+  ) {
+    const result = await replaceClientSettingsFolders({
+      body: nextFolders.map((folder) => ({
+        ...toClientSettingsFolderApiBody(folder, nextFriendFolders),
+        name: folder.name,
+      })),
+    });
+
+    if (result.error || !result.data) {
+      notifyFriendApiError(t("friend-api-error"));
+      return;
+    }
+
+    applyClientSettingsFolders(result.data);
+  }
+
+  async function saveMovedFriendBetweenFolders(
+    previousFolder: FriendFolder,
+    nextFolder: FriendFolder,
+    friendPublicId: number,
+    nextFriendFolders: Record<string, string | undefined>,
+  ) {
+    const removeResult = await removeClientSettingsFolderFriend({
+      path: {
+        folderName: previousFolder.name,
+        friendPublicId,
+      },
+    });
+
+    if (removeResult.error) {
+      const fallbackRemoveResult = await upsertClientSettingsFolder({
+        body: toClientSettingsFolderApiBody(previousFolder, nextFriendFolders),
+        path: { folderName: previousFolder.name },
+      });
+
+      if (fallbackRemoveResult.error) {
+        notifyFriendApiError(t("friend-api-error"));
+        await refreshClientSettingsFoldersFromApi();
+        return;
+      }
+    }
+
+    const addResult = await addClientSettingsFolderFriend({
+      path: {
+        folderName: nextFolder.name,
+        friendPublicId,
+      },
+    });
+
+    if (addResult.error) {
+      const fallbackAddResult = await upsertClientSettingsFolder({
+        body: toClientSettingsFolderApiBody(nextFolder, nextFriendFolders),
+        path: { folderName: nextFolder.name },
+      });
+
+      if (fallbackAddResult.error) {
+        notifyFriendApiError(t("friend-api-error"));
+        await refreshClientSettingsFoldersFromApi();
+        return;
+      }
+    }
+
+    await refreshClientSettingsFoldersFromApi();
+  }
+
+  async function renameRemoteClientSettingsFolder(
+    folder: FriendFolder,
+    nextName: string,
+  ) {
+    const result = await renameClientSettingsFolder({
+      body: { name: nextName },
+      path: { folderName: folder.name },
+    });
+
+    if (result.error) {
+      notifyFriendApiError(t("friend-api-error"));
+      await refreshClientSettingsFoldersFromApi();
+      return;
+    }
+
+    await refreshClientSettingsFoldersFromApi();
+  }
+
+  async function saveRemoteClientSettingsFolderOrder(nextFolders: FriendFolder[]) {
+    const result = await reorderClientSettingsFolders({
+      body: {
+        folderNames: nextFolders.map((folder) => folder.name),
+      },
+    });
+
+    if (result.error || !result.data) {
+      notifyFriendApiError(t("friend-api-error"));
+      await refreshClientSettingsFoldersFromApi();
+      return;
+    }
+
+    applyClientSettingsFolders(result.data);
   }
 
   function handleCreateFolder() {
@@ -1468,17 +1703,19 @@ function Sidebar({
   function commitCreateFolder() {
     const folderNumber = folders.length + 1;
     const folderName = folderCreateInput.trim() || `${t("friend-folder")} ${folderNumber}`;
+    const nextFolder: FriendFolder = {
+      id: `folder-${Date.now()}`,
+      name: folderName,
+      moveRule: "none",
+      open: true,
+    };
 
     setFolders((currentFolders) => [
       ...currentFolders,
-      {
-        id: `folder-${Date.now()}`,
-        name: folderName,
-        moveRule: "none",
-        open: true,
-      },
+      nextFolder,
     ]);
     setFolderCreateOpen(false);
+    void saveClientSettingsFolder(nextFolder);
   }
 
   function startRenameFolder(folderId: string) {
@@ -1511,15 +1748,29 @@ function Sidebar({
       return;
     }
 
+    const updatedFolder = folders.find(
+      (folder) => folder.id === editingFolderRulesId,
+    );
+
+    if (!updatedFolder) {
+      setFolderRuleDropdownOpen(false);
+      setEditingFolderRulesId(undefined);
+      return;
+    }
+
+    const nextFolder = {
+      ...updatedFolder,
+      moveRule: folderRuleDraft,
+    };
+
     setFolders((currentFolders) =>
       currentFolders.map((currentFolder) =>
-        currentFolder.id === editingFolderRulesId
-          ? { ...currentFolder, moveRule: folderRuleDraft }
-          : currentFolder,
+        currentFolder.id === editingFolderRulesId ? nextFolder : currentFolder,
       ),
     );
     setFolderRuleDropdownOpen(false);
     setEditingFolderRulesId(undefined);
+    void saveClientSettingsFolder(nextFolder);
   }
 
   function commitRenameFolder() {
@@ -1528,20 +1779,22 @@ function Sidebar({
     }
 
     const nextName = folderRenameInput.trim();
+    const folder = folders.find((currentFolder) => currentFolder.id === renamingFolderId);
 
-    if (!nextName) {
+    if (!nextName || !folder) {
       setRenamingFolderId(undefined);
       return;
     }
 
-    setFolders((currentFolders) =>
-      currentFolders.map((currentFolder) =>
-        currentFolder.id === renamingFolderId
-          ? { ...currentFolder, name: nextName }
-          : currentFolder,
-      ),
+    const nextFolders = folders.map((currentFolder) =>
+      currentFolder.id === renamingFolderId
+        ? { ...currentFolder, name: nextName }
+        : currentFolder,
     );
+
+    setFolders(nextFolders);
     setRenamingFolderId(undefined);
+    void renameRemoteClientSettingsFolder(folder, nextName);
   }
 
   function handleRenameKeyDown(event: KeyboardEvent<HTMLInputElement>) {
@@ -1555,6 +1808,8 @@ function Sidebar({
   }
 
   function handleDeleteFolder(folderId: string) {
+    const folder = folders.find((currentFolder) => currentFolder.id === folderId);
+
     setFriendFolders((currentFriendFolders) =>
       Object.fromEntries(
         Object.entries(currentFriendFolders).filter(([, currentFolderId]) => {
@@ -1574,13 +1829,56 @@ function Sidebar({
     setEditingFolderRulesId((currentFolderId) =>
       currentFolderId === folderId ? undefined : currentFolderId,
     );
+
+    if (folder) {
+      void deleteClientSettingsFolder({
+        path: { folderName: folder.name },
+      }).then((result) => {
+        if (result.error) {
+          notifyFriendApiError(t("friend-api-error"));
+        }
+      });
+    }
+  }
+
+  function removeFriendFromFolder(friendId: string) {
+    const currentFriendFolders = friendFoldersRef.current;
+
+    if (!currentFriendFolders[friendId]) {
+      setOpenMenuFriendId(undefined);
+      setOpenMenuFolderId(undefined);
+      return;
+    }
+
+    const nextFriendFolders = { ...currentFriendFolders };
+    delete nextFriendFolders[friendId];
+    friendFoldersRef.current = nextFriendFolders;
+    setFriendFolders(nextFriendFolders);
+    setFriends((currentFriends) =>
+      currentFriends.map((friend) =>
+        friend.id === friendId ? { ...friend, folderId: undefined } : friend,
+      ),
+    );
+    setOpenMenuFriendId(undefined);
+    setOpenMenuFolderId(undefined);
+    void replaceRemoteClientSettingsFolders(foldersRef.current, nextFriendFolders);
   }
 
   function moveFriendToFolder(friendId: string, folderId: string) {
-    setFriendFolders((currentFriendFolders) => ({
-      ...currentFriendFolders,
+    const friendPublicId = Number.parseInt(friendId, 10);
+    const previousFolderId = friendFoldersRef.current[friendId];
+    const previousFolder = foldersRef.current.find(
+      (folder) => folder.id === previousFolderId,
+    );
+    const nextFolder = foldersRef.current.find((folder) => folder.id === folderId);
+
+    const nextFriendFolders = {
+      ...friendFoldersRef.current,
       [friendId]: folderId,
-    }));
+    };
+
+    friendFoldersRef.current = nextFriendFolders;
+    setFriendFolders(nextFriendFolders);
     setFriends((currentFriends) =>
       currentFriends.map((friend) =>
         friend.id === friendId ? { ...friend, folderId } : friend,
@@ -1593,6 +1891,34 @@ function Sidebar({
     );
     setOpenMenuFriendId(undefined);
     setOpenMenuFolderId(undefined);
+
+    if (!Number.isInteger(friendPublicId) || friendPublicId <= 0 || !nextFolder) {
+      void replaceRemoteClientSettingsFolders(foldersRef.current, nextFriendFolders);
+      return;
+    }
+
+    if (previousFolder && previousFolder.id !== nextFolder.id) {
+      void saveMovedFriendBetweenFolders(
+        previousFolder,
+        nextFolder,
+        friendPublicId,
+        nextFriendFolders,
+      );
+      return;
+    }
+
+    void (async () => {
+      const addResult = await addClientSettingsFolderFriend({
+        path: {
+          folderName: nextFolder.name,
+          friendPublicId,
+        },
+      });
+
+      if (addResult.error) {
+        notifyFriendApiError(t("friend-api-error"));
+      }
+    })();
   }
 
   function requestFriendConfirmation(
@@ -1832,35 +2158,36 @@ function Sidebar({
       return;
     }
 
-    setFolders((currentFolders) => {
-      const sourceFolder = currentFolders.find(
-        (folder) => folder.id === sourceFolderId,
-      );
+    const currentFolders = foldersRef.current;
+    const sourceFolder = currentFolders.find(
+      (folder) => folder.id === sourceFolderId,
+    );
 
-      if (!sourceFolder) {
-        return currentFolders;
-      }
+    if (!sourceFolder) {
+      return;
+    }
 
-      const foldersWithoutSource = currentFolders.filter(
-        (folder) => folder.id !== sourceFolderId,
-      );
-      const targetIndex = foldersWithoutSource.findIndex(
-        (folder) => folder.id === targetFolderId,
-      );
+    const foldersWithoutSource = currentFolders.filter(
+      (folder) => folder.id !== sourceFolderId,
+    );
+    const targetIndex = foldersWithoutSource.findIndex(
+      (folder) => folder.id === targetFolderId,
+    );
 
-      if (targetIndex === -1) {
-        return currentFolders;
-      }
+    if (targetIndex === -1) {
+      return;
+    }
 
-      const nextFolders = [...foldersWithoutSource];
-      nextFolders.splice(
-        position === "after" ? targetIndex + 1 : targetIndex,
-        0,
-        sourceFolder,
-      );
+    const nextFolders = [...foldersWithoutSource];
+    nextFolders.splice(
+      position === "after" ? targetIndex + 1 : targetIndex,
+      0,
+      sourceFolder,
+    );
 
-      return nextFolders;
-    });
+    foldersRef.current = nextFolders;
+    setFolders(nextFolders);
+    void saveRemoteClientSettingsFolderOrder(nextFolders);
   }
 
   function toggleFolder(folderId: string) {
@@ -2041,6 +2368,7 @@ function Sidebar({
             })
           }
           onMoveToFolder={moveFriendToFolder}
+          onRemoveFromFolder={removeFriendFromFolder}
           onTooltipHide={() => setFriendTooltip(undefined)}
           onTooltipShow={(friendId, element) => {
             if (dragStateRef.current?.active || openMenuFriendId === friendId) {
@@ -2854,8 +3182,21 @@ function Sidebar({
           </div>
 
           <div className="friend-groups">
-            <section className="friend-folder-section">
-              <div className="friend-folder-heading">
+            <section
+              className={
+                dragState?.overFolderId === unfiledFolderDropId
+                  ? "friend-folder-section friend-folder-drop-target"
+                  : "friend-folder-section"
+              }
+              data-folder-drop-id={unfiledFolderDropId}
+            >
+              <div
+                className={
+                  dragState?.overFolderId === unfiledFolderDropId
+                    ? "friend-folder-heading drag-over"
+                    : "friend-folder-heading"
+                }
+              >
                 <span>{t("sidebar-friends")}</span>
                 <span>{visibleFriends.length}</span>
               </div>
@@ -2885,7 +3226,11 @@ function Sidebar({
 
               return (
                 <section
-                  className="friend-folder-section"
+                  className={
+                    folderIsDropTarget
+                      ? "friend-folder-section friend-folder-drop-target"
+                      : "friend-folder-section"
+                  }
                   data-folder-drop-id={folder.id}
                   key={folder.id}
                 >

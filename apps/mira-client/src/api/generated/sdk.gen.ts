@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { AbortRankedSearchData, AbortRankedSearchResponses, AbortSearchData, AbortSearchResponses, AcceptData, AcceptRequestData, AcceptRequestResponses, AcceptResponses, AssignRolesData, AssignRolesResponses, BootstrapData, BootstrapResponses, CancelChampionPhaseData, CancelChampionPhaseDuplicateData, CancelChampionPhaseDuplicateResponses, CancelChampionPhaseResponses, ChatsEventsData, ChatsEventsResponses, ClearChampionHoverData, ClearChampionHoverDuplicateData, ClearChampionHoverDuplicateResponses, ClearChampionHoverResponses, ClearRetentionHoldData, ClearRetentionHoldResponses, ConfirmAvatarRightsData, ConfirmAvatarRightsResponses, CreateRankedLobbyData, CreateRankedLobbyResponses, DebugData, DebugResponses, DecideData, DecideResponses, DeclineData, DeclineRequestData, DeclineRequestResponses, DeclineResponses, DeleteByEmailData, DeleteByEmailResponses, DeleteRoom1Data, DeleteRoom1Responses, DeleteRoomData, DeleteRoomResponses, EndMatchData, EndMatchDuplicateData, EndMatchDuplicateResponses, EndMatchResponses, EventsData, EventsResponses, FriendsData, FriendsResponses, GetAvatarRightsData, GetAvatarRightsResponses, GetData, GetResponses, GetRoomData, GetRoomResponses, GetSettingsData, GetSettingsResponses, HealthData, HealthResponses, HeartbeatData, HeartbeatResponses, HoverChampionData, HoverChampionDuplicateData, HoverChampionDuplicateResponses, HoverChampionResponses, IncreaseLevelData, IncreaseLevelResponses, InvitationsData, InvitationsResponses, InviteData, InviteResponses, JoinLobbyData, JoinLobbyResponses, KickMemberData, KickMemberResponses, LeaveLobbyData, LeaveLobbyResponses, ListFriendsData, ListFriendsResponses, ListMessagesData, ListMessagesResponses, ListRequestsData, ListRequestsResponses, ListRoomsData, ListRoomsResponses, LiveAcceptRequestData, LiveAcceptRequestResponses, LiveDeclineRequestData, LiveDeclineRequestResponses, LiveHeartbeatData, LiveHeartbeatResponses, LiveRemoveFriendData, LiveRemoveFriendResponses, LiveRevokeRequestData, LiveRevokeRequestResponses, LiveSendRequestData, LiveSendRequestResponses, LoginAttemptsData, LoginAttemptsResponses, LoginOptionsData, LoginOptionsResponses, LogoutData, LogoutResponses, MarkChampionsReadyData, MarkChampionsReadyDuplicateData, MarkChampionsReadyDuplicateResponses, MarkChampionsReadyResponses, MarkReadData, MarkReadResponses, MeData, MeResponses, NotifyChampionSelectionLeftData, NotifyChampionSelectionLeftResponses, OnlineData, OnlineResponses, PublicClientSettingsData, PublicClientSettingsResponses, PublishChatEventsData, PublishChatEventsResponses, RegisterData, RegisterResponses, RemoveFriendData, RemoveFriendResponses, RevokeRequestData, RevokeRequestResponses, RolesData, RolesResponses, RosterData, RosterResponses, SearchData, SearchRankedData, SearchRankedResponses, SearchResponses, SelectChampionData, SelectChampionDuplicateData, SelectChampionDuplicateResponses, SelectChampionResponses, SendIngameMessageData, SendIngameMessageResponses, SendLobbyMessageData, SendLobbyMessageResponses, SendPrivateData, SendPrivateResponses, SendRequestData, SendRequestResponses, SendTeamMessageData, SendTeamMessageResponses, SessionConflictData, SessionConflictResponses, SetLevelData, SetLevelResponses, SetRetentionHoldData, SetRetentionHoldResponses, StartSearchData, StartSearchResponses, TemporaryMatchesData, TemporaryMatchesResponses, TransferHostData, TransferHostResponses, UpdateMeData, UpdateMeResponses, UpdateRolesData, UpdateRolesResponses, UpdateSettingsData, UpdateSettingsResponses, UpdateTagIdData, UpdateTagIdResponses, UpdateUsernameData, UpdateUsernameResponses, UsersByPublicIdsData, UsersByPublicIdsResponses, UserStatusMeData, UserStatusMeResponses } from './types.gen';
+import type { AbortRankedSearchData, AbortRankedSearchResponses, AbortSearchData, AbortSearchResponses, AcceptData, AcceptRequestData, AcceptRequestResponses, AcceptResponses, AddFriendToFolderData, AddFriendToFolderResponses, AssignRolesData, AssignRolesResponses, BootstrapData, BootstrapResponses, CancelChampionPhaseData, CancelChampionPhaseDuplicateData, CancelChampionPhaseDuplicateResponses, CancelChampionPhaseResponses, ChatsEventsData, ChatsEventsResponses, ClearChampionHoverData, ClearChampionHoverDuplicateData, ClearChampionHoverDuplicateResponses, ClearChampionHoverResponses, ClearRetentionHoldData, ClearRetentionHoldResponses, ConfirmAvatarRightsData, ConfirmAvatarRightsResponses, CreateRankedLobbyData, CreateRankedLobbyResponses, DebugData, DebugResponses, DecideData, DecideResponses, DeclineData, DeclineRequestData, DeclineRequestResponses, DeclineResponses, DeleteByEmailData, DeleteByEmailResponses, DeleteFolderData, DeleteFolderResponses, DeleteRoom1Data, DeleteRoom1Responses, DeleteRoomData, DeleteRoomResponses, EndMatchData, EndMatchDuplicateData, EndMatchDuplicateResponses, EndMatchResponses, EventsData, EventsResponses, FriendsData, FriendsResponses, GetAvatarRightsData, GetAvatarRightsResponses, GetData, GetFolderData, GetFolderResponses, GetResponses, GetRoomData, GetRoomResponses, GetSettingsData, GetSettingsResponses, HealthData, HealthResponses, HeartbeatData, HeartbeatResponses, HoverChampionData, HoverChampionDuplicateData, HoverChampionDuplicateResponses, HoverChampionResponses, IncreaseLevelData, IncreaseLevelResponses, InvitationsData, InvitationsResponses, InviteData, InviteResponses, JoinLobbyData, JoinLobbyResponses, KickMemberData, KickMemberResponses, LeaveLobbyData, LeaveLobbyResponses, ListFoldersData, ListFoldersResponses, ListFriendsData, ListFriendsResponses, ListMessagesData, ListMessagesResponses, ListRequestsData, ListRequestsResponses, ListRoomsData, ListRoomsResponses, LiveAcceptRequestData, LiveAcceptRequestResponses, LiveDeclineRequestData, LiveDeclineRequestResponses, LiveHeartbeatData, LiveHeartbeatResponses, LiveRemoveFriendData, LiveRemoveFriendResponses, LiveRevokeRequestData, LiveRevokeRequestResponses, LiveSendRequestData, LiveSendRequestResponses, LoginAttemptsData, LoginAttemptsResponses, LoginOptionsData, LoginOptionsResponses, LogoutData, LogoutResponses, MarkChampionsReadyData, MarkChampionsReadyDuplicateData, MarkChampionsReadyDuplicateResponses, MarkChampionsReadyResponses, MarkReadData, MarkReadResponses, MeData, MeResponses, NotifyChampionSelectionLeftData, NotifyChampionSelectionLeftResponses, OnlineData, OnlineResponses, PublicClientSettingsData, PublicClientSettingsResponses, PublishChatEventsData, PublishChatEventsResponses, RegisterData, RegisterResponses, RemoveFriendData, RemoveFriendFromFolderData, RemoveFriendFromFolderResponses, RemoveFriendResponses, RenameFolderData, RenameFolderResponses, ReorderFoldersData, ReorderFoldersResponses, ReplaceFoldersData, ReplaceFoldersResponses, RevokeRequestData, RevokeRequestResponses, RolesData, RolesResponses, RosterData, RosterResponses, SearchData, SearchRankedData, SearchRankedResponses, SearchResponses, SelectChampionData, SelectChampionDuplicateData, SelectChampionDuplicateResponses, SelectChampionResponses, SendIngameMessageData, SendIngameMessageResponses, SendLobbyMessageData, SendLobbyMessageResponses, SendPrivateData, SendPrivateResponses, SendRequestData, SendRequestResponses, SendTeamMessageData, SendTeamMessageResponses, SessionConflictData, SessionConflictResponses, SetLevelData, SetLevelResponses, SetRetentionHoldData, SetRetentionHoldResponses, StartSearchData, StartSearchResponses, TemporaryMatchesData, TemporaryMatchesResponses, TransferHostData, TransferHostResponses, UpdateMeData, UpdateMeResponses, UpdateRolesData, UpdateRolesResponses, UpdateSettingsData, UpdateSettingsResponses, UpdateTagIdData, UpdateTagIdResponses, UpdateUsernameData, UpdateUsernameResponses, UpsertFolderData, UpsertFolderResponses, UsersByPublicIdsData, UsersByPublicIdsResponses, UserStatusMeData, UserStatusMeResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -47,6 +47,48 @@ export const updateSettings = <ThrowOnError extends boolean = false>(options: Op
     }
 });
 
+export const listFolders = <ThrowOnError extends boolean = false>(options?: Options<ListFoldersData, ThrowOnError>): RequestResult<ListFoldersResponses, unknown, ThrowOnError> => (options?.client ?? client).get<ListFoldersResponses, unknown, ThrowOnError>({ url: '/api/me/settings/folders', ...options });
+
+export const replaceFolders = <ThrowOnError extends boolean = false>(options: Options<ReplaceFoldersData, ThrowOnError>): RequestResult<ReplaceFoldersResponses, unknown, ThrowOnError> => (options.client ?? client).put<ReplaceFoldersResponses, unknown, ThrowOnError>({
+    url: '/api/me/settings/folders',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+export const deleteFolder = <ThrowOnError extends boolean = false>(options: Options<DeleteFolderData, ThrowOnError>): RequestResult<DeleteFolderResponses, unknown, ThrowOnError> => (options.client ?? client).delete<DeleteFolderResponses, unknown, ThrowOnError>({ url: '/api/me/settings/folders/{folderName}', ...options });
+
+export const getFolder = <ThrowOnError extends boolean = false>(options: Options<GetFolderData, ThrowOnError>): RequestResult<GetFolderResponses, unknown, ThrowOnError> => (options.client ?? client).get<GetFolderResponses, unknown, ThrowOnError>({ url: '/api/me/settings/folders/{folderName}', ...options });
+
+export const upsertFolder = <ThrowOnError extends boolean = false>(options: Options<UpsertFolderData, ThrowOnError>): RequestResult<UpsertFolderResponses, unknown, ThrowOnError> => (options.client ?? client).put<UpsertFolderResponses, unknown, ThrowOnError>({
+    url: '/api/me/settings/folders/{folderName}',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+export const renameFolder = <ThrowOnError extends boolean = false>(options: Options<RenameFolderData, ThrowOnError>): RequestResult<RenameFolderResponses, unknown, ThrowOnError> => (options.client ?? client).put<RenameFolderResponses, unknown, ThrowOnError>({
+    url: '/api/me/settings/folders/{folderName}/rename',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+export const reorderFolders = <ThrowOnError extends boolean = false>(options: Options<ReorderFoldersData, ThrowOnError>): RequestResult<ReorderFoldersResponses, unknown, ThrowOnError> => (options.client ?? client).put<ReorderFoldersResponses, unknown, ThrowOnError>({
+    url: '/api/me/settings/folders/order',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
 export const setLevel = <ThrowOnError extends boolean = false>(options: Options<SetLevelData, ThrowOnError>): RequestResult<SetLevelResponses, unknown, ThrowOnError> => (options.client ?? client).put<SetLevelResponses, unknown, ThrowOnError>({
     url: '/api/me/level',
     ...options,
@@ -73,6 +115,10 @@ export const register = <ThrowOnError extends boolean = false>(options: Options<
         ...options.headers
     }
 });
+
+export const removeFriendFromFolder = <ThrowOnError extends boolean = false>(options: Options<RemoveFriendFromFolderData, ThrowOnError>): RequestResult<RemoveFriendFromFolderResponses, unknown, ThrowOnError> => (options.client ?? client).delete<RemoveFriendFromFolderResponses, unknown, ThrowOnError>({ url: '/api/me/settings/folders/{folderName}/friends/{friendPublicId}', ...options });
+
+export const addFriendToFolder = <ThrowOnError extends boolean = false>(options: Options<AddFriendToFolderData, ThrowOnError>): RequestResult<AddFriendToFolderResponses, unknown, ThrowOnError> => (options.client ?? client).post<AddFriendToFolderResponses, unknown, ThrowOnError>({ url: '/api/me/settings/folders/{folderName}/friends/{friendPublicId}', ...options });
 
 export const increaseLevel = <ThrowOnError extends boolean = false>(options: Options<IncreaseLevelData, ThrowOnError>): RequestResult<IncreaseLevelResponses, unknown, ThrowOnError> => (options.client ?? client).post<IncreaseLevelResponses, unknown, ThrowOnError>({
     url: '/api/me/level/increase',

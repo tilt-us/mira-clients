@@ -6,6 +6,7 @@ import { Check, KeyRound, LogIn, UserPlus } from "lucide-react";
 import {
   confirmAvatarRights,
   getClientSettings,
+  getClientSettingsFolders,
   loginOptions,
   me,
   register,
@@ -516,7 +517,10 @@ function Authentication() {
   async function loadRemoteClientSettings(nextProfile: UserProfileResponse) {
     setClientSettingsRemoteReady(false);
 
-    const result = await getClientSettings();
+    const [result, foldersResult] = await Promise.all([
+      getClientSettings(),
+      getClientSettingsFolders(),
+    ]);
     const profileKey = getClientSettingsProfileKey(nextProfile);
 
     if (result.error) {
@@ -528,12 +532,21 @@ function Authentication() {
       });
     } else {
       const normalizedSettings = normalizeClientSettingsApiResponse(result.data);
+      const normalizedFolders = foldersResult.error
+        ? undefined
+        : normalizeClientSettingsApiResponse({
+            folders: foldersResult.data,
+          }).folders;
       const hydratedSettings = {
         ...currentSettings,
         ...normalizedSettings,
+        ...(normalizedFolders ? { folders: normalizedFolders } : {}),
       };
 
-      applyStoredSettings(normalizedSettings);
+      applyStoredSettings({
+        ...normalizedSettings,
+        ...(normalizedFolders ? { folders: normalizedFolders } : {}),
+      });
       lastSavedClientSettingsPayloadRef.current = serializeClientSettingsRequest(
         toClientSettingsApiRequest(hydratedSettings),
       );
