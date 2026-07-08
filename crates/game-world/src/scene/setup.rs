@@ -40,7 +40,7 @@ pub(super) fn setup_flat_map(
         Name::new("MapSunLight"),
         DirectionalLight {
             illuminance: 18_000.0,
-            shadows_enabled: false,
+            shadow_maps_enabled: false,
             ..default()
         },
         Transform::from_rotation(Quat::from_euler(EulerRot::XYZ, -1.0, -0.8, 0.0)),

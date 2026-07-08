@@ -8,10 +8,7 @@ use super::lobby::{
 };
 use bevy::prelude::*;
 use core::time::Duration;
-use game_shared::network::{
-    FIXED_TIMESTEP_HZ, NETCODE_CLIENT_TIMEOUT_SECS, SERVER_REPLICATION_INTERVAL,
-    SharedNetworkPlugin,
-};
+use game_shared::network::{FIXED_TIMESTEP_HZ, NETCODE_CLIENT_TIMEOUT_SECS, SharedNetworkPlugin};
 use lightyear::prelude::client::Connected;
 use lightyear::prelude::server::*;
 use lightyear::prelude::*;
@@ -71,13 +68,7 @@ impl Plugin for ServerNetworkPlugin {
 /// - `trigger`: Observer trigger for the connected client entity.
 /// - `commands`: ECS command buffer used to insert replication components.
 fn handle_new_client(trigger: On<Add, Connected>, mut commands: Commands) {
-    commands
-        .entity(trigger.entity)
-        .insert(ReplicationSender::new(
-            SERVER_REPLICATION_INTERVAL,
-            SendUpdatesMode::SinceLastAck,
-            false,
-        ));
+    commands.entity(trigger.entity).insert(ReplicationSender);
 }
 
 /// Description:

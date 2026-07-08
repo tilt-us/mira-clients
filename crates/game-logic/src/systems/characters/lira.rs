@@ -853,7 +853,7 @@ pub(in crate::systems) fn update_q_skillshot_projectiles(
             }
         }
 
-        if let Some(material) = materials.get_mut(&projectile_material.0) {
+        if let Some(mut material) = materials.get_mut(&projectile_material.0) {
             material.base_color = material.base_color.with_alpha(0.45 - progress * 0.25);
         }
 
@@ -929,7 +929,7 @@ pub(in crate::systems) fn update_q_skillshot_explosions(
             explosion.did_apply_damage = true;
         }
 
-        if let Some(material) = materials.get_mut(&explosion_material.0) {
+        if let Some(mut material) = materials.get_mut(&explosion_material.0) {
             material.base_color = material.base_color.with_alpha(1.0 - progress);
             material.emissive = material.emissive * (1.0 - progress * 0.35);
         }
@@ -1009,11 +1009,11 @@ pub(in crate::systems) fn update_q_skillshot_indicator(
         return;
     };
 
-    if let Some(material) = materials.get_mut(&body_material.0) {
+    if let Some(mut material) = materials.get_mut(&body_material.0) {
         material.base_color = settings.color();
         material.emissive = settings.color().with_alpha(0.42).into();
     }
-    if let Some(material) = materials.get_mut(&tip_material.0) {
+    if let Some(mut material) = materials.get_mut(&tip_material.0) {
         material.base_color = settings.color();
         material.emissive = settings.color().with_alpha(0.42).into();
     }
@@ -1277,7 +1277,7 @@ pub(in crate::systems) fn update_w_arc_explosions(
             explosion.did_apply_damage = true;
         }
 
-        if let Some(material) = materials.get_mut(&explosion_material.0) {
+        if let Some(mut material) = materials.get_mut(&explosion_material.0) {
             material.base_color = material.base_color.with_alpha(1.0 - progress);
             material.emissive = material.emissive * (1.0 - progress * 0.45);
         }
@@ -1357,11 +1357,11 @@ pub(in crate::systems) fn update_w_arc_indicator(
         return;
     };
 
-    if let Some(material) = materials.get_mut(&range_material.0) {
+    if let Some(mut material) = materials.get_mut(&range_material.0) {
         material.base_color = settings.color().with_alpha(settings.alpha * 0.45);
         material.emissive = settings.color().with_alpha(0.2).into();
     }
-    if let Some(material) = materials.get_mut(&aoe_material.0) {
+    if let Some(mut material) = materials.get_mut(&aoe_material.0) {
         material.base_color = settings.color();
         material.emissive = settings.color().with_alpha(0.34).into();
     }

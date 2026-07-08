@@ -686,7 +686,7 @@ pub(in crate::systems) fn update_q_burning_grounds(
             ground.length * (1.0 + pulse * 0.015),
         );
 
-        if let Some(material) = materials.get_mut(&material_handle.0) {
+        if let Some(mut material) = materials.get_mut(&material_handle.0) {
             let alpha = (0.58 + pulse * 0.22) * (1.0 - progress * 0.35);
             material.base_color = Color::srgba(1.0, 0.08, 0.025, alpha);
             material.emissive = Color::srgb(0.75 + pulse * 0.35, 0.04, 0.01).into();
@@ -719,7 +719,7 @@ pub(in crate::systems) fn update_w_fireballs(
         transform.translation = fireball.start.lerp(fireball.end, progress) + Vec3::Y * arc;
         transform.scale = Vec3::splat(1.0 + (progress * 18.0).sin().abs() * 0.16);
 
-        if let Some(material) = materials.get_mut(&material_handle.0) {
+        if let Some(mut material) = materials.get_mut(&material_handle.0) {
             material.base_color = Color::srgba(1.0, 0.28, 0.02, 0.88);
             material.emissive = Color::srgb(1.2, 0.22, 0.02).into();
         }
@@ -754,7 +754,7 @@ pub(in crate::systems) fn update_e_snowballs(
         transform.scale = Vec3::splat(radius.max(0.1));
         transform.rotate_local_x(time.delta_secs() * 7.5);
 
-        if let Some(material) = materials.get_mut(&material_handle.0) {
+        if let Some(mut material) = materials.get_mut(&material_handle.0) {
             material.base_color = Color::srgba(1.0, 0.52, 0.12, 0.86);
             material.emissive = Color::srgb(0.95, 0.24, 0.02).into();
         }

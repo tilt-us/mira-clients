@@ -644,7 +644,7 @@ pub(in crate::systems) fn update_q_fields(
         let progress = timer_progress(&orb.timer);
         let pulse = (orb.timer.elapsed_secs() * 10.0).sin() * 0.5 + 0.5;
         transform.scale = Vec3::splat(orb.radius * (0.92 + pulse * 0.18));
-        if let Some(material) = materials.get_mut(&material_handle.0) {
+        if let Some(mut material) = materials.get_mut(&material_handle.0) {
             material.base_color = Color::srgba(0.15, 0.9, 1.0, 0.92 - progress * 0.2);
             material.emissive = Color::srgb(0.1 + pulse * 0.15, 0.75, 1.25).into();
         }
@@ -663,7 +663,7 @@ pub(in crate::systems) fn update_q_fields(
             0.025,
             field.radius * (0.96 + pulse * 0.05),
         );
-        if let Some(material) = materials.get_mut(&material_handle.0) {
+        if let Some(mut material) = materials.get_mut(&material_handle.0) {
             material.base_color = Color::srgba(
                 0.1,
                 0.72,
@@ -712,7 +712,7 @@ pub(in crate::systems) fn update_w_fields(
             0.03,
             field.radius * (0.93 + pulse * 0.09),
         );
-        if let Some(material) = materials.get_mut(&material_handle.0) {
+        if let Some(mut material) = materials.get_mut(&material_handle.0) {
             material.base_color = Color::srgba(
                 0.12,
                 1.0,
@@ -745,7 +745,7 @@ pub(in crate::systems) fn update_e_stun_bolts(
         let arc = (std::f32::consts::PI * progress).sin() * 0.35;
         transform.translation = bolt.start.lerp(bolt.end, progress) + Vec3::Y * arc;
         transform.scale = Vec3::splat(1.0 + (bolt.timer.elapsed_secs() * 22.0).sin().abs() * 0.22);
-        if let Some(material) = materials.get_mut(&material_handle.0) {
+        if let Some(mut material) = materials.get_mut(&material_handle.0) {
             material.base_color = Color::srgba(0.45, 0.82, 1.0, 0.92);
             material.emissive = Color::srgb(0.18, 0.5, 1.3).into();
         }

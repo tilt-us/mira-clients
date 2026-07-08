@@ -627,7 +627,7 @@ pub(in crate::systems) fn update_q_orbs(
         let progress = timer_progress(&orb.timer);
         let pulse = (orb.timer.elapsed_secs() * 9.0).sin() * 0.5 + 0.5;
         transform.scale = Vec3::splat(orb.radius * (0.9 + pulse * 0.25));
-        if let Some(material) = materials.get_mut(&material_handle.0) {
+        if let Some(mut material) = materials.get_mut(&material_handle.0) {
             material.base_color = Color::srgba(1.0, 0.78, 0.25, 0.95 - progress * 0.35);
             material.emissive = Color::srgb(0.9 + pulse * 0.3, 0.46, 0.08).into();
         }
@@ -717,7 +717,7 @@ pub(in crate::systems) fn update_buff_arrows(
                 position + Vec3::Y * (1.65 + (arrow.timer.elapsed_secs() * 8.0).sin() * 0.08);
         }
         transform.rotation = Quat::from_rotation_x(std::f32::consts::PI);
-        if let Some(material) = materials.get_mut(&material_handle.0) {
+        if let Some(mut material) = materials.get_mut(&material_handle.0) {
             let progress = timer_progress(&arrow.timer);
             material.base_color = Color::srgba(0.35, 1.0, 0.72, 0.82 * (1.0 - progress * 0.45));
             material.emissive = Color::srgb(0.08, 0.75, 0.32).into();

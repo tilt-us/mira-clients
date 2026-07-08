@@ -745,7 +745,7 @@ fn spawn_champion_model_root(
     let champion_scene =
         asset_server.load(GltfAssetLabel::Scene(0).from_asset(champion_model_path(champion)));
     commands
-        .spawn((name, SceneRoot(champion_scene), Transform::default()))
+        .spawn((name, WorldAssetRoot(champion_scene), Transform::default()))
         .id()
 }
 
