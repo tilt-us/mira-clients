@@ -236,6 +236,30 @@ async function fulfillMockApiRequest(route: Route) {
     return;
   }
 
+  if (pathname === "/api/users/by-public-ids") {
+    const publicIds = getPublicIdsFromQuery(url);
+    const users = [
+      {
+        publicId: 9101,
+        displayName: "Lane Partner",
+        email: "lane.partner@mira.de",
+        tagId: "LANE",
+      },
+      {
+        publicId: 9102,
+        displayName: "Jungle Buddy",
+        email: "jungle.buddy@mira.de",
+        tagId: "JGL",
+      },
+    ].filter((user) => publicIds.includes(user.publicId));
+
+    await route.fulfill({
+      contentType: "application/json",
+      json: { users },
+    });
+    return;
+  }
+
   if (pathname === "/api/live/bootstrap") {
     await route.fulfill({
       contentType: "application/json",
@@ -246,11 +270,13 @@ async function fulfillMockApiRequest(route: Route) {
               displayName: "Lane Partner",
               email: "lane.partner@mira.de",
               publicId: 9101,
+              tagId: "LANE",
             },
             {
               displayName: "Jungle Buddy",
               email: "jungle.buddy@mira.de",
               publicId: 9102,
+              tagId: "JGL",
             },
           ],
         },
@@ -318,12 +344,14 @@ async function fulfillMockApiRequest(route: Route) {
         publicId: 9101,
         displayName: "Lane Partner",
         status: "ONLINE",
+        tagId: "LANE",
         updatedAt: now,
       },
       {
         publicId: 9102,
         displayName: "Jungle Buddy",
         status: "AFK",
+        tagId: "JGL",
         updatedAt: now,
       },
     ];
@@ -450,6 +478,26 @@ async function fulfillMockApiRequest(route: Route) {
 
 function stripServicePrefix(pathname: string) {
   return pathname.replace(/^\/(?:auth|live|match|game|champions|chat)(?=\/api\/)/, "");
+}
+
+function getPublicIdsFromQuery(url: URL) {
+  const values = [
+    ...url.searchParams.getAll("publicIds"),
+    ...url.searchParams.getAll("publicIds[]"),
+  ];
+
+  if (values.length === 0) {
+    const singleValue = url.searchParams.get("publicIds");
+
+    if (singleValue) {
+      values.push(singleValue);
+    }
+  }
+
+  return values
+    .flatMap((value) => value.split(","))
+    .map((value) => Number.parseInt(value, 10))
+    .filter((publicId) => Number.isInteger(publicId));
 }
 
 function normalizeMockClientSettingsFolders(value: MockClientSettingsFolder[] | null) {

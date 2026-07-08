@@ -110,6 +110,30 @@ test("opens and closes chat from the dock and friend list", async ({ page }) => 
   await expect(chatDock).not.toHaveClass(/open/);
 });
 
+test("copies the friend profile name from the user page", async ({ page }) => {
+  await loginToClient(page);
+  await page.context().grantPermissions(
+    ["clipboard-read", "clipboard-write"],
+    { origin: new URL(page.url()).origin },
+  );
+
+  await page
+    .locator(".friend-card")
+    .filter({ hasText: "Lane Partner" })
+    .getByRole("button", { name: "Freund-Aktionen" })
+    .click();
+  await page.getByRole("menuitem", { name: "Profil ansehen" }).click();
+
+  const friendProfile = page.getByLabel("Lane Partner");
+  await expect(friendProfile).toBeVisible();
+  await expect(friendProfile.getByText("#LANE")).toBeVisible();
+  await friendProfile.getByRole("button", { name: "Name und Tag kopieren" }).click();
+
+  await expect
+    .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+    .toBe("Lane Partner#LANE");
+});
+
 test("discovers incoming private chat rooms from the room last message", async ({ page }) => {
   const incomingCreatedAt = new Date("2026-06-25T10:01:00.000Z").toISOString();
 

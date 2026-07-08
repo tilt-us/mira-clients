@@ -122,6 +122,7 @@ export type FriendUserResponse = {
     publicId?: number;
     displayName?: string;
     email?: string;
+    tagId?: string;
     avatarUrl?: string;
     avatarRightsConsented?: boolean;
     avatarRightsConsentedAt?: string;

@@ -62,8 +62,13 @@ export type UserPageProfile = {
 };
 
 type TaggedFriendUser = FriendUserResponse & {
+  displayTag?: unknown;
+  gameTag?: unknown;
   level?: unknown;
+  tag?: unknown;
+  tagID?: unknown;
   tagId?: unknown;
+  tag_id?: unknown;
 };
 
 type PublicAvatarFields = {
@@ -410,14 +415,35 @@ export function getCurrentLobbyMember(
 }
 
 export function getFriendUserName(user: FriendUserResponse) {
-  return getPublicDisplayName(
+  return stripNameTagSuffix(getPublicDisplayName(
     user.displayName,
     `User ${user.publicId ?? ""}`.trim(),
-  );
+  ));
 }
 
 export function getFriendUserTagId(user: Partial<TaggedFriendUser>) {
-  return normalizeTagId(user.tagId);
+  return normalizeTagId(
+    user.tagId ??
+      user.tag_id ??
+      user.tagID ??
+      user.tag ??
+      user.displayTag ??
+      user.gameTag,
+  ) ?? parseNameTagSuffix(user.displayName);
+}
+
+function parseNameTagSuffix(value: unknown) {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const match = value.trim().match(/#([A-Za-z0-9_-]+)$/);
+
+  return match ? normalizeTagId(match[1]) : undefined;
+}
+
+function stripNameTagSuffix(value: string) {
+  return value.replace(/#[A-Za-z0-9_-]+$/, "").trim() || value;
 }
 
 export function getFriendUserLevel(user: Partial<TaggedFriendUser>) {

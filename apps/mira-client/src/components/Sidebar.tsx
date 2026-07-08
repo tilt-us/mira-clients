@@ -177,8 +177,13 @@ type ProfileOpenTarget = {
 };
 
 type TaggedFriendUserItem = FriendUserItem & {
+  displayTag?: unknown;
+  gameTag?: unknown;
   level?: unknown;
+  tag?: unknown;
+  tagID?: unknown;
   tagId?: unknown;
+  tag_id?: unknown;
 };
 
 type SidebarProps = {
@@ -370,18 +375,43 @@ function getFriendUserId(user: FriendUserItem) {
 }
 
 function getFriendUserName(user: FriendUserItem) {
-  return getPublicDisplayName(
+  return stripNameTagSuffix(getPublicDisplayName(
     user.displayName,
     `User ${user.publicId ?? ""}`.trim(),
-  );
+  ));
 }
 
 function getFriendUserSubtitle(user: FriendUserItem) {
-  return formatTagId((user as TaggedFriendUserItem).tagId);
+  const taggedUser = user as TaggedFriendUserItem;
+
+  return formatTagId(getFriendUserTagId(taggedUser));
 }
 
 function getFriendUserTagId(user: FriendUserItem) {
-  return normalizeTagId((user as TaggedFriendUserItem).tagId);
+  const taggedUser = user as TaggedFriendUserItem;
+
+  return normalizeTagId(
+    taggedUser.tagId ??
+      taggedUser.tag_id ??
+      taggedUser.tagID ??
+      taggedUser.tag ??
+      taggedUser.displayTag ??
+      taggedUser.gameTag,
+  ) ?? parseNameTagSuffix(taggedUser.displayName);
+}
+
+function parseNameTagSuffix(value: unknown) {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const match = value.trim().match(/#([A-Za-z0-9_-]+)$/);
+
+  return match ? normalizeTagId(match[1]) : undefined;
+}
+
+function stripNameTagSuffix(value: string) {
+  return value.replace(/#[A-Za-z0-9_-]+$/, "").trim() || value;
 }
 
 function getFriendUserLevel(user: FriendUserItem) {

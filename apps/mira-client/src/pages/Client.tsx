@@ -105,6 +105,7 @@ import type { FriendProfile, PresenceStatus, Translate } from "../types/ui";
 import {
   formatTagId,
   getProfileInitials,
+  getPublicAvatarUrl,
   getPublicDisplayName,
   normalizeTagId,
 } from "../utils/profile";
@@ -158,6 +159,9 @@ import {
   getLobbyModeLabel,
   getLobbySlotMembers,
   getMatchFoundOverlayStroke,
+  getFriendUserLevel,
+  getFriendUserName,
+  getFriendUserTagId,
   getShortestRotationDegrees,
   getUserPageNameClassName,
   enrichMatchPlayers,
@@ -3077,24 +3081,81 @@ function Client({
     return true;
   }
 
+  function mergeUserPageProfileWithPublicUser(
+    userPageProfile: UserPageProfile,
+    publicUser: FriendUserResponse,
+  ): UserPageProfile {
+    return {
+      avatarUrl:
+        getPublicAvatarUrl(publicUser) ??
+        userPageProfile.avatarUrl,
+      level: getFriendUserLevel(publicUser) ?? userPageProfile.level,
+      name: getFriendUserName(publicUser) || userPageProfile.name,
+      publicId: publicUser.publicId ?? userPageProfile.publicId,
+      tagId: getFriendUserTagId(publicUser) ?? userPageProfile.tagId,
+    };
+  }
+
+  async function loadUserPagePublicProfile(publicId: number) {
+    const result = await usersByPublicIds({
+      baseUrl: API_BASE_URL,
+      query: { publicIds: [publicId] },
+    });
+
+    if (result.error) {
+      return;
+    }
+
+    const publicUser = result.data?.users?.find(
+      (user) => user.publicId === publicId,
+    );
+
+    if (!publicUser) {
+      return;
+    }
+
+    setPublicUsersByPublicId((currentUsers) => {
+      const nextUsers = new Map(currentUsers);
+      nextUsers.set(publicId, publicUser);
+      return nextUsers;
+    });
+    setViewedUserPageProfile((currentProfile) =>
+      currentProfile?.publicId === publicId
+        ? mergeUserPageProfileWithPublicUser(currentProfile, publicUser)
+        : currentProfile,
+    );
+  }
+
   function handleProfileOpen(profile?: Partial<UserPageProfile>) {
     setLobbyIdContextMenuOpen(false);
     setLobbyMemberContextMenu(undefined);
     setPartyInviteOpen(false);
+    const nextProfile = profile?.name
+      ? {
+          avatarUrl: profile.avatarUrl,
+          level: profile.level ?? 1,
+          name: profile.name,
+          publicId: profile.publicId,
+          tagId: profile.tagId,
+        } satisfies UserPageProfile
+      : undefined;
+    const cachedPublicUser =
+      typeof nextProfile?.publicId === "number"
+        ? publicUsersByPublicId.get(nextProfile.publicId)
+        : undefined;
+
     setViewedUserPageProfile(
-      profile?.name
-        ? {
-            avatarUrl: profile.avatarUrl,
-            level: profile.level ?? 1,
-            name: profile.name,
-            publicId: profile.publicId,
-            tagId: profile.tagId,
-          }
-        : undefined,
+      nextProfile && cachedPublicUser
+        ? mergeUserPageProfileWithPublicUser(nextProfile, cachedPublicUser)
+        : nextProfile,
     );
     setActiveUserPageCategory("overview");
     setChampionTabFocused(false);
     setUserPageOpen(true);
+
+    if (typeof nextProfile?.publicId === "number") {
+      void loadUserPagePublicProfile(nextProfile.publicId);
+    }
   }
 
   async function leaveActiveChampionSelection(status: ChampionSelectionLeaveStatus) {
@@ -4814,21 +4875,19 @@ function Client({
                       {activeUserPageProfile.name}
                     </h1>
                     {activeUserPageProfile.tagId ? (
-                      <>
-                        <span className="user-page-inline-tag">
-                          {formatTagId(activeUserPageProfile.tagId)}
-                        </span>
-                        <button
-                          aria-label={t("profile-copy-name-tag")}
-                          className="user-page-copy-id-button"
-                          title={t("profile-copy-name-tag")}
-                          type="button"
-                          onClick={() => void handleCopyUserPageNameTag()}
-                        >
-                          <Copy size={15} />
-                        </button>
-                      </>
+                      <span className="user-page-inline-tag">
+                        {formatTagId(activeUserPageProfile.tagId)}
+                      </span>
                     ) : null}
+                    <button
+                      aria-label={t("profile-copy-name-tag")}
+                      className="user-page-copy-id-button"
+                      title={t("profile-copy-name-tag")}
+                      type="button"
+                      onClick={() => void handleCopyUserPageNameTag()}
+                    >
+                      <Copy size={15} />
+                    </button>
                   </div>
                   {typeof activeUserPageProfile.publicId === "number" ? (
                     <div className="user-page-meta-row user-page-user-id-row">
