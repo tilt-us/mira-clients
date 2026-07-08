@@ -173,7 +173,7 @@ fn spawn_blocked_launch_screen(mut commands: Commands, launch_gate: Res<ClientLa
                 Text::new("MIRA"),
                 TextFont::from_font_size(28.0),
                 TextColor(Color::srgb_u8(0xF2, 0xC4, 0x5B)),
-                TextLayout::new_with_justify(Justify::Center),
+                TextLayout::justify(Justify::Center),
             ),
             (
                 Node {
@@ -187,7 +187,7 @@ fn spawn_blocked_launch_screen(mut commands: Commands, launch_gate: Res<ClientLa
                     Text::new(message.to_string()),
                     TextFont::from_font_size(22.0),
                     TextColor(Color::srgb_u8(0xED, 0xF2, 0xF7)),
-                    TextLayout::new_with_justify(Justify::Center),
+                    TextLayout::justify(Justify::Center),
                 )],
             ),
             (
@@ -209,7 +209,7 @@ fn spawn_blocked_launch_screen(mut commands: Commands, launch_gate: Res<ClientLa
                     Text::new("Close"),
                     TextFont::from_font_size(15.0),
                     TextColor(Color::srgb_u8(0x0B, 0x10, 0x18)),
-                    TextLayout::new_with_justify(Justify::Center),
+                    TextLayout::justify(Justify::Center),
                 )],
             ),
         ],
@@ -219,7 +219,11 @@ fn spawn_blocked_launch_screen(mut commands: Commands, launch_gate: Res<ClientLa
 fn handle_blocked_launch_close_button(
     mut interactions: Query<
         &Interaction,
-        (Changed<Interaction>, With<Button>, With<BlockedLaunchCloseButton>),
+        (
+            Changed<Interaction>,
+            With<Button>,
+            With<BlockedLaunchCloseButton>,
+        ),
     >,
     mut app_exit: MessageWriter<AppExit>,
 ) {

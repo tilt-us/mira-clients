@@ -193,7 +193,7 @@ pub(super) fn spawn_local_player_and_camera(
     let local_model_root = commands
         .spawn((
             Name::new("LocalPlayerLiraModel"),
-            SceneRoot(
+            WorldAssetRoot(
                 asset_server
                     .load(GltfAssetLabel::Scene(0).from_asset(champion_model_asset.clone())),
             ),

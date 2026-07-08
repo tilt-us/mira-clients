@@ -78,7 +78,7 @@ fn spawn_leave_menu(mut commands: Commands) {
                     Text::new("Leave game?"),
                     TextFont::from_font_size(22.0),
                     TextColor(Color::WHITE),
-                    TextLayout::new_with_justify(Justify::Center),
+                    TextLayout::justify(Justify::Center),
                 ));
 
                 dialog

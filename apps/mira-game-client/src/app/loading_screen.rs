@@ -295,7 +295,7 @@ fn update_loading_screen_ready_gate(
     asset_server: Option<Res<AssetServer>>,
     preload: Res<LoadingScreenWallpaperPreload>,
     images: Option<Res<Assets<Image>>>,
-    scene_roots: Query<&SceneRoot>,
+    scene_roots: Query<&WorldAssetRoot>,
 ) {
     let snapshot = state.snapshot();
     if !snapshot.active || snapshot.client_ready {
@@ -759,7 +759,7 @@ fn loading_card_avatar(team: LoadingTeam, index: usize) -> impl Bundle {
                 Text::new("?"),
                 TextFont::from_font_size(22.0),
                 TextColor(Color::srgba(0.93, 0.95, 0.97, 1.0)),
-                TextLayout::new_with_justify(Justify::Center),
+                TextLayout::justify(Justify::Center),
             ),
         ],
     )
@@ -783,7 +783,7 @@ fn loading_card_text(
         Text::new(value),
         TextFont::from_font_size(size),
         TextColor(color),
-        TextLayout::new_with_justify(Justify::Center),
+        TextLayout::justify(Justify::Center),
     )
 }
 
@@ -852,7 +852,7 @@ fn loading_progress_panel(progress_badge_image: Handle<Image>) -> impl Bundle {
                         Text::new("0%"),
                         TextFont::from_font_size(13.0),
                         TextColor(Color::srgba(0.93, 0.95, 0.97, 1.0)),
-                        TextLayout::new_with_justify(Justify::Center),
+                        TextLayout::justify(Justify::Center),
                     ),
                 ],
             ),
@@ -907,7 +907,7 @@ fn sync_loading_screen_ui(
         .and_then(|public_id| public_id.parse::<u64>().ok());
     if last_progress_accent.as_ref() != Some(&accent) {
         if let Some(progress_badge_image) = progress_badge_image.as_deref() {
-            if let Some(image) = ui_images.get_mut(progress_badge_image.handle.id()) {
+            if let Some(mut image) = ui_images.get_mut(progress_badge_image.handle.id()) {
                 *image = progress_badge_shape_image(accent);
             }
         }

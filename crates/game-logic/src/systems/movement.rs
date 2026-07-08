@@ -275,7 +275,7 @@ pub(super) fn animate_move_target_marker(
 
     marker_transform.scale = Vec3::splat(0.45 + progress * 0.75);
 
-    if let Some(material) = materials.get_mut(&marker_material.0) {
+    if let Some(mut material) = materials.get_mut(&marker_material.0) {
         material.base_color = material.base_color.with_alpha(1.0 - progress);
         material.emissive = Color::srgba(0.4, 0.35, 0.05, 1.0 - progress).into();
     }

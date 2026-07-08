@@ -599,7 +599,7 @@ fn sync_main_hud(
 
     let accent = launch_settings.accent_color_bevy();
     if last_top_bar_accent.as_ref() != Some(&accent) {
-        if let Some(image) = ui_images.get_mut(top_bar_shape.handle.id()) {
+        if let Some(mut image) = ui_images.get_mut(top_bar_shape.handle.id()) {
             *image = top_bar_shape_image(accent);
         }
         *last_top_bar_accent = Some(accent);
@@ -703,7 +703,7 @@ fn text(value: &'static str, size: f32, color: Color, marker: HudText) -> impl B
         Text::new(value),
         TextFont::from_font_size(size),
         TextColor(color),
-        TextLayout::new_with_justify(Justify::Center),
+        TextLayout::justify(Justify::Center),
         marker,
     )
 }
