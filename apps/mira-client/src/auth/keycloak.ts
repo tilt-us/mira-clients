@@ -251,6 +251,13 @@ function getPasswordResetRedirectUri() {
   return redirectUrl.toString();
 }
 
+function getProviderErrorRedirectUri() {
+  const redirectUrl = new URL(getRedirectUri());
+  redirectUrl.searchParams.set("kc_error", "1");
+
+  return redirectUrl.toString();
+}
+
 async function startProviderLogin(
   provider: OAuthProvider,
   options?: KeycloakThemeOptions,
@@ -259,12 +266,17 @@ async function startProviderLogin(
   const codeVerifier = createRandomString(64);
   const codeChallenge = await createCodeChallenge(codeVerifier);
   const redirectUri = getRedirectUri();
+  const errorRedirectUri = getProviderErrorRedirectUri();
   const searchParams = new URLSearchParams({
     client_id: KEYCLOAK_CLIENT_ID,
     code_challenge: codeChallenge,
     code_challenge_method: "S256",
     kc_idp_hint: provider.idpHint,
     redirect_uri: redirectUri,
+    kc_error_redirect_uri: errorRedirectUri,
+    error_redirect_uri: errorRedirectUri,
+    fallback_uri: errorRedirectUri,
+    returnTo: errorRedirectUri,
     response_type: "code",
     scope: "openid email profile",
     state,
