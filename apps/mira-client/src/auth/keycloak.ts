@@ -252,7 +252,14 @@ function getPasswordResetRedirectUri() {
 }
 
 function getProviderErrorRedirectUri() {
-  const redirectUrl = new URL(getRedirectUri());
+  const callbackUrl = new URL(getRedirectUri());
+  const errorRedirectHost = callbackUrl.hostname.toLowerCase() === "api.tilt-us.com"
+    ? "tilt-us.com"
+    : callbackUrl.hostname;
+  const redirectUrl = new URL(
+    "/",
+    `${callbackUrl.protocol}//${errorRedirectHost}${callbackUrl.port ? `:${callbackUrl.port}` : ""}`,
+  );
   redirectUrl.searchParams.set("kc_error", "1");
 
   return redirectUrl.toString();
