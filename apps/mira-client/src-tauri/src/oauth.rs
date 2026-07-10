@@ -17,6 +17,7 @@ const OAUTH_MODAL_MAX_WIDTH: f64 = 1040.0;
 const OAUTH_MODAL_MAX_HEIGHT: f64 = 680.0;
 const OAUTH_MODAL_MIN_WIDTH: f64 = 720.0;
 const OAUTH_MODAL_MIN_HEIGHT: f64 = 520.0;
+const OAUTH_PROVIDER_FAILED_ERROR: &str = "oauth_provider_failed";
 static OAUTH_WINDOW_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 #[derive(serde::Deserialize)]
@@ -187,12 +188,12 @@ pub(crate) fn start_oauth_window(
                     return false;
                 }
 
-                if is_oauth_redirect_url(target_url, &redirect_uri_for_navigation) {
+                if let Some(callback_url) =
+                    oauth_callback_url_from_terminal_url(target_url, &redirect_uri_for_navigation)
+                {
                     let _ = app_for_navigation.emit(
                         "mira-oauth-callback",
-                        OAuthCallbackPayload {
-                            url: target_url.to_string(),
-                        },
+                        OAuthCallbackPayload { url: callback_url },
                     );
 
                     if let Some(oauth_window) =
@@ -209,12 +210,12 @@ pub(crate) fn start_oauth_window(
             .on_page_load(move |oauth_window, payload| {
                 let target_url = payload.url().as_str();
 
-                if is_oauth_redirect_url(target_url, &redirect_uri_for_page_load) {
+                if let Some(callback_url) =
+                    oauth_callback_url_from_terminal_url(target_url, &redirect_uri_for_page_load)
+                {
                     let _ = app_for_page_load.emit(
                         "mira-oauth-callback",
-                        OAuthCallbackPayload {
-                            url: target_url.to_string(),
-                        },
+                        OAuthCallbackPayload { url: callback_url },
                     );
 
                     if let Some(oauth_window) =
@@ -396,6 +397,96 @@ fn is_oauth_redirect_url(target_url: &str, redirect_uri: &str) -> bool {
             .is_some_and(|rest| rest.starts_with('?') || rest.starts_with('#'))
 }
 
+fn oauth_callback_url_from_terminal_url(target_url: &str, redirect_uri: &str) -> Option<String> {
+    if is_oauth_redirect_url(target_url, redirect_uri) {
+        return Some(target_url.to_string());
+    }
+
+    if is_mira_public_oauth_error_url(target_url) {
+        return Some(oauth_error_callback_url(
+            redirect_uri,
+            oauth_error_from_url(target_url).as_deref(),
+        ));
+    }
+
+    None
+}
+
+fn is_mira_public_oauth_error_url(target_url: &str) -> bool {
+    let Ok(url) = target_url.parse::<tauri::Url>() else {
+        return false;
+    };
+
+    let Some(host) = url.host_str().map(|host| host.to_ascii_lowercase()) else {
+        return false;
+    };
+
+    let is_mira_public_host = matches!(
+        host.as_str(),
+        "tilt-us.com" | "www.tilt-us.com" | "mira.tilt-us.com"
+    );
+
+    if !is_mira_public_host {
+        return false;
+    }
+
+    url.query_pairs().any(|(key, _)| {
+        matches!(
+            key.as_ref(),
+            "error" | "error_description" | "kc_error" | "kc_error_message"
+        )
+    }) || url.path() == "/"
+}
+
+fn oauth_error_from_url(target_url: &str) -> Option<String> {
+    let url = target_url.parse::<tauri::Url>().ok()?;
+
+    for key in ["error_description", "error", "kc_error_message", "kc_error"] {
+        if let Some(value) = url
+            .query_pairs()
+            .find_map(|(candidate, value)| (candidate == key).then(|| value.into_owned()))
+            .filter(|value| !value.trim().is_empty())
+        {
+            return Some(normalize_oauth_error_value(&value));
+        }
+    }
+
+    None
+}
+
+fn normalize_oauth_error_value(error: &str) -> String {
+    let normalized = error.trim();
+    let lower = normalized.to_ascii_lowercase();
+
+    if lower.contains("account already exists")
+        || lower.contains("already exists")
+        || lower.contains("konto existiert")
+        || lower.contains("existiert bereits")
+        || lower.contains("same email")
+        || lower.contains("same e-mail")
+        || lower.contains("selben email")
+        || lower.contains("selben e-mail")
+    {
+        return "oauth_email_provider_conflict".to_string();
+    }
+
+    if normalized == "1" || normalized.eq_ignore_ascii_case("true") {
+        return OAUTH_PROVIDER_FAILED_ERROR.to_string();
+    }
+
+    normalized.to_string()
+}
+
+fn oauth_error_callback_url(redirect_uri: &str, error: Option<&str>) -> String {
+    let separator = if redirect_uri.contains('?') { '&' } else { '?' };
+    let error = error.unwrap_or(OAUTH_PROVIDER_FAILED_ERROR);
+
+    format!(
+        "{redirect_uri}{separator}error={}",
+        encode_url_component(error)
+    )
+}
+
 fn is_localhost_url(target_url: &str) -> bool {
     let Ok(url) = target_url.parse::<tauri::Url>() else {
         return false;
@@ -422,12 +513,12 @@ fn install_oauth_load_failed_handler(
             webview
                 .inner()
                 .connect_load_failed(move |_, _, failing_uri, error| {
-                    if is_oauth_redirect_url(failing_uri, &redirect_uri) {
+                    if let Some(callback_url) =
+                        oauth_callback_url_from_terminal_url(failing_uri, &redirect_uri)
+                    {
                         let _ = app.emit(
                             "mira-oauth-callback",
-                            OAuthCallbackPayload {
-                                url: failing_uri.to_string(),
-                            },
+                            OAuthCallbackPayload { url: callback_url },
                         );
 
                         if let Some(oauth_window) = app.get_webview_window(&window_label) {
@@ -1088,6 +1179,84 @@ fn oauth_window_init_script(
     }
   }
 
+  function detectOAuthErrorResponse() {
+    if (window.__miraOAuthErrorRedirected) {
+      return;
+    }
+
+    try {
+      var currentUrl = new URL(window.location.href);
+      var urlError =
+        currentUrl.searchParams.get("error_description") ||
+        currentUrl.searchParams.get("error") ||
+        currentUrl.searchParams.get("kc_error_message") ||
+        currentUrl.searchParams.get("kc_error");
+
+      if (urlError) {
+        redirectOAuthError(normalizeOAuthError(urlError));
+        return;
+      }
+    } catch (errorCaught) {
+      // URL parsing should not block body-based error detection.
+    }
+
+    if (!document.body) {
+      return;
+    }
+
+    var text = document.body.textContent.replace(/\s+/g, " ").trim().toLowerCase();
+    var hasCredentialsError =
+      text.indexOf("invalid credentials") !== -1 ||
+      text.indexOf("invalid username or password") !== -1 ||
+      text.indexOf("incorrect username or password") !== -1 ||
+      text.indexOf("wrong credentials") !== -1 ||
+      text.indexOf("ungültige anmeldeinformationen") !== -1 ||
+      text.indexOf("ungueltige anmeldeinformationen") !== -1 ||
+      text.indexOf("benutzername oder passwort") !== -1 ||
+      text.indexOf("zugangsdaten") !== -1;
+    var hasProviderError =
+      text.indexOf("unexpected error") !== -1 ||
+      text.indexOf("identity provider") !== -1 ||
+      text.indexOf("external identity provider") !== -1 ||
+      text.indexOf("broker") !== -1 ||
+      text.indexOf("unerwarteter fehler") !== -1 ||
+      text.indexOf("identitätsanbieter") !== -1 ||
+      text.indexOf("identitaetsanbieter") !== -1;
+
+    if (hasCredentialsError) {
+      redirectOAuthError("invalid_credentials");
+      return;
+    }
+
+    if (hasProviderError && isKeycloakPage()) {
+      redirectOAuthError("oauth_provider_failed");
+    }
+  }
+
+  function normalizeOAuthError(error) {
+    var normalized = String(error || "").trim();
+    var lower = normalized.toLowerCase();
+
+    if (
+      lower.indexOf("account already exists") !== -1 ||
+      lower.indexOf("already exists") !== -1 ||
+      lower.indexOf("konto existiert") !== -1 ||
+      lower.indexOf("existiert bereits") !== -1 ||
+      lower.indexOf("same email") !== -1 ||
+      lower.indexOf("same e-mail") !== -1 ||
+      lower.indexOf("selben email") !== -1 ||
+      lower.indexOf("selben e-mail") !== -1
+    ) {
+      return "oauth_email_provider_conflict";
+    }
+
+    if (normalized === "1" || lower === "true") {
+      return "oauth_provider_failed";
+    }
+
+    return normalized || "oauth_provider_failed";
+  }
+
   function closeLocalhostConnectionRefusedPage() {
     if (!document.body || window.__miraLocalhostConnectionRefusedClosed) {
       return;
@@ -1258,6 +1427,7 @@ fn oauth_window_init_script(
   function ensureAuthControls() {
     closeLocalhostConnectionRefusedPage();
     applyTheme();
+    detectOAuthErrorResponse();
     detectAccountProviderConflict();
     completePasswordResetRequest();
     autoSubmitKeycloakLogout();
@@ -1321,6 +1491,7 @@ fn oauth_window_init_script(
   window.setTimeout(ensureAuthControls, 50);
   window.setTimeout(ensureAuthControls, 250);
   window.setTimeout(ensureAuthControls, 750);
+  window.setInterval(detectOAuthErrorResponse, 500);
   window.setInterval(detectAccountProviderConflict, 500);
   window.setInterval(completePasswordResetRequest, 500);
 })();

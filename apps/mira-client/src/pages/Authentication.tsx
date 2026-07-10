@@ -95,10 +95,27 @@ const OAUTH_PROFILE_SETUP_STORAGE_KEY = "mira.oauthProfileSetup";
 
 function isPasswordResetSentUrl(url: string) {
   try {
-    return new URL(url).searchParams.get(passwordResetSentParam) === "sent";
+    return getLocationParams(url).get(passwordResetSentParam) === "sent";
   } catch {
     return false;
   }
+}
+
+function getLocationParams(url: string) {
+  const currentUrl = new URL(url);
+  const merged = new URLSearchParams(currentUrl.search);
+  const hash = currentUrl.hash.startsWith("#")
+    ? currentUrl.hash.substring(1)
+    : currentUrl.hash;
+  const hashParams = new URLSearchParams(hash);
+
+  hashParams.forEach((value, key) => {
+    if (!merged.has(key)) {
+      merged.set(key, value);
+    }
+  });
+
+  return merged;
 }
 
 function removePasswordResetSentParam() {
@@ -166,6 +183,22 @@ function getOAuthErrorMessage(error: unknown, t: (id: string) => string) {
 
   if (error === "oauth_email_provider_conflict") {
     return t("auth-oauth-email-provider-conflict");
+  }
+
+  if (error instanceof Error && error.message === "oauth_provider_failed") {
+    return t("auth-oauth-provider-failed");
+  }
+
+  if (error === "oauth_provider_failed") {
+    return t("auth-oauth-provider-failed");
+  }
+
+  if (error instanceof Error && error.message === "invalid_credentials") {
+    return t("auth-invalid-credentials");
+  }
+
+  if (error === "invalid_credentials") {
+    return t("auth-invalid-credentials");
   }
 
   return getErrorMessage(error, t("auth-action-failed"));
@@ -719,12 +752,12 @@ function Authentication() {
      * Completes a pending OAuth redirect or restores stored tokens on app startup.
      */
     async function bootstrapAuth() {
-      const currentUrl = new URL(window.location.href);
+      const currentParams = getLocationParams(window.location.href);
       const hasPasswordResetSent = isPasswordResetSentUrl(window.location.href);
       const hasOAuthResponse =
-        currentUrl.searchParams.has("code") ||
-        currentUrl.searchParams.has("error") ||
-        currentUrl.searchParams.has("error_description");
+        currentParams.has("code") ||
+        currentParams.has("error") ||
+        currentParams.has("error_description");
 
       if (hasPasswordResetSent) {
         removePasswordResetSentParam();

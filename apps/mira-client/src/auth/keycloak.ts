@@ -191,6 +191,9 @@ async function requestToken(
 }
 
 function normalizeKeycloakError(error: string) {
+  const normalizedError = error.trim();
+  const lowerError = normalizedError.toLowerCase();
+
   if (error === "Account is not fully set up") {
     return "Account ist noch nicht vollständig eingerichtet. Bitte Email verifizieren oder Required Actions in Keycloak abschließen.";
   }
@@ -201,6 +204,15 @@ function normalizeKeycloakError(error: string) {
 
   if (error === "Invalid client or Invalid client credentials") {
     return "Keycloak-Client ist falsch konfiguriert.";
+  }
+
+  if (
+    lowerError === "invalid_grant" ||
+    lowerError === "invalid user credentials" ||
+    lowerError === "invalid username or password" ||
+    lowerError === "invalid credentials"
+  ) {
+    return "invalid_credentials";
   }
 
   return error;
