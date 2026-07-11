@@ -539,7 +539,12 @@ export function getInviteCandidateSubtitle(
   candidate: PartyInviteCandidate,
   options: { showEmail: boolean } = { showEmail: true },
 ) {
-  return formatTagId(candidate.tagId) ?? (options.showEmail ? candidate.email : undefined);
+  const parts = [
+    formatTagId(candidate.tagId),
+    options.showEmail ? candidate.email : undefined,
+  ].filter((part): part is string => Boolean(part));
+
+  return parts.length > 0 ? parts.join(" · ") : undefined;
 }
 
 export function getLobbyDisplayName(name: string) {

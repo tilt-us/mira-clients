@@ -437,6 +437,7 @@ test("shows incoming lobby invitations with live event field aliases", async ({ 
   const inviteCard = page.locator(".lobby-invite-card").filter({ hasText: "Lane Partner" });
 
   await expect(inviteCard).toBeVisible();
+  await expect(inviteCard).toContainText("lane.partner@mira.de");
   await expect(page.getByRole("button", { name: "Einladung annehmen" })).toBeVisible();
   await page.getByRole("button", { name: "Einladung ablehnen" }).click();
   await expect(inviteCard).toBeHidden();
