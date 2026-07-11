@@ -191,6 +191,9 @@ async function requestToken(
 }
 
 function normalizeKeycloakError(error: string) {
+  const normalizedError = error.trim();
+  const lowerError = normalizedError.toLowerCase();
+
   if (error === "Account is not fully set up") {
     return "Account ist noch nicht vollständig eingerichtet. Bitte Email verifizieren oder Required Actions in Keycloak abschließen.";
   }
@@ -201,6 +204,15 @@ function normalizeKeycloakError(error: string) {
 
   if (error === "Invalid client or Invalid client credentials") {
     return "Keycloak-Client ist falsch konfiguriert.";
+  }
+
+  if (
+    lowerError === "invalid_grant" ||
+    lowerError === "invalid user credentials" ||
+    lowerError === "invalid username or password" ||
+    lowerError === "invalid credentials"
+  ) {
+    return "invalid_credentials";
   }
 
   return error;
@@ -251,6 +263,20 @@ function getPasswordResetRedirectUri() {
   return redirectUrl.toString();
 }
 
+function getProviderErrorRedirectUri() {
+  const callbackUrl = new URL(getRedirectUri());
+  const errorRedirectHost = callbackUrl.hostname.toLowerCase() === "api.tilt-us.com"
+    ? "tilt-us.com"
+    : callbackUrl.hostname;
+  const redirectUrl = new URL(
+    "/",
+    `${callbackUrl.protocol}//${errorRedirectHost}${callbackUrl.port ? `:${callbackUrl.port}` : ""}`,
+  );
+  redirectUrl.searchParams.set("kc_error", "1");
+
+  return redirectUrl.toString();
+}
+
 async function startProviderLogin(
   provider: OAuthProvider,
   options?: KeycloakThemeOptions,
@@ -259,12 +285,17 @@ async function startProviderLogin(
   const codeVerifier = createRandomString(64);
   const codeChallenge = await createCodeChallenge(codeVerifier);
   const redirectUri = getRedirectUri();
+  const errorRedirectUri = getProviderErrorRedirectUri();
   const searchParams = new URLSearchParams({
     client_id: KEYCLOAK_CLIENT_ID,
     code_challenge: codeChallenge,
     code_challenge_method: "S256",
     kc_idp_hint: provider.idpHint,
     redirect_uri: redirectUri,
+    kc_error_redirect_uri: errorRedirectUri,
+    error_redirect_uri: errorRedirectUri,
+    fallback_uri: errorRedirectUri,
+    returnTo: errorRedirectUri,
     response_type: "code",
     scope: "openid email profile",
     state,
