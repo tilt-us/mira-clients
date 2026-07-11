@@ -647,9 +647,21 @@ function Client({
     championSelectionMatch?.lobbies?.forEach((lobby) => {
       lobby.players?.forEach((player) => addPublicId(player.publicId));
     });
+    if (partyInviteOpen) {
+      partyInviteSearchResults.forEach((user) => addPublicId(toPublicId(user.publicId)));
+      partyInviteOnlineUsers.forEach((user) => addPublicId(toPublicId(user.publicId)));
+    }
 
     return [...publicIds].sort((left, right) => left - right);
-  }, [activeLobby, championSelectionMatch, lobbyInvitations, profilePublicId]);
+  }, [
+    activeLobby,
+    championSelectionMatch,
+    lobbyInvitations,
+    partyInviteOnlineUsers,
+    partyInviteOpen,
+    partyInviteSearchResults,
+    profilePublicId,
+  ]);
   const lobbyPublicUserIdKey = lobbyPublicUserIds.join(",");
 
   useEffect(() => {
@@ -974,6 +986,28 @@ function Client({
     ),
     [userEmailVisibilityByPublicId],
   );
+  const enrichInviteCandidate = useCallback(
+    (candidate: PartyInviteCandidate): PartyInviteCandidate => {
+      if (typeof candidate.publicId !== "number") {
+        return candidate;
+      }
+
+      const publicUser = publicUsersByPublicId.get(candidate.publicId);
+
+      if (!publicUser) {
+        return candidate;
+      }
+
+      return {
+        ...candidate,
+        avatarUrl: candidate.avatarUrl ?? getPublicAvatarUrl(publicUser),
+        email: candidate.email ?? publicUser.email,
+        name: candidate.name || getFriendUserName(publicUser),
+        tagId: candidate.tagId ?? getFriendUserTagId(publicUser),
+      };
+    },
+    [publicUsersByPublicId],
+  );
   useEffect(() => {
     if (!partyInviteOpen) {
       return;
@@ -1073,7 +1107,7 @@ function Client({
         continue;
       }
 
-      const candidate = mapFriendToInviteCandidate(friend);
+      const candidate = enrichInviteCandidate(mapFriendToInviteCandidate(friend));
 
       if (matchesQuery(candidate)) {
         candidatesById.set(getInviteCandidateKey(candidate), candidate);
@@ -1081,7 +1115,7 @@ function Client({
     }
 
     for (const user of partyInviteSearchResults) {
-      const candidate = mapUserToInviteCandidate(user);
+      const candidate = enrichInviteCandidate(mapUserToInviteCandidate(user));
       const key = getInviteCandidateKey(candidate);
 
       if (!candidatesById.has(key) && matchesQuery(candidate)) {
@@ -1090,7 +1124,7 @@ function Client({
     }
 
     for (const user of partyInviteOnlineUsers) {
-      const candidate = mapOnlineUserToInviteCandidate(user);
+      const candidate = enrichInviteCandidate(mapOnlineUserToInviteCandidate(user));
       const key = getInviteCandidateKey(candidate);
 
       if (!candidatesById.has(key) && matchesQuery(candidate)) {
@@ -1116,6 +1150,7 @@ function Client({
   }, [
     activeLobbyCurrentMember,
     canShowInviteCandidateEmail,
+    enrichInviteCandidate,
     partyInviteFriends,
     partyInviteOnlineUsers,
     partyInviteOnlinePublicIdSet,
@@ -4708,6 +4743,14 @@ function Client({
             {lobbyInvitations.map((invitation) => {
               const mainInviter = getInvitationMainInviter(invitation);
               const inviters = invitation.inviters ?? invitation.lobby?.members ?? [];
+              const mainInviterPublicUser =
+                typeof mainInviter?.publicId === "number"
+                  ? publicUsersByPublicId.get(mainInviter.publicId)
+                  : undefined;
+              const inviteSubtitle = [
+                getInvitationModeLabel(invitation),
+                mainInviterPublicUser?.email,
+              ].filter((part): part is string => Boolean(part)).join(" · ");
 
               return (
                 <article className="lobby-invite-card" key={invitation.lobbyId}>
@@ -4735,7 +4778,7 @@ function Client({
                       })}
                     </div>
                     <span>{getMemberName(mainInviter)}</span>
-                    <small>{getInvitationModeLabel(invitation)}</small>
+                    <small>{inviteSubtitle}</small>
                   </div>
                   <div className="lobby-invite-actions">
                     <button

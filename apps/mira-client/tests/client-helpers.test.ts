@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   findLobbyInvitation,
+  getInviteCandidateSubtitle,
   mergeLobbyInvitations,
   normalizeLobbyInvitation,
 } from "../src/pages/Client.helpers";
@@ -58,5 +59,17 @@ describe("lobby invitation helpers", () => {
 
     expect(invitations).toHaveLength(1);
     expect(invitations[0]?.lobbyId).toBe("invite-lobby");
+  });
+
+  test("shows public invite candidate email alongside tag", () => {
+    expect(
+      getInviteCandidateSubtitle({
+        email: "lane.partner@mira.de",
+        name: "Lane Partner",
+        publicId: 9101,
+        source: "user",
+        tagId: "LANE",
+      }),
+    ).toBe("#LANE · lane.partner@mira.de");
   });
 });
