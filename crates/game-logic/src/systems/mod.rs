@@ -3,6 +3,7 @@ use bevy_fontmesh::FontMeshPlugin;
 use game_shared::network::ChampionId;
 
 mod animation;
+mod auto_attack;
 mod camera;
 mod characters;
 mod healthbar;
@@ -28,6 +29,13 @@ pub struct MiraGameplaySystemsPlugin;
 /// Used by the playable client after Bevy asset, render, and input plugins are available.
 pub struct MiraClientSystemsPlugin;
 
+#[derive(Resource, Debug, Clone, Copy, Default)]
+/// Client-side gameplay setup flags supplied by the embedding game client.
+pub struct MiraClientGameplaySettings {
+    /// Whether local development-only target dummies should be spawned.
+    pub spawn_dev_dummy: bool,
+}
+
 /// Compatibility plugin that registers both gameplay and client systems.
 ///
 /// Description:
@@ -46,6 +54,9 @@ struct AnimationSystemsPlugin;
 
 /// Registers local movement input and movement simulation systems.
 struct MovementSystemsPlugin;
+
+/// Registers local auto-attack input and projectile presentation systems.
+struct AutoAttackSystemsPlugin;
 
 /// Registers Lira ability prototype systems.
 struct LiraAbilitySystemsPlugin;
@@ -172,6 +183,7 @@ impl Plugin for MiraClientSystemsPlugin {
             LocalSpawnSystemsPlugin,
             NetworkedPlayersSystemsPlugin,
             AnimationSystemsPlugin,
+            AutoAttackSystemsPlugin,
             MovementSystemsPlugin,
             LiraAbilitySystemsPlugin,
             IgnaraAbilitySystemsPlugin,
@@ -191,7 +203,8 @@ impl Plugin for MiraSystemsPlugin {
 
 impl Plugin for LocalSpawnSystemsPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<characters::lira::LiraQSettings>()
+        app.init_resource::<MiraClientGameplaySettings>()
+            .init_resource::<characters::lira::LiraQSettings>()
             .init_resource::<characters::lira::LiraQCastState>()
             .init_resource::<characters::lira::LiraQIndicatorState>()
             .init_resource::<characters::lira::LiraWSettings>()
@@ -275,7 +288,9 @@ impl Plugin for MovementSystemsPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             Update,
-            movement::set_move_target_from_mouse_input.run_if(resource_exists::<AssetServer>),
+            movement::set_move_target_from_mouse_input
+                .after(auto_attack::handle_auto_attack_input)
+                .run_if(resource_exists::<AssetServer>),
         )
         .add_systems(
             FixedUpdate,
@@ -285,6 +300,30 @@ impl Plugin for MovementSystemsPlugin {
             Update,
             movement::animate_move_target_marker.run_if(resource_exists::<AssetServer>),
         );
+    }
+}
+
+impl Plugin for AutoAttackSystemsPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<auto_attack::AutoAttackState>()
+            .init_resource::<auto_attack::AutoAttackInputState>()
+            .init_resource::<auto_attack::AutoAttackTarget>()
+            .add_systems(
+                Update,
+                auto_attack::handle_auto_attack_input.run_if(resource_exists::<AssetServer>),
+            )
+            .add_systems(
+                Update,
+                auto_attack::update_auto_attack_target
+                    .after(auto_attack::handle_auto_attack_input)
+                    .run_if(resource_exists::<AssetServer>),
+            )
+            .add_systems(
+                Update,
+                auto_attack::update_auto_attack_projectiles
+                    .after(auto_attack::update_auto_attack_target)
+                    .run_if(resource_exists::<AssetServer>),
+            );
     }
 }
 

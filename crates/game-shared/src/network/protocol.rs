@@ -382,6 +382,7 @@ pub struct LoadingScreenPlayer {
 /// Fields:
 /// - `MoveTo`: Requests movement toward a world-space point.
 /// - `CastAbility`: Requests an ability cast for the given champion and slot.
+/// - `AutoAttack`: Requests a basic attack against a target player.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 pub enum PlayerCommand {
     MoveTo(WorldPosition),
@@ -389,6 +390,9 @@ pub enum PlayerCommand {
         champion: ChampionId,
         slot: AbilitySlot,
         target: CastTarget,
+    },
+    AutoAttack {
+        target_player_id: u64,
     },
 }
 

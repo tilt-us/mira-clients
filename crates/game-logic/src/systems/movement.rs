@@ -1,6 +1,7 @@
 use super::{
     ExternalMovementModifier, HOLD_CURSOR_MIN_DISTANCE, HoldMoveDirection, MoveTargetMarker,
     MoveTargetMarkerFx,
+    auto_attack::{AutoAttackInputState, AutoAttackTarget},
     targeting::{clamp_world_point_to_map_top, ray_hit_map_top},
 };
 use bevy::prelude::*;
@@ -28,6 +29,8 @@ const MOVE_TARGET_REACHED_DISTANCE: f32 = 0.04;
 /// - `commands`: ECS command buffer used to insert `MoveTarget` components.
 pub(super) fn set_move_target_from_mouse_input(
     mouse_buttons: Res<ButtonInput<MouseButton>>,
+    attack_input: Res<AutoAttackInputState>,
+    mut attack_target: ResMut<AutoAttackTarget>,
     windows: Query<&Window, With<PrimaryWindow>>,
     camera_query: Query<(&Camera, &GlobalTransform), With<TopDownCamera>>,
     map_query: Query<(&GlobalTransform, &MapGround)>,
@@ -52,6 +55,12 @@ pub(super) fn set_move_target_from_mouse_input(
     let right_pressed = mouse_buttons.just_pressed(MouseButton::Right);
     if !right_hold {
         return;
+    }
+    if right_pressed && attack_input.consumed_right_press {
+        return;
+    }
+    if right_pressed {
+        attack_target.target = None;
     }
 
     let Ok(window) = windows.single() else {

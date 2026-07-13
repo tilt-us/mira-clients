@@ -8,6 +8,6 @@
 
 mod systems;
 pub use systems::{
-    MiraClientSystemsPlugin, MiraGameplaySystemsPlugin, MiraHudState, MiraSystemsPlugin,
-    OverheadHealthBarStyle, OverheadPlayerProfiles,
+    MiraClientGameplaySettings, MiraClientSystemsPlugin, MiraGameplaySystemsPlugin, MiraHudState,
+    MiraSystemsPlugin, OverheadHealthBarStyle, OverheadPlayerProfiles,
 };

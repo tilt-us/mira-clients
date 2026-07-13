@@ -22,6 +22,9 @@ const DEVELOPMENT_PLAYER_SPACING: f32 = 4.5;
 const MATCH_SNAPSHOT_INTERVAL_SECONDS: f32 = 0.05;
 const RESPAWN_SECONDS: f32 = 5.0;
 const RESPAWN_INPUT_GRACE_SECONDS: f32 = 0.25;
+const AUTO_ATTACK_RANGE: f32 = 5.0;
+const AUTO_ATTACK_COOLDOWN_SECONDS: f32 = 1.0;
+const AUTO_ATTACK_DAMAGE: f32 = 10.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DevelopmentTeam {
@@ -42,6 +45,7 @@ enum DevelopmentTeam {
 /// - `lira_q_cooldown`: Remaining authoritative Lira Q cooldown in seconds.
 /// - `lira_w_cooldown`: Remaining authoritative Lira W cooldown in seconds.
 /// - `lira_e_cooldown`: Remaining authoritative Lira E cooldown in seconds.
+/// - `auto_attack_cooldown`: Remaining authoritative auto-attack cooldown in seconds.
 /// - `respawn_timer`: Remaining respawn time when the player is dead.
 /// - `respawn_generation`: Monotonic counter incremented each time the player respawns.
 /// - `respawn_input_grace`: Short duration that rejects stale position updates after respawn.
@@ -54,6 +58,7 @@ struct ConnectedPlayerState {
     lira_q_cooldown: f32,
     lira_w_cooldown: f32,
     lira_e_cooldown: f32,
+    auto_attack_cooldown: f32,
     ignara_q_cooldown: f32,
     ignara_w_cooldown: f32,
     ignara_e_cooldown: f32,
@@ -555,6 +560,7 @@ pub(super) fn receive_player_state_updates(
                     lira_q_cooldown: 0.0,
                     lira_w_cooldown: 0.0,
                     lira_e_cooldown: 0.0,
+                    auto_attack_cooldown: 0.0,
                     ignara_q_cooldown: 0.0,
                     ignara_w_cooldown: 0.0,
                     ignara_e_cooldown: 0.0,
@@ -792,6 +798,9 @@ pub(super) fn receive_player_commands(
                             visual_events.push(event);
                         }
                     }
+                    PlayerCommand::AutoAttack { target_player_id } => {
+                        accept_auto_attack(caster_player_id, target_player_id, &mut players);
+                    }
                     _ => {}
                 }
             }
@@ -876,6 +885,7 @@ pub(super) fn update_player_death_and_respawn(
         state.lira_q_cooldown = 0.0;
         state.lira_w_cooldown = 0.0;
         state.lira_e_cooldown = 0.0;
+        state.auto_attack_cooldown = 0.0;
         state.ignara_q_cooldown = 0.0;
         state.ignara_w_cooldown = 0.0;
         state.ignara_e_cooldown = 0.0;
@@ -1010,6 +1020,7 @@ pub(super) fn broadcast_match_snapshots(
                     lira_q_cooldown: 0.0,
                     lira_w_cooldown: 0.0,
                     lira_e_cooldown: 0.0,
+                    auto_attack_cooldown: 0.0,
                     ignara_q_cooldown: 0.0,
                     ignara_w_cooldown: 0.0,
                     ignara_e_cooldown: 0.0,
@@ -1351,6 +1362,48 @@ fn consume_sophia_damage_multiplier(
     caster.sophia_damage_amp_available = false;
     caster.sophia_damage_buff_timer = 0.0;
     positive_or(ability.damage_multiplier, 1.2)
+}
+
+/// Description:
+/// Accepts a basic auto attack and applies immediate server-authoritative damage.
+fn accept_auto_attack(
+    caster_player_id: u64,
+    target_player_id: u64,
+    players: &mut ConnectedPlayers,
+) {
+    if caster_player_id == target_player_id {
+        return;
+    }
+
+    let Some(caster) = players.states.get(&caster_player_id) else {
+        return;
+    };
+    let Some(target) = players.states.get(&target_player_id) else {
+        return;
+    };
+
+    if caster.health <= 0.0
+        || caster.stun_timer > 0.0
+        || caster.auto_attack_cooldown > 0.0
+        || target.health <= 0.0
+        || caster.team == target.team
+        || caster.team == DevelopmentTeam::Neutral
+        || target.team == DevelopmentTeam::Neutral
+    {
+        return;
+    }
+
+    let distance = horizontal_distance(caster.position, target.position);
+    if distance > AUTO_ATTACK_RANGE + DEVELOPMENT_PLAYER_HIT_RADIUS {
+        return;
+    }
+
+    if let Some(caster) = players.states.get_mut(&caster_player_id) {
+        caster.auto_attack_cooldown = AUTO_ATTACK_COOLDOWN_SECONDS;
+    }
+    if let Some(target) = players.states.get_mut(&target_player_id) {
+        apply_damage(target, AUTO_ATTACK_DAMAGE);
+    }
 }
 
 /// Description:
@@ -2005,6 +2058,7 @@ fn tick_ability_cooldowns(players: &mut ConnectedPlayers, delta_seconds: f32) {
         state.lira_q_cooldown = (state.lira_q_cooldown - delta_seconds).max(0.0);
         state.lira_w_cooldown = (state.lira_w_cooldown - delta_seconds).max(0.0);
         state.lira_e_cooldown = (state.lira_e_cooldown - delta_seconds).max(0.0);
+        state.auto_attack_cooldown = (state.auto_attack_cooldown - delta_seconds).max(0.0);
         state.ignara_q_cooldown = (state.ignara_q_cooldown - delta_seconds).max(0.0);
         state.ignara_w_cooldown = (state.ignara_w_cooldown - delta_seconds).max(0.0);
         state.ignara_e_cooldown = (state.ignara_e_cooldown - delta_seconds).max(0.0);
