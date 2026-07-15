@@ -1,7 +1,6 @@
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 /// Description:
 /// Defines the team affiliation used by gameplay entities.
 ///
@@ -9,6 +8,7 @@ use serde::{Deserialize, Serialize};
 /// - `Neutral`: Entity has no playable team affiliation.
 /// - `Dark`: Entity belongs to the dark team.
 /// - `Light`: Entity belongs to the light team.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum TeamSpec {
     #[default]
     Neutral,
@@ -46,15 +46,14 @@ impl TeamSpec {
     }
 }
 
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 /// Description:
 /// Stores the team assigned to an entity.
 ///
 /// Fields:
 /// - `0`: Team affiliation value.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Team(pub TeamSpec);
 
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
 /// Description:
 /// Stores scoreboard values for a team.
 ///
@@ -62,6 +61,7 @@ pub struct Team(pub TeamSpec);
 /// - `kills`: Total champion kills.
 /// - `objectives`: Total objective captures.
 /// - `structures`: Total structure destructions.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct TeamScore {
     pub kills: u16,
     pub objectives: u16,

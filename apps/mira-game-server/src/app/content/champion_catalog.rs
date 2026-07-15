@@ -27,6 +27,7 @@ const DEVELOPMENT_CHAMPION_ROSTER: [ChampionId; 4] = [
 pub struct ServerContentPlugin;
 
 impl Plugin for ServerContentPlugin {
+    /// Registers Bevy resources, plugins, or systems for the server champion content catalog system.
     fn build(&self, app: &mut App) {
         app.insert_resource(ServerChampionCatalog::load_development_catalog());
     }
@@ -265,19 +266,20 @@ pub struct ServerAbilityDamage {
     pub missile: f32,
 }
 
-#[derive(Debug, Clone, Deserialize)]
 /// Description:
 /// Represents one champion response from the champion API.
 ///
 /// Fields:
 /// - `name`: Human-readable champion name used by server logs.
 /// - `stats`: Server-authoritative champion stats and ability tuning.
+#[derive(Debug, Clone, Deserialize)]
 struct ChampionApiResponse {
     name: String,
     stats: NetworkChampionStats,
 }
 
 impl From<ChampionApiResponse> for ServerChampionDefinition {
+    /// Runs the from step for the server champion content catalog system.
     fn from(value: ChampionApiResponse) -> Self {
         Self {
             display_name: value.name,
@@ -295,6 +297,7 @@ impl From<ChampionApiResponse> for ServerChampionDefinition {
 }
 
 impl From<NetworkAbilityDefinition> for ServerAbilityDefinition {
+    /// Runs the from step for the server champion content catalog system.
     fn from(value: NetworkAbilityDefinition) -> Self {
         Self {
             damage: value.damage.into(),
@@ -334,6 +337,7 @@ impl From<NetworkAbilityDefinition> for ServerAbilityDefinition {
 }
 
 impl From<&ServerAbilityDefinition> for NetworkAbilityDefinition {
+    /// Runs the from step for the server champion content catalog system.
     fn from(value: &ServerAbilityDefinition) -> Self {
         Self {
             damage: (&value.damage).into(),
@@ -373,6 +377,7 @@ impl From<&ServerAbilityDefinition> for NetworkAbilityDefinition {
 }
 
 impl From<NetworkAbilityDamage> for ServerAbilityDamage {
+    /// Runs the from step for the server champion content catalog system.
     fn from(value: NetworkAbilityDamage) -> Self {
         Self {
             direct_hit: value.direct_hit,
@@ -383,6 +388,7 @@ impl From<NetworkAbilityDamage> for ServerAbilityDamage {
 }
 
 impl From<&ServerAbilityDamage> for NetworkAbilityDamage {
+    /// Runs the from step for the server champion content catalog system.
     fn from(value: &ServerAbilityDamage) -> Self {
         Self {
             direct_hit: value.direct_hit,
@@ -487,6 +493,7 @@ fn http_get(path: &str) -> Result<String, String> {
     Ok(body.to_string())
 }
 
+/// Runs the champion api addr step for the server champion content catalog system.
 fn champion_api_addr() -> String {
     std::env::var("MIRA_CHAMPION_API_ADDR")
         .ok()

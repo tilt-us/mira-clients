@@ -30,7 +30,6 @@ const PLAYER_STATE_UPDATE_INTERVAL_SECONDS: f32 = 1.0 / 30.0;
 const REMOTE_POSITION_SMOOTHING: f32 = 24.0;
 const REMOTE_ROTATION_SMOOTHING: f32 = 18.0;
 
-#[derive(Component, Debug, Clone, Copy)]
 /// Description:
 /// Marks a remote player stand-in spawned from server match snapshots.
 ///
@@ -43,6 +42,7 @@ const REMOTE_ROTATION_SMOOTHING: f32 = 18.0;
 /// - `target_rotation`: Latest server rotation target used by interpolation.
 /// - `moving`: Latest server movement state used for animation.
 /// - `respawn_generation`: Latest server respawn generation applied to this stand-in.
+#[derive(Component, Debug, Clone, Copy)]
 pub(super) struct RemotePlayerStandIn {
     player_id: u64,
     champion: ChampionId,
@@ -56,7 +56,6 @@ pub(super) struct RemotePlayerStandIn {
     respawn_generation: u32,
 }
 
-#[derive(Resource, Debug, Default, Clone, Copy)]
 /// Description:
 /// Tracks whether the local player was moved to its server-assigned spawn.
 ///
@@ -64,29 +63,31 @@ pub(super) struct RemotePlayerStandIn {
 /// - `player_id`: Player id whose spawn position was already applied.
 /// - `player_count`: Roster size whose spawn layout was already applied.
 /// - `respawn_generation`: Last local respawn generation applied to the transform.
+#[derive(Resource, Debug, Default, Clone, Copy)]
 pub(super) struct AppliedLocalNetworkSpawn {
     player_id: Option<u64>,
     player_count: usize,
     respawn_generation: u32,
 }
 
-#[derive(Resource, Debug)]
 /// Description:
 /// Limits how often the client sends local player state updates.
 ///
 /// Fields:
 /// - `0`: Repeating timer for local player state update messages.
+#[derive(Resource, Debug)]
 pub(super) struct PlayerStateUpdateTimer(Timer);
 
-#[derive(Resource, Debug, Clone, Copy)]
 /// Description:
 /// Stores the local player's requested development champion and team.
+#[derive(Resource, Debug, Clone, Copy)]
 pub(super) struct LocalPlayerSelection {
     champion: ChampionId,
     team: TeamSpec,
 }
 
 impl Default for PlayerStateUpdateTimer {
+    /// Returns the default configuration used by the networked player synchronization system.
     fn default() -> Self {
         Self(Timer::from_seconds(
             PLAYER_STATE_UPDATE_INTERVAL_SECONDS,
@@ -96,6 +97,7 @@ impl Default for PlayerStateUpdateTimer {
 }
 
 impl Default for LocalPlayerSelection {
+    /// Returns the default configuration used by the networked player synchronization system.
     fn default() -> Self {
         Self::from_args(std::env::args().skip(1))
     }
@@ -132,6 +134,7 @@ impl LocalPlayerSelection {
     }
 }
 
+/// Runs the apply selection arg step for the networked player synchronization system.
 fn apply_selection_arg(key: &str, value: &str, champion: &mut ChampionId, team: &mut TeamSpec) {
     let key = key.trim_start_matches('-');
 
@@ -154,6 +157,7 @@ fn apply_selection_arg(key: &str, value: &str, champion: &mut ChampionId, team: 
     }
 }
 
+/// Runs the parse champion step for the networked player synchronization system.
 fn parse_champion(value: &str) -> Option<ChampionId> {
     match value.trim().to_ascii_lowercase().as_str() {
         "6606" | "lira" => Some(LIRA_CHAMPION_ID),
@@ -164,6 +168,7 @@ fn parse_champion(value: &str) -> Option<ChampionId> {
     }
 }
 
+/// Runs the parse team step for the networked player synchronization system.
 fn parse_team(value: &str) -> Option<TeamSpec> {
     match value.trim().to_ascii_lowercase().as_str() {
         "0" | "neutral" | "none" => Some(TeamSpec::Neutral),
@@ -592,7 +597,7 @@ fn sync_remote_player_stand_ins(
             transform.rotation = rotation_from_yaw(snapshot_player.yaw);
         }
         if let Some(mut dummy) = maybe_dummy {
-            dummy.health = snapshot_player.health;
+            dummy.set_server_health(snapshot_player.health, snapshot_player.max_health);
         }
         health.current = snapshot_player.health.max(0.0) as u32;
         health.max = snapshot_player.max_health.max(1.0) as u32;
@@ -673,10 +678,11 @@ fn spawn_remote_player_stand_in(
             .with_rotation(rotation_from_yaw(snapshot_player.yaw)),
     ));
     if is_enemy {
-        player.insert(TrainingDummy {
-            health: snapshot_player.health,
-            hit_radius: REMOTE_PLAYER_HIT_RADIUS,
-        });
+        player.insert(TrainingDummy::remote_player(
+            snapshot_player.health,
+            snapshot_player.max_health,
+            REMOTE_PLAYER_HIT_RADIUS,
+        ));
     }
     let player_entity = player.id();
     let model_root = spawn_champion_model_root(
@@ -798,6 +804,7 @@ fn champion_display_name(champion: ChampionId) -> &'static str {
     }
 }
 
+/// Runs the player display name step for the networked player synchronization system.
 fn player_display_name(
     player: &NetworkPlayer,
     player_profiles: &healthbar::OverheadPlayerProfiles,

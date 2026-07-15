@@ -50,6 +50,7 @@ pub struct WorldPosition {
 }
 
 impl From<Vec3> for WorldPosition {
+    /// Runs the from step for the shared network protocol system.
     fn from(value: Vec3) -> Self {
         Self {
             x: value.x,
@@ -60,6 +61,7 @@ impl From<Vec3> for WorldPosition {
 }
 
 impl From<WorldPosition> for Vec3 {
+    /// Runs the from step for the shared network protocol system.
     fn from(value: WorldPosition) -> Self {
         Self::new(value.x, value.y, value.z)
     }
@@ -401,6 +403,7 @@ pub enum PlayerCommand {
 pub struct SharedNetworkPlugin;
 
 impl Plugin for SharedNetworkPlugin {
+    /// Registers Bevy resources, plugins, or systems for the shared network protocol system.
     fn build(&self, app: &mut App) {
         app.register_message::<PlayerCommand>()
             .add_direction(NetworkDirection::ClientToServer);

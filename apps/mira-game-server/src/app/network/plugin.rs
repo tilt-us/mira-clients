@@ -19,6 +19,7 @@ const EMPTY_SERVER_SHUTDOWN_SECONDS: f32 = 60.0;
 /// Registers Lightyear server networking and starts the development UDP listener.
 pub struct ServerNetworkPlugin;
 
+/// Stores Empty Server Shutdown data used by the dedicated server network plugin.
 #[derive(Resource, Debug, Default)]
 struct EmptyServerShutdown {
     had_clients: bool,
@@ -26,6 +27,7 @@ struct EmptyServerShutdown {
 }
 
 impl Plugin for ServerNetworkPlugin {
+    /// Registers Bevy resources, plugins, or systems for the dedicated server network plugin.
     fn build(&self, app: &mut App) {
         app.add_plugins(ServerPlugins {
             tick_duration: Duration::from_secs_f64(1.0 / FIXED_TIMESTEP_HZ),

@@ -227,6 +227,7 @@ pub(super) fn move_controlled_player(
     }
 }
 
+/// Runs the apply external pull step for the local movement input system.
 fn apply_external_pull(
     transform: &mut Transform,
     pull_center: Vec3,

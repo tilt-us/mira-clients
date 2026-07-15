@@ -1,63 +1,75 @@
 use super::{
-    ExternalMovementModifier, TrainingDummy,
+    CurrentChampionVisual, ExternalMovementModifier, TrainingDummy, TrainingDummyHealthChangeKind,
     targeting::{clamp_world_point_to_map_top, ray_hit_map_top},
 };
 use bevy::math::primitives::Sphere;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use game_shared::game::{
+    auto_attack::{AUTO_ATTACK_COMBO_RESET_SECONDS, auto_attack_combo},
     camera::TopDownCamera,
     map::MapGround,
     player::{Health, MoveTarget, Player, PlayerControlled},
 };
-use game_shared::network::{PlayerCommand, ReliableCommandChannel};
+use game_shared::network::{ChampionId, PlayerCommand, ReliableCommandChannel};
 use lightyear::prelude::*;
 
 const AUTO_ATTACK_RANGE: f32 = 5.0;
-const AUTO_ATTACK_COOLDOWN_SECONDS: f32 = 1.0;
-const AUTO_ATTACK_DAMAGE: f32 = 10.0;
 const AUTO_ATTACK_PROJECTILE_RADIUS: f32 = 0.12;
 const AUTO_ATTACK_PROJECTILE_HEIGHT: f32 = 0.8;
 const AUTO_ATTACK_MIN_TRAVEL_SECONDS: f32 = 0.075;
 const AUTO_ATTACK_MAX_TRAVEL_SECONDS: f32 = 0.45;
 
-#[derive(Resource, Debug, Clone)]
 /// Description:
 /// Stores local auto-attack cooldown state.
+#[derive(Resource, Debug, Clone)]
 pub(super) struct AutoAttackState {
     cooldown: Timer,
+    combo_stage: usize,
+    combo_target: Option<Entity>,
+    combo_reset_seconds: f32,
 }
 
-#[derive(Resource, Debug, Clone, Copy, Default)]
 /// Description:
 /// Tracks whether the current right-click press was consumed by attack input.
+#[derive(Resource, Debug, Clone, Copy, Default)]
 pub(super) struct AutoAttackInputState {
     pub(super) consumed_right_press: bool,
 }
 
-#[derive(Resource, Debug, Clone, Copy, Default)]
 /// Description:
 /// Stores the currently ordered auto-attack target.
+#[derive(Resource, Debug, Clone, Copy, Default)]
 pub(super) struct AutoAttackTarget {
     pub(super) target: Option<Entity>,
 }
 
-#[derive(Component, Debug, Clone)]
 /// Description:
 /// Stores one local auto-attack projectile travelling toward a clicked enemy target.
+#[derive(Component, Debug, Clone)]
 pub(super) struct AutoAttackProjectile {
     target: Entity,
     start: Vec3,
     end: Vec3,
     timer: Timer,
     damage: f32,
+    apply_local_damage: bool,
 }
 
 impl Default for AutoAttackState {
+    /// Returns the default configuration used by the client auto-attack system.
     fn default() -> Self {
-        let mut cooldown = Timer::from_seconds(AUTO_ATTACK_COOLDOWN_SECONDS, TimerMode::Once);
+        let mut cooldown = Timer::from_seconds(
+            auto_attack_combo(ChampionId(super::LOCAL_CHAMPION_ID)).cooldown_seconds(),
+            TimerMode::Once,
+        );
         cooldown.set_elapsed(cooldown.duration());
-        Self { cooldown }
+        Self {
+            cooldown,
+            combo_stage: 0,
+            combo_target: None,
+            combo_reset_seconds: 0.0,
+        }
     }
 }
 
@@ -73,6 +85,7 @@ pub(super) fn handle_auto_attack_input(
             Entity,
             &Health,
             &Transform,
+            &CurrentChampionVisual,
             Option<&ExternalMovementModifier>,
         ),
         With<PlayerControlled>,
@@ -97,7 +110,7 @@ pub(super) fn handle_auto_attack_input(
         return;
     };
 
-    let Ok((player_entity, health, player_transform, movement_modifier)) = player_query.single()
+    let Ok((player_entity, health, player_transform, _, movement_modifier)) = player_query.single()
     else {
         return;
     };
@@ -127,6 +140,7 @@ pub(super) fn update_auto_attack_target(
             Entity,
             &Health,
             &Transform,
+            &CurrentChampionVisual,
             Option<&ExternalMovementModifier>,
         ),
         With<PlayerControlled>,
@@ -138,6 +152,7 @@ pub(super) fn update_auto_attack_target(
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     attack_state.cooldown.tick(time.delta());
+    tick_combo_reset(&mut attack_state, time.delta_secs());
 
     let Some(target_entity) = attack_target.target else {
         return;
@@ -152,7 +167,8 @@ pub(super) fn update_auto_attack_target(
         return;
     }
 
-    let Ok((player_entity, health, player_transform, movement_modifier)) = player_query.single()
+    let Ok((player_entity, health, player_transform, visual, movement_modifier)) =
+        player_query.single()
     else {
         return;
     };
@@ -179,6 +195,19 @@ pub(super) fn update_auto_attack_target(
         return;
     }
 
+    let champion = visual
+        .champion
+        .unwrap_or(ChampionId(super::LOCAL_CHAMPION_ID));
+    let combo = auto_attack_combo(champion);
+    let target_player_id = target_player.map(|player| player.id.0);
+    let apply_local_damage = target_player_id.is_none();
+    let damage = if apply_local_damage {
+        let combo_stage = next_combo_stage(&mut attack_state, target_entity, combo.combo_length);
+        combo.damage_for_stage(combo_stage)
+    } else {
+        0.0
+    };
+
     let start = player_transform.translation + Vec3::Y * AUTO_ATTACK_PROJECTILE_HEIGHT;
     let end = target_transform.translation + Vec3::Y * AUTO_ATTACK_PROJECTILE_HEIGHT;
     let travel_seconds = auto_attack_travel_seconds(attack_distance);
@@ -190,15 +219,19 @@ pub(super) fn update_auto_attack_target(
             start,
             end,
             timer: Timer::from_seconds(travel_seconds, TimerMode::Once),
-            damage: AUTO_ATTACK_DAMAGE,
+            damage,
+            apply_local_damage,
         },
         Mesh3d(meshes.add(Sphere::new(AUTO_ATTACK_PROJECTILE_RADIUS))),
         MeshMaterial3d(materials.add(auto_attack_projectile_material())),
         Transform::from_translation(start),
     ));
-    if let Some(target_player_id) = target_player.map(|player| player.id.0) {
+    if let Some(target_player_id) = target_player_id {
         send_auto_attack_command(&mut command_senders, target_player_id);
     }
+    attack_state
+        .cooldown
+        .set_duration(std::time::Duration::from_secs_f32(combo.cooldown_seconds()));
     attack_state.cooldown.reset();
 }
 
@@ -235,7 +268,12 @@ pub(super) fn update_auto_attack_projectiles(
         transform.translation = projectile.start.lerp(projectile.end, progress);
 
         if projectile.timer.is_finished() {
-            target.health = (target.health - projectile.damage).max(0.0);
+            if !projectile.apply_local_damage {
+                commands.entity(projectile_entity).despawn();
+                continue;
+            }
+
+            target.apply_damage(projectile.damage, TrainingDummyHealthChangeKind::AutoAttack);
             info!(
                 "TrainingDummy hit by auto attack: -{:.1} HP (remaining {:.1})",
                 projectile.damage, target.health
@@ -245,6 +283,7 @@ pub(super) fn update_auto_attack_projectiles(
     }
 }
 
+/// Runs the cursor world position step for the client auto-attack system.
 fn cursor_world_position(
     windows: &Query<&Window, With<PrimaryWindow>>,
     camera_query: &Query<(&Camera, &GlobalTransform), With<TopDownCamera>>,
@@ -261,6 +300,7 @@ fn cursor_world_position(
         .map(|point| clamp_world_point_to_map_top(point, map_transform, *map_ground))
 }
 
+/// Runs the clicked enemy target step for the client auto-attack system.
 fn clicked_enemy_target(
     cursor_hit: Vec3,
     target_query: &Query<(Entity, &TrainingDummy, &Transform, Option<&Player>)>,
@@ -289,10 +329,12 @@ fn clicked_enemy_target(
         })
 }
 
+/// Runs the horizontal distance step for the client auto-attack system.
 fn horizontal_distance(a: Vec3, b: Vec3) -> f32 {
     Vec2::new(a.x - b.x, a.z - b.z).length()
 }
 
+/// Runs the update attack movement step for the client auto-attack system.
 fn update_attack_movement(
     commands: &mut Commands,
     player_entity: Entity,
@@ -311,6 +353,39 @@ fn update_attack_movement(
     }
 }
 
+/// Runs the next combo stage step for the client auto-attack system.
+fn next_combo_stage(
+    attack_state: &mut AutoAttackState,
+    target: Entity,
+    combo_length: usize,
+) -> usize {
+    let combo_length = combo_length.max(1);
+    let stage = if attack_state.combo_target == Some(target) {
+        attack_state.combo_stage.min(combo_length - 1)
+    } else {
+        0
+    };
+
+    attack_state.combo_stage = (stage + 1) % combo_length;
+    attack_state.combo_target = Some(target);
+    attack_state.combo_reset_seconds = AUTO_ATTACK_COMBO_RESET_SECONDS;
+    stage
+}
+
+/// Runs the tick combo reset step for the client auto-attack system.
+fn tick_combo_reset(attack_state: &mut AutoAttackState, delta_seconds: f32) {
+    if attack_state.combo_reset_seconds <= 0.0 {
+        return;
+    }
+
+    attack_state.combo_reset_seconds = (attack_state.combo_reset_seconds - delta_seconds).max(0.0);
+    if attack_state.combo_reset_seconds <= 0.0 {
+        attack_state.combo_stage = 0;
+        attack_state.combo_target = None;
+    }
+}
+
+/// Runs the auto attack travel seconds step for the client auto-attack system.
 fn auto_attack_travel_seconds(distance: f32) -> f32 {
     let range_ratio = (distance / AUTO_ATTACK_RANGE).clamp(0.0, 1.0);
     (range_ratio * AUTO_ATTACK_MAX_TRAVEL_SECONDS).clamp(
@@ -319,6 +394,7 @@ fn auto_attack_travel_seconds(distance: f32) -> f32 {
     )
 }
 
+/// Runs the auto attack projectile material step for the client auto-attack system.
 fn auto_attack_projectile_material() -> StandardMaterial {
     StandardMaterial {
         base_color: Color::srgba(1.0, 1.0, 1.0, 0.95),
@@ -329,6 +405,7 @@ fn auto_attack_projectile_material() -> StandardMaterial {
     }
 }
 
+/// Runs the send auto attack command step for the client auto-attack system.
 fn send_auto_attack_command(
     senders: &mut Query<&mut MessageSender<PlayerCommand>, With<Client>>,
     target_player_id: u64,

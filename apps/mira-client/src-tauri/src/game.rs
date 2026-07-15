@@ -9,11 +9,13 @@ use tauri::Manager;
 
 const FORCE_RESTART_RECONNECT_DELAY: Duration = Duration::from_millis(8_500);
 
+/// Stores Game Process State data used by the desktop game-launcher process system.
 #[derive(Default)]
 pub(crate) struct GameProcessState {
     child: Mutex<Option<Child>>,
 }
 
+/// Stores Launch Game Request data used by the desktop game-launcher process system.
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LaunchGameRequest {
@@ -35,6 +37,7 @@ pub(crate) struct LaunchGameRequest {
     team: String,
 }
 
+/// Stores Launch Game Response data used by the desktop game-launcher process system.
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LaunchGameResponse {
@@ -42,6 +45,7 @@ pub(crate) struct LaunchGameResponse {
     pid: u32,
 }
 
+/// Stores Game Client Status data used by the desktop game-launcher process system.
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct GameClientStatus {
@@ -49,6 +53,7 @@ pub(crate) struct GameClientStatus {
     pid: Option<u32>,
 }
 
+/// Runs the launch game step for the desktop game-launcher process system.
 #[tauri::command]
 pub(crate) fn launch_game(
     app: tauri::AppHandle,
@@ -177,6 +182,7 @@ pub(crate) fn launch_game(
     })
 }
 
+/// Runs the game client status step for the desktop game-launcher process system.
 #[tauri::command]
 pub(crate) fn game_client_status(
     process_state: tauri::State<'_, GameProcessState>,
@@ -215,6 +221,7 @@ pub(crate) fn game_client_status(
     })
 }
 
+/// Runs the stop game client step for the desktop game-launcher process system.
 #[tauri::command]
 pub(crate) fn stop_game_client(
     process_state: tauri::State<'_, GameProcessState>,
@@ -250,6 +257,7 @@ pub(crate) fn stop_game_client(
     Ok(())
 }
 
+/// Runs the stop game child step for the desktop game-launcher process system.
 #[tauri::command]
 fn stop_game_child(child: &mut Child) -> Result<(), String> {
     child
@@ -261,6 +269,7 @@ fn stop_game_child(child: &mut Child) -> Result<(), String> {
     Ok(())
 }
 
+/// Runs the resolve game binary step for the desktop game-launcher process system.
 fn resolve_game_binary(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let binary_name = if cfg!(windows) {
         "mira-game-client.exe"
@@ -328,6 +337,7 @@ fn resolve_game_binary(app: &tauri::AppHandle) -> Result<PathBuf, String> {
         })
 }
 
+/// Runs the empty as default step for the desktop game-launcher process system.
 fn empty_as_default<'a>(value: &'a str, default_value: &'a str) -> &'a str {
     if value.trim().is_empty() {
         default_value
@@ -336,6 +346,7 @@ fn empty_as_default<'a>(value: &'a str, default_value: &'a str) -> &'a str {
     }
 }
 
+/// Runs the resolve game asset root step for the desktop game-launcher process system.
 fn resolve_game_asset_root(
     app: &tauri::AppHandle,
     game_dir: &std::path::Path,
@@ -354,6 +365,7 @@ fn resolve_game_asset_root(
         })
 }
 
+/// Runs the format path candidates step for the desktop game-launcher process system.
 fn format_path_candidates(candidates: &[PathBuf]) -> String {
     candidates
         .iter()
@@ -362,6 +374,7 @@ fn format_path_candidates(candidates: &[PathBuf]) -> String {
         .join(", ")
 }
 
+/// Runs the game asset root candidates step for the desktop game-launcher process system.
 fn game_asset_root_candidates(app: &tauri::AppHandle, game_dir: &std::path::Path) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
 
@@ -396,6 +409,7 @@ fn game_asset_root_candidates(app: &tauri::AppHandle, game_dir: &std::path::Path
     candidates
 }
 
+/// Runs the launch stage for base url step for the desktop game-launcher process system.
 fn launch_stage_for_base_url(base_url: &str) -> &'static str {
     tauri::Url::parse(base_url)
         .ok()
@@ -403,6 +417,7 @@ fn launch_stage_for_base_url(base_url: &str) -> &'static str {
         .unwrap_or("Dev")
 }
 
+/// Runs the localhost matches stage step for the desktop game-launcher process system.
 fn localhost_matches_stage(host: &str) -> &'static str {
     let host = host.trim().trim_matches(['[', ']']).to_ascii_lowercase();
 

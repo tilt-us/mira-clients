@@ -3,6 +3,7 @@ mod game;
 mod launcher;
 mod oauth;
 
+/// Runs the run step for the desktop client Tauri bootstrap.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()

@@ -162,6 +162,7 @@ mod tests {
     use game_shared::network::DEFAULT_SERVER_ADDR;
     use std::net::SocketAddr;
 
+    /// Runs the defaults to shared server addr step for the dedicated server CLI bootstrap.
     #[test]
     fn defaults_to_shared_server_addr() {
         let (settings, control_settings) = server_settings_from_args(Vec::<String>::new())
@@ -175,6 +176,7 @@ mod tests {
         );
     }
 
+    /// Verifies parses long port arg behavior for the dedicated server CLI bootstrap.
     #[test]
     fn parses_long_port_arg() {
         let (settings, control_settings) = server_settings_from_args(["--port", "7777"])
@@ -185,6 +187,7 @@ mod tests {
         assert_eq!(control_settings.listen_addr.port(), 7777);
     }
 
+    /// Verifies parses long port equals arg behavior for the dedicated server CLI bootstrap.
     #[test]
     fn parses_long_port_equals_arg() {
         let (settings, control_settings) =
@@ -194,6 +197,7 @@ mod tests {
         assert_eq!(control_settings.listen_addr.port(), 7778);
     }
 
+    /// Verifies parses long host arg behavior for the dedicated server CLI bootstrap.
     #[test]
     fn parses_long_host_arg() {
         let (settings, _) = server_settings_from_args(["--host", "0.0.0.0"])
@@ -206,6 +210,7 @@ mod tests {
         );
     }
 
+    /// Verifies parses long bind host equals arg behavior for the dedicated server CLI bootstrap.
     #[test]
     fn parses_long_bind_host_equals_arg() {
         let (settings, _) = server_settings_from_args(["--bind-host=0.0.0.0"])
@@ -218,6 +223,7 @@ mod tests {
         );
     }
 
+    /// Verifies parses short port arg behavior for the dedicated server CLI bootstrap.
     #[test]
     fn parses_short_port_arg() {
         let (settings, control_settings) = server_settings_from_args(["-p7779"]).unwrap().unwrap();
@@ -226,6 +232,7 @@ mod tests {
         assert_eq!(control_settings.listen_addr.port(), 7779);
     }
 
+    /// Runs the explicit control port overrides main port step for the dedicated server CLI bootstrap.
     #[test]
     fn explicit_control_port_overrides_main_port() {
         let (settings, control_settings) =
@@ -237,6 +244,7 @@ mod tests {
         assert_eq!(control_settings.listen_addr.port(), 6001);
     }
 
+    /// Verifies rejects invalid port behavior for the dedicated server CLI bootstrap.
     #[test]
     fn rejects_invalid_port() {
         let error = server_settings_from_args(["--port", "70000"]).unwrap_err();
@@ -244,6 +252,7 @@ mod tests {
         assert_eq!(error, "Invalid port: 70000");
     }
 
+    /// Verifies rejects invalid host behavior for the dedicated server CLI bootstrap.
     #[test]
     fn rejects_invalid_host() {
         let error = server_settings_from_args(["--host", "localhost"]).unwrap_err();
@@ -251,6 +260,7 @@ mod tests {
         assert_eq!(error, "Invalid host: localhost");
     }
 
+    /// Verifies parses control api args behavior for the dedicated server CLI bootstrap.
     #[test]
     fn parses_control_api_args() {
         let (_, control_settings) =

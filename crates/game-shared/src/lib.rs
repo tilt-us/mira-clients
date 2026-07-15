@@ -16,5 +16,6 @@ pub const PLAYERS_PER_TEAM: usize = 5;
 pub struct MiraSharedPlugin;
 
 impl Plugin for MiraSharedPlugin {
+    /// Registers Bevy resources, plugins, or systems for the shared game crate plugin.
     fn build(&self, _app: &mut App) {}
 }

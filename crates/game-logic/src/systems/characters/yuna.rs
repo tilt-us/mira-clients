@@ -37,6 +37,7 @@ const E_TARGET_CLICK_RADIUS: f32 = 1.4;
 const E_TRAVEL_SECONDS: f32 = 0.45;
 const E_PROJECTILE_RADIUS: f32 = 0.32;
 
+/// Stores Yuna QSettings data used by the Yuna ability system.
 #[derive(Resource, Debug, Clone, Copy)]
 pub(in crate::systems) struct YunaQSettings {
     pub(in crate::systems) range: f32,
@@ -47,6 +48,7 @@ pub(in crate::systems) struct YunaQSettings {
 }
 
 impl Default for YunaQSettings {
+    /// Returns the default configuration used by the Yuna ability system.
     fn default() -> Self {
         Self {
             range: Q_RANGE,
@@ -58,6 +60,7 @@ impl Default for YunaQSettings {
     }
 }
 
+/// Stores Yuna WSettings data used by the Yuna ability system.
 #[derive(Resource, Debug, Clone, Copy)]
 pub(in crate::systems) struct YunaWSettings {
     pub(in crate::systems) radius: f32,
@@ -65,6 +68,7 @@ pub(in crate::systems) struct YunaWSettings {
 }
 
 impl Default for YunaWSettings {
+    /// Returns the default configuration used by the Yuna ability system.
     fn default() -> Self {
         Self {
             radius: W_RADIUS,
@@ -73,6 +77,7 @@ impl Default for YunaWSettings {
     }
 }
 
+/// Stores Yuna ESettings data used by the Yuna ability system.
 #[derive(Resource, Debug, Clone, Copy)]
 pub(in crate::systems) struct YunaESettings {
     pub(in crate::systems) range: f32,
@@ -81,6 +86,7 @@ pub(in crate::systems) struct YunaESettings {
 }
 
 impl Default for YunaESettings {
+    /// Returns the default configuration used by the Yuna ability system.
     fn default() -> Self {
         Self {
             range: E_RANGE,
@@ -90,99 +96,118 @@ impl Default for YunaESettings {
     }
 }
 
+/// Stores Yuna QCast State data used by the Yuna ability system.
 #[derive(Resource, Debug, Clone)]
 pub(in crate::systems) struct YunaQCastState {
     cooldown: Timer,
 }
 
+/// Stores Yuna WCast State data used by the Yuna ability system.
 #[derive(Resource, Debug, Clone)]
 pub(in crate::systems) struct YunaWCastState {
     cooldown: Timer,
 }
 
+/// Stores Yuna ECast State data used by the Yuna ability system.
 #[derive(Resource, Debug, Clone)]
 pub(in crate::systems) struct YunaECastState {
     cooldown: Timer,
 }
 
 impl Default for YunaQCastState {
+    /// Returns the default configuration used by the Yuna ability system.
     fn default() -> Self {
         Self::ready(Q_COOLDOWN_SECONDS)
     }
 }
 
 impl Default for YunaWCastState {
+    /// Returns the default configuration used by the Yuna ability system.
     fn default() -> Self {
         Self::ready(W_COOLDOWN_SECONDS)
     }
 }
 
 impl Default for YunaECastState {
+    /// Returns the default configuration used by the Yuna ability system.
     fn default() -> Self {
         Self::ready(E_COOLDOWN_SECONDS)
     }
 }
 
 impl YunaQCastState {
+    /// Runs the ready step for the Yuna ability system.
     pub(in crate::systems) fn ready(cooldown_seconds: f32) -> Self {
         Self {
             cooldown: ready_timer(cooldown_seconds),
         }
     }
 
+    /// Runs the remaining seconds step for the Yuna ability system.
     pub(in crate::systems) fn remaining_seconds(&self) -> f32 {
         remaining_timer_seconds(&self.cooldown)
     }
 
+    /// Runs the total seconds step for the Yuna ability system.
     pub(in crate::systems) fn total_seconds(&self) -> f32 {
         total_timer_seconds(&self.cooldown)
     }
 
+    /// Runs the ready percent step for the Yuna ability system.
     pub(in crate::systems) fn ready_percent(&self) -> f32 {
         ready_timer_percent(&self.cooldown)
     }
 }
 
 impl YunaWCastState {
+    /// Runs the ready step for the Yuna ability system.
     pub(in crate::systems) fn ready(cooldown_seconds: f32) -> Self {
         Self {
             cooldown: ready_timer(cooldown_seconds),
         }
     }
 
+    /// Runs the remaining seconds step for the Yuna ability system.
     pub(in crate::systems) fn remaining_seconds(&self) -> f32 {
         remaining_timer_seconds(&self.cooldown)
     }
 
+    /// Runs the total seconds step for the Yuna ability system.
     pub(in crate::systems) fn total_seconds(&self) -> f32 {
         total_timer_seconds(&self.cooldown)
     }
 
+    /// Runs the ready percent step for the Yuna ability system.
     pub(in crate::systems) fn ready_percent(&self) -> f32 {
         ready_timer_percent(&self.cooldown)
     }
 }
 
 impl YunaECastState {
+    /// Runs the ready step for the Yuna ability system.
     pub(in crate::systems) fn ready(cooldown_seconds: f32) -> Self {
         Self {
             cooldown: ready_timer(cooldown_seconds),
         }
     }
 
+    /// Runs the remaining seconds step for the Yuna ability system.
     pub(in crate::systems) fn remaining_seconds(&self) -> f32 {
         remaining_timer_seconds(&self.cooldown)
     }
 
+    /// Runs the total seconds step for the Yuna ability system.
     pub(in crate::systems) fn total_seconds(&self) -> f32 {
         total_timer_seconds(&self.cooldown)
     }
 
+    /// Runs the ready percent step for the Yuna ability system.
     pub(in crate::systems) fn ready_percent(&self) -> f32 {
         ready_timer_percent(&self.cooldown)
     }
 }
 
+/// Stores Yuna QProjectile data used by the Yuna ability system.
 #[derive(Component, Debug, Clone)]
 pub(in crate::systems) struct YunaQProjectile {
     start: Vec3,
@@ -191,18 +216,21 @@ pub(in crate::systems) struct YunaQProjectile {
     settings: YunaQSettings,
 }
 
+/// Stores Yuna QOrb data used by the Yuna ability system.
 #[derive(Component, Debug, Clone)]
 pub(in crate::systems) struct YunaQOrb {
     timer: Timer,
     radius: f32,
 }
 
+/// Stores Yuna QField data used by the Yuna ability system.
 #[derive(Component, Debug, Clone)]
 pub(in crate::systems) struct YunaQField {
     timer: Timer,
     radius: f32,
 }
 
+/// Stores Yuna WField data used by the Yuna ability system.
 #[derive(Component, Debug, Clone)]
 pub(in crate::systems) struct YunaWField {
     timer: Timer,
@@ -210,6 +238,7 @@ pub(in crate::systems) struct YunaWField {
     caster_player_id: Option<u64>,
 }
 
+/// Stores Yuna EStun Bolt data used by the Yuna ability system.
 #[derive(Component, Debug, Clone)]
 pub(in crate::systems) struct YunaEStunBolt {
     start: Vec3,
@@ -217,21 +246,27 @@ pub(in crate::systems) struct YunaEStunBolt {
     timer: Timer,
 }
 
+/// Stores Yuna QRange Indicator data used by the Yuna ability system.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(in crate::systems) struct YunaQRangeIndicator;
 
+/// Stores Yuna QTarget Indicator data used by the Yuna ability system.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(in crate::systems) struct YunaQTargetIndicator;
 
+/// Stores Yuna WIndicator data used by the Yuna ability system.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(in crate::systems) struct YunaWIndicator;
 
+/// Stores Yuna ERange Indicator data used by the Yuna ability system.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(in crate::systems) struct YunaERangeIndicator;
 
+/// Stores Yuna ETarget Indicator data used by the Yuna ability system.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(in crate::systems) struct YunaETargetIndicator;
 
+/// Runs the spawn yuna indicators step for the Yuna ability system.
 pub(in crate::systems) fn spawn_yuna_indicators(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -300,6 +335,7 @@ pub(in crate::systems) fn spawn_yuna_indicators(
     ));
 }
 
+/// Runs the cast q gravity orb step for the Yuna ability system.
 pub(in crate::systems) fn cast_q_gravity_orb(
     time: Res<Time>,
     mouse_buttons: Res<ButtonInput<MouseButton>>,
@@ -359,6 +395,7 @@ pub(in crate::systems) fn cast_q_gravity_orb(
     cast_state.cooldown.reset();
 }
 
+/// Runs the cast w healing field step for the Yuna ability system.
 pub(in crate::systems) fn cast_w_healing_field(
     time: Res<Time>,
     keyboard: Res<ButtonInput<KeyCode>>,
@@ -402,6 +439,7 @@ pub(in crate::systems) fn cast_w_healing_field(
     cast_state.cooldown.reset();
 }
 
+/// Runs the cast e stun bolt step for the Yuna ability system.
 pub(in crate::systems) fn cast_e_stun_bolt(
     time: Res<Time>,
     mouse_buttons: Res<ButtonInput<MouseButton>>,
@@ -464,6 +502,7 @@ pub(in crate::systems) fn cast_e_stun_bolt(
     cast_state.cooldown.reset();
 }
 
+/// Runs the update yuna indicators step for the Yuna ability system.
 pub(in crate::systems) fn update_yuna_indicators(
     keyboard: Res<ButtonInput<KeyCode>>,
     windows: Query<&Window, With<PrimaryWindow>>,
@@ -589,6 +628,7 @@ pub(in crate::systems) fn update_yuna_indicators(
     }
 }
 
+/// Runs the update q projectiles step for the Yuna ability system.
 pub(in crate::systems) fn update_q_projectiles(
     time: Res<Time>,
     mut commands: Commands,
@@ -619,6 +659,7 @@ pub(in crate::systems) fn update_q_projectiles(
     }
 }
 
+/// Runs the update q fields step for the Yuna ability system.
 pub(in crate::systems) fn update_q_fields(
     time: Res<Time>,
     mut commands: Commands,
@@ -678,6 +719,7 @@ pub(in crate::systems) fn update_q_fields(
     }
 }
 
+/// Runs the update w fields step for the Yuna ability system.
 pub(in crate::systems) fn update_w_fields(
     time: Res<Time>,
     mut commands: Commands,
@@ -727,6 +769,7 @@ pub(in crate::systems) fn update_w_fields(
     }
 }
 
+/// Runs the update e stun bolts step for the Yuna ability system.
 pub(in crate::systems) fn update_e_stun_bolts(
     time: Res<Time>,
     mut commands: Commands,
@@ -755,6 +798,7 @@ pub(in crate::systems) fn update_e_stun_bolts(
     }
 }
 
+/// Runs the spawn remote ability visual step for the Yuna ability system.
 pub(in crate::systems) fn spawn_remote_ability_visual(
     event: AbilityVisualEvent,
     q_settings: &YunaQSettings,
@@ -815,6 +859,7 @@ pub(in crate::systems) fn spawn_remote_ability_visual(
     }
 }
 
+/// Runs the spawn q projectile step for the Yuna ability system.
 fn spawn_q_projectile(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -844,6 +889,7 @@ fn spawn_q_projectile(
     ));
 }
 
+/// Runs the spawn q field and orb step for the Yuna ability system.
 fn spawn_q_field_and_orb(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -892,6 +938,7 @@ fn spawn_q_field_and_orb(
     ));
 }
 
+/// Runs the spawn w field step for the Yuna ability system.
 fn spawn_w_field(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -924,6 +971,7 @@ fn spawn_w_field(
     ));
 }
 
+/// Runs the spawn e stun bolt step for the Yuna ability system.
 fn spawn_e_stun_bolt(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -952,6 +1000,7 @@ fn spawn_e_stun_bolt(
     ));
 }
 
+/// Runs the indicator material step for the Yuna ability system.
 fn indicator_material(base_color: Color, emissive: Color) -> StandardMaterial {
     StandardMaterial {
         base_color,
@@ -962,6 +1011,7 @@ fn indicator_material(base_color: Color, emissive: Color) -> StandardMaterial {
     }
 }
 
+/// Runs the yuna w follow position step for the Yuna ability system.
 fn yuna_w_follow_position(
     caster_player_id: Option<u64>,
     player_query: &Query<(&Player, &Transform), Without<YunaWField>>,
@@ -973,29 +1023,35 @@ fn yuna_w_follow_position(
         .map(|(_, transform)| transform.translation)
 }
 
+/// Runs the ready timer step for the Yuna ability system.
 fn ready_timer(cooldown_seconds: f32) -> Timer {
     let mut timer = Timer::from_seconds(cooldown_seconds.max(f32::EPSILON), TimerMode::Once);
     timer.set_elapsed(timer.duration());
     timer
 }
 
+/// Runs the total timer seconds step for the Yuna ability system.
 fn total_timer_seconds(timer: &Timer) -> f32 {
     timer.duration().as_secs_f32().max(f32::EPSILON)
 }
 
+/// Runs the remaining timer seconds step for the Yuna ability system.
 fn remaining_timer_seconds(timer: &Timer) -> f32 {
     (total_timer_seconds(timer) - timer.elapsed().as_secs_f32()).max(0.0)
 }
 
+/// Runs the ready timer percent step for the Yuna ability system.
 fn ready_timer_percent(timer: &Timer) -> f32 {
     let total = total_timer_seconds(timer);
     ((total - remaining_timer_seconds(timer)) / total * 100.0).clamp(0.0, 100.0)
 }
 
+/// Runs the timer progress step for the Yuna ability system.
 fn timer_progress(timer: &Timer) -> f32 {
     (timer.elapsed_secs() / timer.duration().as_secs_f32().max(f32::EPSILON)).clamp(0.0, 1.0)
 }
 
+/// Runs the send ability command step for the Yuna ability system.
 fn send_ability_command(
     senders: &mut Query<&mut MessageSender<PlayerCommand>, With<Client>>,
     slot: AbilitySlot,
@@ -1012,6 +1068,7 @@ fn send_ability_command(
     }
 }
 
+/// Runs the cursor hit on map step for the Yuna ability system.
 fn cursor_hit_on_map(
     windows: &Query<&Window, With<PrimaryWindow>>,
     camera_query: &Query<(&Camera, &GlobalTransform), With<TopDownCamera>>,
@@ -1033,6 +1090,7 @@ fn cursor_hit_on_map(
         .and_then(|ray| ray_hit_map_top(ray, map_transform, map_ground))
 }
 
+/// Runs the clamp cast target step for the Yuna ability system.
 fn clamp_cast_target(origin: Vec3, target: Vec3, range: f32) -> Vec3 {
     let delta = Vec3::new(target.x - origin.x, 0.0, target.z - origin.z);
     if delta.length_squared() <= range * range {
@@ -1042,6 +1100,7 @@ fn clamp_cast_target(origin: Vec3, target: Vec3, range: f32) -> Vec3 {
     origin + delta.normalize_or_zero() * range
 }
 
+/// Runs the find clicked enemy target step for the Yuna ability system.
 fn find_clicked_enemy_target<'a, F>(
     cursor_hit: Vec3,
     enemy_query: &'a Query<(&TrainingDummy, &Transform), F>,
@@ -1062,6 +1121,7 @@ where
         })
 }
 
+/// Runs the horizontal distance step for the Yuna ability system.
 fn horizontal_distance(a: Vec3, b: Vec3) -> f32 {
     Vec2::new(a.x - b.x, a.z - b.z).length()
 }

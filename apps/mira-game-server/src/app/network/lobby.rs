@@ -1,7 +1,10 @@
 use super::super::content::{ServerAbilityDefinition, ServerChampionCatalog};
 use super::super::match_manifest::{ServerMatchManifest, ServerMatchPlayer};
 use bevy::prelude::*;
-use game_shared::game::team::TeamSpec;
+use game_shared::game::{
+    auto_attack::{AUTO_ATTACK_COMBO_RESET_SECONDS, auto_attack_combo},
+    team::TeamSpec,
+};
 use game_shared::network::{
     AbilitySlot, AbilityVisualEvent, AbilityVisualTuning, ChampionCatalogUpdate, ChampionId,
     ClientLeave, DisplayReady, LoadingScreenPlayer, LoadingScreenStatus, MatchSnapshot,
@@ -23,9 +26,8 @@ const MATCH_SNAPSHOT_INTERVAL_SECONDS: f32 = 0.05;
 const RESPAWN_SECONDS: f32 = 5.0;
 const RESPAWN_INPUT_GRACE_SECONDS: f32 = 0.25;
 const AUTO_ATTACK_RANGE: f32 = 5.0;
-const AUTO_ATTACK_COOLDOWN_SECONDS: f32 = 1.0;
-const AUTO_ATTACK_DAMAGE: f32 = 10.0;
 
+/// Enumerates Development Team states or variants used by the dedicated server lobby simulation system.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DevelopmentTeam {
     Neutral,
@@ -33,7 +35,6 @@ enum DevelopmentTeam {
     Dark,
 }
 
-#[derive(Debug, Clone, Copy)]
 /// Description:
 /// Stores the latest known visual state for one connected development player.
 ///
@@ -49,6 +50,7 @@ enum DevelopmentTeam {
 /// - `respawn_timer`: Remaining respawn time when the player is dead.
 /// - `respawn_generation`: Monotonic counter incremented each time the player respawns.
 /// - `respawn_input_grace`: Short duration that rejects stale position updates after respawn.
+#[derive(Debug, Clone, Copy)]
 struct ConnectedPlayerState {
     position: Vec3,
     yaw: f32,
@@ -59,6 +61,9 @@ struct ConnectedPlayerState {
     lira_w_cooldown: f32,
     lira_e_cooldown: f32,
     auto_attack_cooldown: f32,
+    auto_attack_combo_stage: usize,
+    auto_attack_combo_target: Option<u64>,
+    auto_attack_combo_reset_timer: f32,
     ignara_q_cooldown: f32,
     ignara_w_cooldown: f32,
     ignara_e_cooldown: f32,
@@ -80,17 +85,16 @@ struct ConnectedPlayerState {
     respawn_input_grace: f32,
 }
 
-#[derive(Resource, Debug, Default)]
 /// Description:
 /// Stores the latest known server-side state for connected development players.
 ///
 /// Fields:
 /// - `states`: Latest known player states by player id.
+#[derive(Resource, Debug, Default)]
 pub(super) struct ConnectedPlayers {
     states: HashMap<u64, ConnectedPlayerState>,
 }
 
-#[derive(Resource, Debug, Default)]
 /// Description:
 /// Stores active server-authoritative ability simulations.
 ///
@@ -98,6 +102,7 @@ pub(super) struct ConnectedPlayers {
 /// - `q_projectiles`: Active Lira Q projectiles.
 /// - `w_projectiles`: Active Lira W arcing projectiles.
 /// - `e_missiles`: Active Lira E contact missiles.
+#[derive(Resource, Debug, Default)]
 pub(super) struct ActiveServerAbilities {
     q_projectiles: Vec<ServerQProjectile>,
     w_projectiles: Vec<ServerWProjectile>,
@@ -111,7 +116,6 @@ pub(super) struct ActiveServerAbilities {
     sophia_minions: Vec<ServerSophiaMinion>,
 }
 
-#[derive(Debug, Clone)]
 /// Description:
 /// Stores one active server-authoritative Lira Q projectile.
 ///
@@ -126,6 +130,7 @@ pub(super) struct ActiveServerAbilities {
 /// - `direct_hit_damage`: Server-authoritative damage applied by pass-through hits.
 /// - `area_damage`: Server-authoritative damage applied by the terminal explosion.
 /// - `hit_targets`: Player ids already hit by the pass-through projectile.
+#[derive(Debug, Clone)]
 struct ServerQProjectile {
     caster_player_id: u64,
     start: Vec3,
@@ -139,7 +144,6 @@ struct ServerQProjectile {
     hit_targets: Vec<u64>,
 }
 
-#[derive(Debug, Clone, Copy)]
 /// Description:
 /// Stores one active server-authoritative Lira W projectile.
 ///
@@ -150,6 +154,7 @@ struct ServerQProjectile {
 /// - `travel_seconds`: Server-authoritative travel duration.
 /// - `explosion_radius`: Server-authoritative landing explosion radius.
 /// - `area_damage`: Server-authoritative damage applied by the landing explosion.
+#[derive(Debug, Clone, Copy)]
 struct ServerWProjectile {
     caster_player_id: u64,
     end: Vec3,
@@ -159,7 +164,6 @@ struct ServerWProjectile {
     area_damage: f32,
 }
 
-#[derive(Debug, Clone, Copy)]
 /// Description:
 /// Stores one active server-authoritative Lira E missile.
 ///
@@ -177,6 +181,7 @@ struct ServerWProjectile {
 /// - `chase_speed`: Server-authoritative chase speed.
 /// - `missile_radius`: Server-authoritative hit radius.
 /// - `mode`: Current missile behavior mode.
+#[derive(Debug, Clone, Copy)]
 struct ServerEMissile {
     caster_player_id: u64,
     position: Vec3,
@@ -193,21 +198,21 @@ struct ServerEMissile {
     mode: ServerEMissileMode,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// Description:
 /// Defines the server-side behavior mode for one Lira E missile.
 ///
 /// Fields:
 /// - `Orbiting`: Missile is orbiting the caster and searching for a target.
 /// - `Chasing`: Missile is chasing the stored player id.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ServerEMissileMode {
     Orbiting,
     Chasing(u64),
 }
 
-#[derive(Debug, Clone)]
 /// Description:
 /// Stores one server-authoritative Ignara Q burning ground zone.
+#[derive(Debug, Clone)]
 struct ServerIgnaraQZone {
     caster_player_id: u64,
     start: Vec3,
@@ -218,9 +223,9 @@ struct ServerIgnaraQZone {
     damage_per_second: f32,
 }
 
-#[derive(Debug, Clone, Copy)]
 /// Description:
 /// Stores one server-authoritative Ignara W fireball.
+#[derive(Debug, Clone, Copy)]
 struct ServerIgnaraWFireball {
     target_player_id: u64,
     elapsed: f32,
@@ -228,9 +233,9 @@ struct ServerIgnaraWFireball {
     damage: f32,
 }
 
-#[derive(Debug, Clone)]
 /// Description:
 /// Stores one server-authoritative Ignara E rolling snowball.
+#[derive(Debug, Clone)]
 struct ServerIgnaraESnowball {
     caster_player_id: u64,
     start: Vec3,
@@ -247,9 +252,9 @@ struct ServerIgnaraESnowball {
     hit_targets: Vec<u64>,
 }
 
-#[derive(Debug, Clone)]
 /// Description:
 /// Stores one server-authoritative Yuna Q gravity field.
+#[derive(Debug, Clone)]
 struct ServerYunaQOrb {
     caster_player_id: u64,
     position: Vec3,
@@ -262,9 +267,9 @@ struct ServerYunaQOrb {
     move_speed_multiplier: f32,
 }
 
-#[derive(Debug, Clone)]
 /// Description:
 /// Stores one server-authoritative Yuna W healing field.
+#[derive(Debug, Clone)]
 struct ServerYunaWField {
     caster_player_id: u64,
     elapsed: f32,
@@ -274,9 +279,9 @@ struct ServerYunaWField {
     heal: f32,
 }
 
-#[derive(Debug, Clone)]
 /// Description:
 /// Stores one server-authoritative Sophia Q damage orb attached to an enemy player.
+#[derive(Debug, Clone)]
 struct ServerSophiaQOrb {
     caster_player_id: u64,
     target_player_id: u64,
@@ -286,9 +291,9 @@ struct ServerSophiaQOrb {
     damage_per_second: f32,
 }
 
-#[derive(Debug, Clone)]
 /// Description:
 /// Stores one server-authoritative Sophia W minion.
+#[derive(Debug, Clone)]
 struct ServerSophiaMinion {
     caster_player_id: u64,
     position: Vec3,
@@ -304,37 +309,38 @@ struct ServerSophiaMinion {
     target_player_id: Option<u64>,
 }
 
-#[derive(Resource, Debug)]
 /// Description:
 /// Limits how often the development server broadcasts match roster snapshots.
 ///
 /// Fields:
 /// - `0`: Repeating timer for snapshot broadcasts.
+#[derive(Resource, Debug)]
 pub(super) struct MatchSnapshotBroadcastTimer(Timer);
 
-#[derive(Resource, Debug, Default)]
 /// Description:
 /// Tracks connected clients that already received the current champion catalog.
 ///
 /// Fields:
 /// - `0`: Netcode player ids that have received the catalog update.
+#[derive(Resource, Debug, Default)]
 pub(super) struct SentChampionCatalogClients(HashSet<u64>);
 
-#[derive(Resource, Debug, Default)]
 /// Description:
 /// Tracks clients whose display has finished loading local match visuals.
+#[derive(Resource, Debug, Default)]
 pub(super) struct LoadingScreenReadyPlayers {
     ready_player_ids: HashSet<u64>,
 }
 
-#[derive(Resource, Debug, Default)]
 /// Description:
 /// Tracks players that intentionally left but whose transport connection may not have timed out yet.
+#[derive(Resource, Debug, Default)]
 pub(super) struct LeavingPlayers {
     player_ids: HashSet<u64>,
 }
 
 impl Default for MatchSnapshotBroadcastTimer {
+    /// Returns the default configuration used by the dedicated server lobby simulation system.
     fn default() -> Self {
         Self(Timer::from_seconds(
             MATCH_SNAPSHOT_INTERVAL_SECONDS,
@@ -538,6 +544,9 @@ pub(super) fn receive_player_state_updates(
                     if state.champion != champion {
                         state.champion = champion;
                         state.health = max_health;
+                        state.auto_attack_combo_stage = 0;
+                        state.auto_attack_combo_target = None;
+                        state.auto_attack_combo_reset_timer = 0.0;
                     }
                     state.team = team.into();
                     if state.health <= 0.0
@@ -561,6 +570,9 @@ pub(super) fn receive_player_state_updates(
                     lira_w_cooldown: 0.0,
                     lira_e_cooldown: 0.0,
                     auto_attack_cooldown: 0.0,
+                    auto_attack_combo_stage: 0,
+                    auto_attack_combo_target: None,
+                    auto_attack_combo_reset_timer: 0.0,
                     ignara_q_cooldown: 0.0,
                     ignara_w_cooldown: 0.0,
                     ignara_e_cooldown: 0.0,
@@ -886,6 +898,9 @@ pub(super) fn update_player_death_and_respawn(
         state.lira_w_cooldown = 0.0;
         state.lira_e_cooldown = 0.0;
         state.auto_attack_cooldown = 0.0;
+        state.auto_attack_combo_stage = 0;
+        state.auto_attack_combo_target = None;
+        state.auto_attack_combo_reset_timer = 0.0;
         state.ignara_q_cooldown = 0.0;
         state.ignara_w_cooldown = 0.0;
         state.ignara_e_cooldown = 0.0;
@@ -1021,6 +1036,9 @@ pub(super) fn broadcast_match_snapshots(
                     lira_w_cooldown: 0.0,
                     lira_e_cooldown: 0.0,
                     auto_attack_cooldown: 0.0,
+                    auto_attack_combo_stage: 0,
+                    auto_attack_combo_target: None,
+                    auto_attack_combo_reset_timer: 0.0,
                     ignara_q_cooldown: 0.0,
                     ignara_w_cooldown: 0.0,
                     ignara_e_cooldown: 0.0,
@@ -1098,6 +1116,7 @@ fn netcode_player_id(remote_id: RemoteId) -> Option<u64> {
     }
 }
 
+/// Runs the expected loading player ids step for the dedicated server lobby simulation system.
 fn expected_loading_player_ids(
     manifest: &ServerMatchManifest,
     connected_player_ids: &HashSet<u64>,
@@ -1109,6 +1128,7 @@ fn expected_loading_player_ids(
     connected_player_ids.clone()
 }
 
+/// Runs the loading screen players step for the dedicated server lobby simulation system.
 fn loading_screen_players(
     manifest: &ServerMatchManifest,
     players: &ConnectedPlayers,
@@ -1162,6 +1182,7 @@ fn loading_screen_players(
     loading_players
 }
 
+/// Runs the authorized match player step for the dedicated server lobby simulation system.
 fn authorized_match_player(
     manifest: &ServerMatchManifest,
     player_id: u64,
@@ -1179,6 +1200,7 @@ fn authorized_match_player(
     Some(None)
 }
 
+/// Runs the authorized champion step for the dedicated server lobby simulation system.
 fn authorized_champion(
     manifest: &ServerMatchManifest,
     player_id: u64,
@@ -1207,6 +1229,7 @@ fn development_spawn_position(index: usize, player_count: usize) -> Vec3 {
 }
 
 impl From<DevelopmentTeam> for TeamSpec {
+    /// Runs the from step for the dedicated server lobby simulation system.
     fn from(value: DevelopmentTeam) -> Self {
         match value {
             DevelopmentTeam::Neutral => TeamSpec::Neutral,
@@ -1217,6 +1240,7 @@ impl From<DevelopmentTeam> for TeamSpec {
 }
 
 impl From<TeamSpec> for DevelopmentTeam {
+    /// Runs the from step for the dedicated server lobby simulation system.
     fn from(value: TeamSpec) -> Self {
         match value {
             TeamSpec::Neutral => DevelopmentTeam::Neutral,
@@ -1398,11 +1422,25 @@ fn accept_auto_attack(
         return;
     }
 
+    let combo = auto_attack_combo(caster.champion);
+    let combo_stage = if caster.auto_attack_combo_target == Some(target_player_id) {
+        caster
+            .auto_attack_combo_stage
+            .min(combo.combo_length.saturating_sub(1))
+    } else {
+        0
+    };
+    let damage = combo.damage_for_stage(combo_stage);
+    let next_combo_stage = (combo_stage + 1) % combo.combo_length.max(1);
+
     if let Some(caster) = players.states.get_mut(&caster_player_id) {
-        caster.auto_attack_cooldown = AUTO_ATTACK_COOLDOWN_SECONDS;
+        caster.auto_attack_cooldown = combo.cooldown_seconds();
+        caster.auto_attack_combo_stage = next_combo_stage;
+        caster.auto_attack_combo_target = Some(target_player_id);
+        caster.auto_attack_combo_reset_timer = AUTO_ATTACK_COMBO_RESET_SECONDS;
     }
     if let Some(target) = players.states.get_mut(&target_player_id) {
-        apply_damage(target, AUTO_ATTACK_DAMAGE);
+        apply_damage(target, damage);
     }
 }
 
@@ -2059,6 +2097,14 @@ fn tick_ability_cooldowns(players: &mut ConnectedPlayers, delta_seconds: f32) {
         state.lira_w_cooldown = (state.lira_w_cooldown - delta_seconds).max(0.0);
         state.lira_e_cooldown = (state.lira_e_cooldown - delta_seconds).max(0.0);
         state.auto_attack_cooldown = (state.auto_attack_cooldown - delta_seconds).max(0.0);
+        if state.auto_attack_combo_reset_timer > 0.0 {
+            state.auto_attack_combo_reset_timer =
+                (state.auto_attack_combo_reset_timer - delta_seconds).max(0.0);
+            if state.auto_attack_combo_reset_timer <= 0.0 {
+                state.auto_attack_combo_stage = 0;
+                state.auto_attack_combo_target = None;
+            }
+        }
         state.ignara_q_cooldown = (state.ignara_q_cooldown - delta_seconds).max(0.0);
         state.ignara_w_cooldown = (state.ignara_w_cooldown - delta_seconds).max(0.0);
         state.ignara_e_cooldown = (state.ignara_e_cooldown - delta_seconds).max(0.0);
@@ -2738,6 +2784,7 @@ fn ignara_e_radius_for_distance(distance: f32, width: f32, range: f32) -> f32 {
     base_radius * (1.0 + progress * 1.85)
 }
 
+/// Runs the positive or step for the dedicated server lobby simulation system.
 fn positive_or(value: f32, fallback: f32) -> f32 {
     if value.is_finite() && value > 0.0 {
         value
@@ -2865,4 +2912,162 @@ fn distance_to_segment_xz(point: Vec3, segment_start: Vec3, segment_end: Vec3) -
 /// - XZ-plane distance between both positions.
 fn horizontal_distance(left: Vec3, right: Vec3) -> f32 {
     Vec2::new(left.x, left.z).distance(Vec2::new(right.x, right.z))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Verifies accepted auto attacks apply champion combo damage behavior for the dedicated server lobby simulation system.
+    #[test]
+    fn accepted_auto_attacks_apply_champion_combo_damage() {
+        let mut players = ConnectedPlayers::default();
+        players.states.insert(
+            1,
+            test_player_state(LIRA_CHAMPION_ID, DevelopmentTeam::Light, Vec3::ZERO),
+        );
+        players.states.insert(
+            2,
+            test_player_state(
+                DARK_TARGET_CHAMPION,
+                DevelopmentTeam::Dark,
+                Vec3::new(3.0, 0.0, 0.0),
+            ),
+        );
+
+        let combo = auto_attack_combo(LIRA_CHAMPION_ID);
+        let expected_damages = (0..combo.combo_length)
+            .map(|stage| combo.damage_for_stage(stage))
+            .collect::<Vec<_>>();
+        let mut expected_health = 100.0;
+
+        for expected_damage in expected_damages {
+            accept_auto_attack(1, 2, &mut players);
+            expected_health -= expected_damage;
+            assert_approx_eq(players.states.get(&2).unwrap().health, expected_health);
+            players.states.get_mut(&1).unwrap().auto_attack_cooldown = 0.0;
+        }
+
+        accept_auto_attack(1, 2, &mut players);
+        expected_health -= combo.damage_for_stage(0);
+        assert_approx_eq(players.states.get(&2).unwrap().health, expected_health);
+    }
+
+    /// Verifies auto attack combo resets when target changes behavior for the dedicated server lobby simulation system.
+    #[test]
+    fn auto_attack_combo_resets_when_target_changes() {
+        let mut players = ConnectedPlayers::default();
+        players.states.insert(
+            1,
+            test_player_state(YUNA_CHAMPION_ID, DevelopmentTeam::Light, Vec3::ZERO),
+        );
+        players.states.insert(
+            2,
+            test_player_state(
+                DARK_TARGET_CHAMPION,
+                DevelopmentTeam::Dark,
+                Vec3::new(3.0, 0.0, 0.0),
+            ),
+        );
+        players.states.insert(
+            3,
+            test_player_state(
+                DARK_TARGET_CHAMPION,
+                DevelopmentTeam::Dark,
+                Vec3::new(4.0, 0.0, 0.0),
+            ),
+        );
+
+        let first_hit_damage = auto_attack_combo(YUNA_CHAMPION_ID).damage_for_stage(0);
+
+        accept_auto_attack(1, 2, &mut players);
+        players.states.get_mut(&1).unwrap().auto_attack_cooldown = 0.0;
+        accept_auto_attack(1, 3, &mut players);
+
+        assert_approx_eq(
+            players.states.get(&3).unwrap().health,
+            100.0 - first_hit_damage,
+        );
+    }
+
+    /// Verifies auto attack combo resets after idle timeout behavior for the dedicated server lobby simulation system.
+    #[test]
+    fn auto_attack_combo_resets_after_idle_timeout() {
+        let mut players = ConnectedPlayers::default();
+        players.states.insert(
+            1,
+            test_player_state(YUNA_CHAMPION_ID, DevelopmentTeam::Light, Vec3::ZERO),
+        );
+        players.states.insert(
+            2,
+            test_player_state(
+                DARK_TARGET_CHAMPION,
+                DevelopmentTeam::Dark,
+                Vec3::new(3.0, 0.0, 0.0),
+            ),
+        );
+
+        let first_hit_damage = auto_attack_combo(YUNA_CHAMPION_ID).damage_for_stage(0);
+
+        accept_auto_attack(1, 2, &mut players);
+        players.states.get_mut(&1).unwrap().auto_attack_cooldown = 0.0;
+        tick_ability_cooldowns(&mut players, AUTO_ATTACK_COMBO_RESET_SECONDS);
+        accept_auto_attack(1, 2, &mut players);
+
+        assert_approx_eq(
+            players.states.get(&2).unwrap().health,
+            100.0 - first_hit_damage * 2.0,
+        );
+    }
+
+    const DARK_TARGET_CHAMPION: ChampionId = IGNARA_CHAMPION_ID;
+
+    /// Verifies test player state behavior for the dedicated server lobby simulation system.
+    fn test_player_state(
+        champion: ChampionId,
+        team: DevelopmentTeam,
+        position: Vec3,
+    ) -> ConnectedPlayerState {
+        ConnectedPlayerState {
+            position,
+            yaw: 0.0,
+            moving: false,
+            health: 100.0,
+            champion,
+            lira_q_cooldown: 0.0,
+            lira_w_cooldown: 0.0,
+            lira_e_cooldown: 0.0,
+            auto_attack_cooldown: 0.0,
+            auto_attack_combo_stage: 0,
+            auto_attack_combo_target: None,
+            auto_attack_combo_reset_timer: 0.0,
+            ignara_q_cooldown: 0.0,
+            ignara_w_cooldown: 0.0,
+            ignara_e_cooldown: 0.0,
+            yuna_q_cooldown: 0.0,
+            yuna_w_cooldown: 0.0,
+            yuna_e_cooldown: 0.0,
+            sophia_q_cooldown: 0.0,
+            sophia_w_cooldown: 0.0,
+            sophia_e_cooldown: 0.0,
+            sophia_damage_buff_timer: 0.0,
+            sophia_speed_buff_timer: 0.0,
+            sophia_damage_amp_available: false,
+            slow_timer: 0.0,
+            slow_multiplier: 1.0,
+            stun_timer: 0.0,
+            team,
+            respawn_timer: None,
+            respawn_generation: 0,
+            respawn_input_grace: 0.0,
+        }
+    }
+
+    /// Runs the assert approx eq step for the dedicated server lobby simulation system.
+    fn assert_approx_eq(actual: f32, expected: f32) {
+        assert!(
+            (actual - expected).abs() <= 0.001,
+            "expected {expected}, got {actual}"
+        );
+    }
 }

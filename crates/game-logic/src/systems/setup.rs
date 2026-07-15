@@ -44,7 +44,6 @@ const DEV_DUMMY_HEALTH: f32 = 120.0;
 const DEV_DUMMY_HIT_RADIUS: f32 = 0.9;
 const DEV_DUMMY_POSITION: Vec3 = Vec3::new(3.5, 0.0, -2.5);
 
-#[derive(Debug, Deserialize)]
 /// Description:
 /// Represents the champion data loaded from the local champion JSON file.
 ///
@@ -52,19 +51,20 @@ const DEV_DUMMY_POSITION: Vec3 = Vec3::new(3.5, 0.0, -2.5);
 /// - `localized_name`: Directory slug used for local champion assets.
 /// - `model_name`: GLB model filename loaded from the champion model directory.
 /// - `animations`: Animation key-to-index mappings used to build the graph.
+#[derive(Debug, Deserialize)]
 struct ChampionDataFile {
     localized_name: String,
     model_name: String,
     animations: Vec<ChampionAnimationEntry>,
 }
 
-#[derive(Debug, Deserialize)]
 /// Description:
 /// Represents one animation clip entry from a champion data file.
 ///
 /// Fields:
 /// - `key`: Logical animation name such as idle or walk.
 /// - `index`: GLTF animation index for the animation clip.
+#[derive(Debug, Deserialize)]
 struct ChampionAnimationEntry {
     key: String,
     index: usize,
@@ -80,6 +80,7 @@ pub(super) struct ClientChampionCatalog {
     champions: HashMap<ChampionId, NetworkChampionDefinition>,
 }
 
+/// Stores Client Champion Tuning Params data used by the client setup and champion tuning system.
 #[derive(SystemParam)]
 pub(super) struct ClientChampionTuningParams<'w> {
     q_settings: ResMut<'w, LiraQSettings>,
@@ -330,6 +331,7 @@ pub(super) fn spawn_local_player_and_camera(
     }
 }
 
+/// Runs the spawn dev preview dummy step for the client setup and champion tuning system.
 fn spawn_dev_preview_dummy(
     commands: &mut Commands,
     asset_server: &AssetServer,
@@ -346,10 +348,7 @@ fn spawn_dev_preview_dummy(
     let dummy_entity = commands
         .spawn((
             Name::new("DevPreviewAttackDummy"),
-            TrainingDummy {
-                health: DEV_DUMMY_HEALTH,
-                hit_radius: DEV_DUMMY_HIT_RADIUS,
-            },
+            TrainingDummy::new(DEV_DUMMY_HEALTH, DEV_DUMMY_HIT_RADIUS),
             Health {
                 current: DEV_DUMMY_HEALTH as u32,
                 max: DEV_DUMMY_HEALTH as u32,
@@ -574,6 +573,7 @@ fn apply_lira_prediction_tuning(
     e_settings.damage = positive_or(e.damage.missile, e_settings.damage);
 }
 
+/// Runs the apply ignara prediction tuning step for the client setup and champion tuning system.
 fn apply_ignara_prediction_tuning(
     abilities: &NetworkChampionAbilities,
     q_settings: &mut IgnaraQSettings,
@@ -596,6 +596,7 @@ fn apply_ignara_prediction_tuning(
     e_settings.travel_seconds = positive_or(e.travel_seconds, e_settings.travel_seconds);
 }
 
+/// Runs the apply yuna prediction tuning step for the client setup and champion tuning system.
 fn apply_yuna_prediction_tuning(
     abilities: &NetworkChampionAbilities,
     q_settings: &mut YunaQSettings,
@@ -619,6 +620,7 @@ fn apply_yuna_prediction_tuning(
     e_settings.projectile_radius = positive_or(e.projectile_radius, e_settings.projectile_radius);
 }
 
+/// Runs the apply sophia prediction tuning step for the client setup and champion tuning system.
 fn apply_sophia_prediction_tuning(
     abilities: &NetworkChampionAbilities,
     q_settings: &mut SophiaQSettings,

@@ -6,12 +6,14 @@ use std::collections::HashMap;
 
 const MATCH_MANIFEST_ENV: &str = "MIRA_MATCH_MANIFEST_JSON";
 
+/// Stores Server Match Manifest data used by the server match manifest system.
 #[derive(Resource, Debug, Clone, Default)]
 pub struct ServerMatchManifest {
     pub match_id: Option<String>,
     players: HashMap<u64, ServerMatchPlayer>,
 }
 
+/// Stores Server Match Player data used by the server match manifest system.
 #[derive(Debug, Clone)]
 pub struct ServerMatchPlayer {
     pub team: TeamSpec,
@@ -20,6 +22,7 @@ pub struct ServerMatchPlayer {
     pub avatar_url: Option<String>,
 }
 
+/// Stores Match Manifest File data used by the server match manifest system.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct MatchManifestFile {
@@ -27,6 +30,7 @@ struct MatchManifestFile {
     players: Vec<MatchManifestPlayerFile>,
 }
 
+/// Stores Match Manifest Player File data used by the server match manifest system.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct MatchManifestPlayerFile {
@@ -42,6 +46,7 @@ struct MatchManifestPlayerFile {
 }
 
 impl ServerMatchManifest {
+    /// Runs the load from environment step for the server match manifest system.
     pub fn load_from_environment() -> Self {
         let Ok(raw_manifest) = std::env::var(MATCH_MANIFEST_ENV) else {
             return Self::default();
@@ -71,18 +76,22 @@ impl ServerMatchManifest {
         }
     }
 
+    /// Runs the is enforced step for the server match manifest system.
     pub fn is_enforced(&self) -> bool {
         !self.players.is_empty()
     }
 
+    /// Runs the player step for the server match manifest system.
     pub fn player(&self, player_public_id: u64) -> Option<ServerMatchPlayer> {
         self.players.get(&player_public_id).cloned()
     }
 
+    /// Runs the player ids step for the server match manifest system.
     pub fn player_ids(&self) -> Vec<u64> {
         self.players.keys().copied().collect()
     }
 
+    /// Runs the players step for the server match manifest system.
     pub fn players(&self) -> Vec<(u64, ServerMatchPlayer)> {
         self.players
             .iter()
@@ -91,6 +100,7 @@ impl ServerMatchManifest {
     }
 }
 
+/// Runs the public display name step for the server match manifest system.
 fn public_display_name(value: &str) -> Option<String> {
     let without_email_domain = value.trim().split('@').next().unwrap_or("").trim();
     let public_name = without_email_domain
@@ -101,6 +111,7 @@ fn public_display_name(value: &str) -> Option<String> {
     non_empty_string(public_name)
 }
 
+/// Runs the non empty string step for the server match manifest system.
 fn non_empty_string(value: &str) -> Option<String> {
     let value = value.trim();
 
@@ -115,6 +126,7 @@ fn non_empty_string(value: &str) -> Option<String> {
 mod tests {
     use super::*;
 
+    /// Runs the trims display names to public first part step for the server match manifest system.
     #[test]
     fn trims_display_names_to_public_first_part() {
         assert_eq!(
@@ -132,6 +144,7 @@ mod tests {
         assert_eq!(public_display_name("   ").as_deref(), None);
     }
 
+    /// Verifies parses player profile fields from manifest behavior for the server match manifest system.
     #[test]
     fn parses_player_profile_fields_from_manifest() {
         let manifest = serde_json::from_str::<MatchManifestFile>(
