@@ -98,6 +98,47 @@ pub struct AbilityVisualEvent {
 }
 
 /// Description:
+/// Describes one accepted auto-attack projectile that other clients should render.
+///
+/// Fields:
+/// - `caster_player_id`: Player id of the attacking player.
+/// - `target_player_id`: Player id of the attacked player.
+/// - `start`: World-space projectile start.
+/// - `end`: World-space projectile end.
+/// - `travel_seconds`: Projectile travel duration used by clients.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
+pub struct AutoAttackVisualEvent {
+    pub caster_player_id: u64,
+    pub target_player_id: u64,
+    pub start: WorldPosition,
+    pub end: WorldPosition,
+    pub travel_seconds: f32,
+}
+
+/// Description:
+/// Describes the gameplay source of a server-authoritative combat number.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NetworkCombatNumberKind {
+    AutoAttack,
+    Spell,
+    Heal,
+}
+
+/// Description:
+/// Sends one server-authoritative floating combat number to clients.
+///
+/// Fields:
+/// - `target_player_id`: Player id above which the number should be shown.
+/// - `amount`: Positive damage or healing amount to render.
+/// - `kind`: Source classification used for text sign and color.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
+pub struct NetworkCombatNumberEvent {
+    pub target_player_id: u64,
+    pub amount: f32,
+    pub kind: NetworkCombatNumberKind,
+}
+
+/// Description:
 /// Stores server-authoritative visual tuning attached to an accepted ability cast.
 ///
 /// Fields:
@@ -410,6 +451,12 @@ impl Plugin for SharedNetworkPlugin {
 
         app.register_message::<AbilityVisualEvent>()
             .add_direction(NetworkDirection::Bidirectional);
+
+        app.register_message::<AutoAttackVisualEvent>()
+            .add_direction(NetworkDirection::ServerToClient);
+
+        app.register_message::<NetworkCombatNumberEvent>()
+            .add_direction(NetworkDirection::ServerToClient);
 
         app.register_message::<PlayerStateUpdate>()
             .add_direction(NetworkDirection::ClientToServer);

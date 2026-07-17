@@ -2,11 +2,16 @@ use super::{TrainingDummy, TrainingDummyHealthChangeKind};
 use bevy::prelude::*;
 use bevy_fontmesh::{JustifyText, TextAnchor, TextMesh, TextMeshStyle};
 use game_shared::game::camera::TopDownCamera;
+use game_shared::game::player::Player;
+use game_shared::network::{NetworkCombatNumberEvent, NetworkCombatNumberKind};
+use lightyear::prelude::*;
 
 const DAMAGE_NUMBER_FONT_PATH: &str = "fonts/Roboto-Bold.ttf";
 const DAMAGE_NUMBER_HOLD_SECONDS: f32 = 1.0;
 const DAMAGE_NUMBER_FALL_SECONDS: f32 = 0.45;
-const DAMAGE_NUMBER_Y_OFFSET: f32 = 2.15;
+const DAMAGE_NUMBER_Y_OFFSET: f32 = 1.75;
+const SPELL_DAMAGE_NUMBER_LAYER_OFFSET: f32 = 0.22;
+const HEAL_DAMAGE_NUMBER_LAYER_OFFSET: f32 = 0.44;
 const DAMAGE_NUMBER_FALL_DISTANCE: f32 = 0.85;
 const DAMAGE_NUMBER_SCALE: f32 = 0.22;
 const AUTO_ATTACK_DAMAGE_NUMBER_COLOR: Color = Color::srgb_u8(0xff, 0xf0, 0x86);
@@ -27,6 +32,9 @@ pub(super) struct DamageNumberHealthTracker {
 /// Stores animation state for one floating damage number.
 #[derive(Component, Debug, Clone)]
 pub(super) struct DamageNumber {
+    target: Entity,
+    amount: f32,
+    kind: TrainingDummyHealthChangeKind,
     start: Vec3,
     timer: Timer,
     color: Color,
@@ -53,6 +61,11 @@ pub(super) fn heal_idle_training_dummies(
     mut target_query: Query<&mut TrainingDummy>,
 ) {
     for mut target in &mut target_query {
+        if !target.can_auto_heal() {
+            target.idle_seconds = 0.0;
+            continue;
+        }
+
         if target.total_damage > 0.0 {
             target.total_damage_idle_seconds += time.delta_secs();
             if target.total_damage_idle_seconds >= DUMMY_TOTAL_DAMAGE_IDLE_SECONDS {
@@ -77,44 +90,86 @@ pub(super) fn heal_idle_training_dummies(
 }
 
 /// Description:
+/// Queues server-authoritative combat numbers on remote player stand-ins.
+pub(super) fn receive_server_combat_number_events(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut receivers: Query<&mut MessageReceiver<NetworkCombatNumberEvent>, With<Client>>,
+    target_query: Query<(Entity, &Player, &GlobalTransform)>,
+    mut number_query: Query<(&mut DamageNumber, &mut TextMesh, &mut Transform)>,
+) {
+    let mut events = Vec::new();
+    for mut receiver in &mut receivers {
+        events.extend(receiver.receive());
+    }
+
+    if events.is_empty() {
+        return;
+    }
+
+    for event in events {
+        let Some((target_entity, _, transform)) = target_query
+            .iter()
+            .find(|(_, player, _)| player.id.0 == event.target_player_id)
+        else {
+            continue;
+        };
+
+        spawn_or_accumulate_combat_number(
+            &mut commands,
+            &asset_server,
+            &mut materials,
+            &mut number_query,
+            target_entity,
+            transform.translation() + Vec3::Y * DAMAGE_NUMBER_Y_OFFSET,
+            event.amount,
+            health_change_kind(event.kind),
+        );
+    }
+}
+
+/// Description:
 /// Detects target health changes and spawns floating combat numbers.
 pub(super) fn spawn_damage_numbers_from_dummy_health(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut target_query: Query<(
+        Entity,
         &mut TrainingDummy,
         &GlobalTransform,
         &mut DamageNumberHealthTracker,
     )>,
+    mut number_query: Query<(&mut DamageNumber, &mut TextMesh, &mut Transform)>,
 ) {
-    for (mut target, transform, mut tracker) in &mut target_query {
+    for (target_entity, mut target, transform, mut tracker) in &mut target_query {
         let current_health = target.health.max(0.0);
         let delta = current_health - tracker.previous_health;
         tracker.previous_health = current_health;
 
-        let pending_number = target.take_pending_combat_number();
-        let (amount, kind) = if let Some((amount, kind)) = pending_number {
-            (amount, kind)
-        } else if delta.abs() > f32::EPSILON {
+        let mut pending_numbers = target.take_pending_combat_numbers();
+        if pending_numbers.is_empty() && target.local_damage_enabled && delta.abs() > f32::EPSILON {
             let kind = if delta > 0.0 {
                 TrainingDummyHealthChangeKind::Heal
             } else {
                 target.last_health_change_kind
             };
-            (delta.abs(), kind)
-        } else {
-            continue;
-        };
+            pending_numbers.push((delta.abs(), kind));
+        }
 
-        spawn_combat_number(
-            &mut commands,
-            &asset_server,
-            &mut materials,
-            transform.translation() + Vec3::Y * DAMAGE_NUMBER_Y_OFFSET,
-            amount,
-            kind,
-        );
+        for (amount, kind) in pending_numbers {
+            spawn_or_accumulate_combat_number(
+                &mut commands,
+                &asset_server,
+                &mut materials,
+                &mut number_query,
+                target_entity,
+                transform.translation() + Vec3::Y * DAMAGE_NUMBER_Y_OFFSET,
+                amount,
+                kind,
+            );
+        }
     }
 }
 
@@ -164,21 +219,84 @@ pub(super) fn update_damage_numbers(
     }
 }
 
+/// Runs the spawn or accumulate combat number step for the floating combat text system.
+fn spawn_or_accumulate_combat_number(
+    commands: &mut Commands,
+    asset_server: &AssetServer,
+    materials: &mut Assets<StandardMaterial>,
+    number_query: &mut Query<(&mut DamageNumber, &mut TextMesh, &mut Transform)>,
+    target: Entity,
+    position: Vec3,
+    amount: f32,
+    kind: TrainingDummyHealthChangeKind,
+) {
+    let position = position + combat_number_layer_offset(kind);
+    if kind != TrainingDummyHealthChangeKind::AutoAttack
+        && accumulate_combat_number(number_query, target, position, amount, kind)
+    {
+        return;
+    }
+
+    spawn_combat_number(
+        commands,
+        asset_server,
+        materials,
+        target,
+        position,
+        amount,
+        kind,
+    );
+}
+
+/// Runs the combat number layer offset step for the floating combat text system.
+fn combat_number_layer_offset(kind: TrainingDummyHealthChangeKind) -> Vec3 {
+    match kind {
+        TrainingDummyHealthChangeKind::AutoAttack => Vec3::ZERO,
+        TrainingDummyHealthChangeKind::Spell => Vec3::Y * SPELL_DAMAGE_NUMBER_LAYER_OFFSET,
+        TrainingDummyHealthChangeKind::Heal => Vec3::Y * HEAL_DAMAGE_NUMBER_LAYER_OFFSET,
+    }
+}
+
+/// Runs the accumulate combat number step for the floating combat text system.
+fn accumulate_combat_number(
+    number_query: &mut Query<(&mut DamageNumber, &mut TextMesh, &mut Transform)>,
+    target: Entity,
+    position: Vec3,
+    amount: f32,
+    kind: TrainingDummyHealthChangeKind,
+) -> bool {
+    let mut accumulated = false;
+    for (mut number, mut text_mesh, mut transform) in number_query.iter_mut() {
+        if number.target != target || number.kind != kind || number.timer.is_finished() {
+            continue;
+        }
+
+        number.amount += amount;
+        number.timer.reset();
+        number.start = if number.shadow {
+            position + Vec3::new(0.025, -0.025, -0.01)
+        } else {
+            position
+        };
+        transform.translation = number.start;
+        text_mesh.text = combat_number_text(number.amount, kind);
+        accumulated = true;
+    }
+
+    accumulated
+}
+
 /// Runs the spawn combat number step for the floating combat text system.
 fn spawn_combat_number(
     commands: &mut Commands,
     asset_server: &AssetServer,
     materials: &mut Assets<StandardMaterial>,
+    target: Entity,
     position: Vec3,
     amount: f32,
     kind: TrainingDummyHealthChangeKind,
 ) {
-    let text = match kind {
-        TrainingDummyHealthChangeKind::Heal => format!("+{:.0}", amount.ceil()),
-        TrainingDummyHealthChangeKind::AutoAttack | TrainingDummyHealthChangeKind::Spell => {
-            format!("{:.0}", amount.ceil())
-        }
-    };
+    let text = combat_number_text(amount, kind);
     let color = combat_number_color(kind);
     let font = asset_server.load(DAMAGE_NUMBER_FONT_PATH);
     let lifetime = DAMAGE_NUMBER_HOLD_SECONDS + DAMAGE_NUMBER_FALL_SECONDS;
@@ -188,6 +306,9 @@ fn spawn_combat_number(
     commands.spawn((
         Name::new("DamageNumberShadow"),
         DamageNumber {
+            target,
+            amount,
+            kind,
             start: position + Vec3::new(0.025, -0.025, -0.01),
             timer: Timer::from_seconds(lifetime, TimerMode::Once),
             color: DAMAGE_NUMBER_SHADOW_COLOR,
@@ -206,6 +327,9 @@ fn spawn_combat_number(
     commands.spawn((
         Name::new("DamageNumber"),
         DamageNumber {
+            target,
+            amount,
+            kind,
             start: position,
             timer: Timer::from_seconds(lifetime, TimerMode::Once),
             color,
@@ -221,12 +345,31 @@ fn spawn_combat_number(
     ));
 }
 
+/// Runs the combat number text step for the floating combat text system.
+fn combat_number_text(amount: f32, kind: TrainingDummyHealthChangeKind) -> String {
+    match kind {
+        TrainingDummyHealthChangeKind::Heal => format!("+{:.0}", amount.ceil()),
+        TrainingDummyHealthChangeKind::AutoAttack | TrainingDummyHealthChangeKind::Spell => {
+            format!("{:.0}", amount.ceil())
+        }
+    }
+}
+
 /// Runs the combat number color step for the floating combat text system.
 fn combat_number_color(kind: TrainingDummyHealthChangeKind) -> Color {
     match kind {
         TrainingDummyHealthChangeKind::AutoAttack => AUTO_ATTACK_DAMAGE_NUMBER_COLOR,
         TrainingDummyHealthChangeKind::Spell => SPELL_DAMAGE_NUMBER_COLOR,
         TrainingDummyHealthChangeKind::Heal => HEAL_NUMBER_COLOR,
+    }
+}
+
+/// Runs the health change kind step for the floating combat text system.
+fn health_change_kind(kind: NetworkCombatNumberKind) -> TrainingDummyHealthChangeKind {
+    match kind {
+        NetworkCombatNumberKind::AutoAttack => TrainingDummyHealthChangeKind::AutoAttack,
+        NetworkCombatNumberKind::Spell => TrainingDummyHealthChangeKind::Spell,
+        NetworkCombatNumberKind::Heal => TrainingDummyHealthChangeKind::Heal,
     }
 }
 

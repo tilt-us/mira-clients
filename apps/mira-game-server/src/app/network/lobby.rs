@@ -1,15 +1,19 @@
 use super::super::content::{ServerAbilityDefinition, ServerChampionCatalog};
 use super::super::match_manifest::{ServerMatchManifest, ServerMatchPlayer};
+use super::combat::{ServerCombatNumberEvents, apply_area_damage, apply_damage, apply_heal};
+use super::geometry::{
+    clamp_cast_target, distance_to_segment_xz, horizontal_distance, point_in_oriented_rect_xz,
+};
 use bevy::prelude::*;
 use game_shared::game::{
     auto_attack::{AUTO_ATTACK_COMBO_RESET_SECONDS, auto_attack_combo},
     team::TeamSpec,
 };
 use game_shared::network::{
-    AbilitySlot, AbilityVisualEvent, AbilityVisualTuning, ChampionCatalogUpdate, ChampionId,
-    ClientLeave, DisplayReady, LoadingScreenPlayer, LoadingScreenStatus, MatchSnapshot,
-    NetworkPlayer, PlayerCommand, PlayerStateChannel, PlayerStateUpdate, ReliableCommandChannel,
-    WorldPosition,
+    AbilitySlot, AbilityVisualEvent, AbilityVisualTuning, AutoAttackVisualEvent,
+    ChampionCatalogUpdate, ChampionId, ClientLeave, DisplayReady, LoadingScreenPlayer,
+    LoadingScreenStatus, MatchSnapshot, NetworkCombatNumberKind, NetworkPlayer, PlayerCommand,
+    PlayerStateChannel, PlayerStateUpdate, ReliableCommandChannel, WorldPosition,
 };
 use lightyear::prelude::server::ClientOf;
 use lightyear::prelude::*;
@@ -20,16 +24,20 @@ const IGNARA_CHAMPION_ID: ChampionId = ChampionId(6607);
 const YUNA_CHAMPION_ID: ChampionId = ChampionId(6608);
 const SOPHIA_CHAMPION_ID: ChampionId = ChampionId(6609);
 const DEFAULT_DEVELOPMENT_TEAM: DevelopmentTeam = DevelopmentTeam::Light;
-const DEVELOPMENT_PLAYER_HIT_RADIUS: f32 = 0.9;
+pub(super) const DEVELOPMENT_PLAYER_HIT_RADIUS: f32 = 0.9;
 const DEVELOPMENT_PLAYER_SPACING: f32 = 4.5;
 const MATCH_SNAPSHOT_INTERVAL_SECONDS: f32 = 0.05;
-const RESPAWN_SECONDS: f32 = 5.0;
+pub(super) const RESPAWN_SECONDS: f32 = 5.0;
 const RESPAWN_INPUT_GRACE_SECONDS: f32 = 0.25;
 const AUTO_ATTACK_RANGE: f32 = 5.0;
+const AUTO_ATTACK_INPUT_BUFFER_SECONDS: f32 = 0.15;
+const AUTO_ATTACK_PROJECTILE_HEIGHT: f32 = 0.8;
+const AUTO_ATTACK_MIN_TRAVEL_SECONDS: f32 = 0.075;
+const AUTO_ATTACK_MAX_TRAVEL_SECONDS: f32 = 0.45;
 
 /// Enumerates Development Team states or variants used by the dedicated server lobby simulation system.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum DevelopmentTeam {
+pub(super) enum DevelopmentTeam {
     Neutral,
     Light,
     Dark,
@@ -51,38 +59,38 @@ enum DevelopmentTeam {
 /// - `respawn_generation`: Monotonic counter incremented each time the player respawns.
 /// - `respawn_input_grace`: Short duration that rejects stale position updates after respawn.
 #[derive(Debug, Clone, Copy)]
-struct ConnectedPlayerState {
-    position: Vec3,
-    yaw: f32,
-    moving: bool,
-    health: f32,
-    champion: ChampionId,
-    lira_q_cooldown: f32,
-    lira_w_cooldown: f32,
-    lira_e_cooldown: f32,
-    auto_attack_cooldown: f32,
-    auto_attack_combo_stage: usize,
-    auto_attack_combo_target: Option<u64>,
-    auto_attack_combo_reset_timer: f32,
-    ignara_q_cooldown: f32,
-    ignara_w_cooldown: f32,
-    ignara_e_cooldown: f32,
-    yuna_q_cooldown: f32,
-    yuna_w_cooldown: f32,
-    yuna_e_cooldown: f32,
-    sophia_q_cooldown: f32,
-    sophia_w_cooldown: f32,
-    sophia_e_cooldown: f32,
-    sophia_damage_buff_timer: f32,
-    sophia_speed_buff_timer: f32,
-    sophia_damage_amp_available: bool,
-    slow_timer: f32,
-    slow_multiplier: f32,
-    stun_timer: f32,
-    team: DevelopmentTeam,
-    respawn_timer: Option<f32>,
-    respawn_generation: u32,
-    respawn_input_grace: f32,
+pub(super) struct ConnectedPlayerState {
+    pub(super) position: Vec3,
+    pub(super) yaw: f32,
+    pub(super) moving: bool,
+    pub(super) health: f32,
+    pub(super) champion: ChampionId,
+    pub(super) lira_q_cooldown: f32,
+    pub(super) lira_w_cooldown: f32,
+    pub(super) lira_e_cooldown: f32,
+    pub(super) auto_attack_cooldown: f32,
+    pub(super) auto_attack_combo_stage: usize,
+    pub(super) auto_attack_combo_target: Option<u64>,
+    pub(super) auto_attack_combo_reset_timer: f32,
+    pub(super) ignara_q_cooldown: f32,
+    pub(super) ignara_w_cooldown: f32,
+    pub(super) ignara_e_cooldown: f32,
+    pub(super) yuna_q_cooldown: f32,
+    pub(super) yuna_w_cooldown: f32,
+    pub(super) yuna_e_cooldown: f32,
+    pub(super) sophia_q_cooldown: f32,
+    pub(super) sophia_w_cooldown: f32,
+    pub(super) sophia_e_cooldown: f32,
+    pub(super) sophia_damage_buff_timer: f32,
+    pub(super) sophia_speed_buff_timer: f32,
+    pub(super) sophia_damage_amp_available: bool,
+    pub(super) slow_timer: f32,
+    pub(super) slow_multiplier: f32,
+    pub(super) stun_timer: f32,
+    pub(super) team: DevelopmentTeam,
+    pub(super) respawn_timer: Option<f32>,
+    pub(super) respawn_generation: u32,
+    pub(super) respawn_input_grace: f32,
 }
 
 /// Description:
@@ -92,7 +100,7 @@ struct ConnectedPlayerState {
 /// - `states`: Latest known player states by player id.
 #[derive(Resource, Debug, Default)]
 pub(super) struct ConnectedPlayers {
-    states: HashMap<u64, ConnectedPlayerState>,
+    pub(super) states: HashMap<u64, ConnectedPlayerState>,
 }
 
 /// Description:
@@ -613,9 +621,14 @@ pub(super) fn receive_player_commands(
             (&RemoteId, &mut MessageSender<AbilityVisualEvent>),
             (With<ClientOf>, With<Connected>),
         >,
+        Query<
+            (&RemoteId, &mut MessageSender<AutoAttackVisualEvent>),
+            (With<ClientOf>, With<Connected>),
+        >,
     )>,
     mut players: ResMut<ConnectedPlayers>,
     mut abilities: ResMut<ActiveServerAbilities>,
+    mut combat_events: ResMut<ServerCombatNumberEvents>,
     catalog: Res<ServerChampionCatalog>,
     leaving_players: Res<LeavingPlayers>,
     manifest: Res<ServerMatchManifest>,
@@ -624,6 +637,7 @@ pub(super) fn receive_player_commands(
     tick_ability_cooldowns(&mut players, time.delta_secs());
 
     let mut visual_events = Vec::new();
+    let mut auto_attack_visual_events = Vec::new();
 
     {
         let mut receivers = clients.p0();
@@ -811,7 +825,14 @@ pub(super) fn receive_player_commands(
                         }
                     }
                     PlayerCommand::AutoAttack { target_player_id } => {
-                        accept_auto_attack(caster_player_id, target_player_id, &mut players);
+                        if let Some(event) = accept_auto_attack(
+                            caster_player_id,
+                            target_player_id,
+                            &mut players,
+                            &mut combat_events,
+                        ) {
+                            auto_attack_visual_events.push(event);
+                        }
                     }
                     _ => {}
                 }
@@ -819,18 +840,33 @@ pub(super) fn receive_player_commands(
         }
     }
 
-    if visual_events.is_empty() {
+    if visual_events.is_empty() && auto_attack_visual_events.is_empty() {
         return;
     }
 
-    let mut senders = clients.p1();
-    for event in visual_events {
-        for (remote_id, mut sender) in &mut senders {
-            if netcode_player_id(*remote_id) == Some(event.caster_player_id) {
-                continue;
-            }
+    if !visual_events.is_empty() {
+        let mut senders = clients.p1();
+        for event in visual_events {
+            for (remote_id, mut sender) in &mut senders {
+                if netcode_player_id(*remote_id) == Some(event.caster_player_id) {
+                    continue;
+                }
 
-            sender.send::<ReliableCommandChannel>(event);
+                sender.send::<ReliableCommandChannel>(event);
+            }
+        }
+    }
+
+    if !auto_attack_visual_events.is_empty() {
+        let mut senders = clients.p2();
+        for event in auto_attack_visual_events {
+            for (remote_id, mut sender) in &mut senders {
+                if netcode_player_id(*remote_id) == Some(event.caster_player_id) {
+                    continue;
+                }
+
+                sender.send::<ReliableCommandChannel>(event);
+            }
         }
     }
 }
@@ -845,20 +881,72 @@ pub(super) fn receive_player_commands(
 pub(super) fn update_server_abilities(
     mut abilities: ResMut<ActiveServerAbilities>,
     mut players: ResMut<ConnectedPlayers>,
+    mut combat_events: ResMut<ServerCombatNumberEvents>,
     catalog: Res<ServerChampionCatalog>,
     time: Res<Time>,
 ) {
     let delta_seconds = time.delta_secs();
-    update_lira_q_projectiles(&mut abilities, &mut players, delta_seconds);
-    update_lira_w_projectiles(&mut abilities, &mut players, delta_seconds);
-    update_lira_e_missiles(&mut abilities, &mut players, delta_seconds);
-    update_ignara_q_zones(&mut abilities, &mut players, delta_seconds);
-    update_ignara_w_fireballs(&mut abilities, &mut players, delta_seconds);
-    update_ignara_e_snowballs(&mut abilities, &mut players, delta_seconds);
-    update_yuna_q_orbs(&mut abilities, &mut players, delta_seconds);
-    update_yuna_w_fields(&mut abilities, &mut players, &catalog, delta_seconds);
-    update_sophia_q_orbs(&mut abilities, &mut players, delta_seconds);
-    update_sophia_minions(&mut abilities, &mut players, delta_seconds);
+    update_lira_q_projectiles(
+        &mut abilities,
+        &mut players,
+        &mut combat_events,
+        delta_seconds,
+    );
+    update_lira_w_projectiles(
+        &mut abilities,
+        &mut players,
+        &mut combat_events,
+        delta_seconds,
+    );
+    update_lira_e_missiles(
+        &mut abilities,
+        &mut players,
+        &mut combat_events,
+        delta_seconds,
+    );
+    update_ignara_q_zones(
+        &mut abilities,
+        &mut players,
+        &mut combat_events,
+        delta_seconds,
+    );
+    update_ignara_w_fireballs(
+        &mut abilities,
+        &mut players,
+        &mut combat_events,
+        delta_seconds,
+    );
+    update_ignara_e_snowballs(
+        &mut abilities,
+        &mut players,
+        &mut combat_events,
+        delta_seconds,
+    );
+    update_yuna_q_orbs(
+        &mut abilities,
+        &mut players,
+        &mut combat_events,
+        delta_seconds,
+    );
+    update_yuna_w_fields(
+        &mut abilities,
+        &mut players,
+        &mut combat_events,
+        &catalog,
+        delta_seconds,
+    );
+    update_sophia_q_orbs(
+        &mut abilities,
+        &mut players,
+        &mut combat_events,
+        delta_seconds,
+    );
+    update_sophia_minions(
+        &mut abilities,
+        &mut players,
+        &mut combat_events,
+        delta_seconds,
+    );
 }
 
 /// Description:
@@ -1394,33 +1482,37 @@ fn accept_auto_attack(
     caster_player_id: u64,
     target_player_id: u64,
     players: &mut ConnectedPlayers,
-) {
+    combat_events: &mut ServerCombatNumberEvents,
+) -> Option<AutoAttackVisualEvent> {
     if caster_player_id == target_player_id {
-        return;
+        return None;
     }
 
     let Some(caster) = players.states.get(&caster_player_id) else {
-        return;
+        return None;
     };
     let Some(target) = players.states.get(&target_player_id) else {
-        return;
+        return None;
     };
 
     if caster.health <= 0.0
         || caster.stun_timer > 0.0
-        || caster.auto_attack_cooldown > 0.0
+        || caster.auto_attack_cooldown > AUTO_ATTACK_INPUT_BUFFER_SECONDS
         || target.health <= 0.0
         || caster.team == target.team
         || caster.team == DevelopmentTeam::Neutral
         || target.team == DevelopmentTeam::Neutral
     {
-        return;
+        return None;
     }
 
     let distance = horizontal_distance(caster.position, target.position);
     if distance > AUTO_ATTACK_RANGE + DEVELOPMENT_PLAYER_HIT_RADIUS {
-        return;
+        return None;
     }
+    let start = caster.position + Vec3::Y * AUTO_ATTACK_PROJECTILE_HEIGHT;
+    let end = target.position + Vec3::Y * AUTO_ATTACK_PROJECTILE_HEIGHT;
+    let travel_seconds = auto_attack_travel_seconds(distance);
 
     let combo = auto_attack_combo(caster.champion);
     let combo_stage = if caster.auto_attack_combo_target == Some(target_player_id) {
@@ -1437,11 +1529,26 @@ fn accept_auto_attack(
         caster.auto_attack_cooldown = combo.cooldown_seconds();
         caster.auto_attack_combo_stage = next_combo_stage;
         caster.auto_attack_combo_target = Some(target_player_id);
-        caster.auto_attack_combo_reset_timer = AUTO_ATTACK_COMBO_RESET_SECONDS;
+        caster.auto_attack_combo_reset_timer =
+            AUTO_ATTACK_COMBO_RESET_SECONDS + combo.cooldown_seconds();
     }
     if let Some(target) = players.states.get_mut(&target_player_id) {
-        apply_damage(target, damage);
+        apply_damage(
+            combat_events,
+            target_player_id,
+            target,
+            damage,
+            NetworkCombatNumberKind::AutoAttack,
+        );
     }
+
+    Some(AutoAttackVisualEvent {
+        caster_player_id,
+        target_player_id,
+        start: start.into(),
+        end: end.into(),
+        travel_seconds,
+    })
 }
 
 /// Description:
@@ -2138,6 +2245,7 @@ fn tick_ability_cooldowns(players: &mut ConnectedPlayers, delta_seconds: f32) {
 fn update_lira_q_projectiles(
     abilities: &mut ActiveServerAbilities,
     players: &mut ConnectedPlayers,
+    combat_events: &mut ServerCombatNumberEvents,
     delta_seconds: f32,
 ) {
     let mut finished_projectiles = Vec::new();
@@ -2168,7 +2276,13 @@ fn update_lira_q_projectiles(
                 <= projectile.projectile_radius + DEVELOPMENT_PLAYER_HIT_RADIUS
             {
                 projectile.hit_targets.push(*target_player_id);
-                apply_damage(target_state, projectile.direct_hit_damage);
+                apply_damage(
+                    combat_events,
+                    *target_player_id,
+                    target_state,
+                    projectile.direct_hit_damage,
+                    NetworkCombatNumberKind::Spell,
+                );
             }
         }
 
@@ -2188,6 +2302,7 @@ fn update_lira_q_projectiles(
 
     for (caster_player_id, end, explosion_radius, area_damage) in finished_projectiles {
         apply_area_damage(
+            combat_events,
             players,
             caster_player_id,
             end,
@@ -2207,6 +2322,7 @@ fn update_lira_q_projectiles(
 fn update_lira_w_projectiles(
     abilities: &mut ActiveServerAbilities,
     players: &mut ConnectedPlayers,
+    combat_events: &mut ServerCombatNumberEvents,
     delta_seconds: f32,
 ) {
     let mut finished_projectiles = Vec::new();
@@ -2229,6 +2345,7 @@ fn update_lira_w_projectiles(
 
     for (caster_player_id, end, explosion_radius, area_damage) in finished_projectiles {
         apply_area_damage(
+            combat_events,
             players,
             caster_player_id,
             end,
@@ -2248,6 +2365,7 @@ fn update_lira_w_projectiles(
 fn update_lira_e_missiles(
     abilities: &mut ActiveServerAbilities,
     players: &mut ConnectedPlayers,
+    combat_events: &mut ServerCombatNumberEvents,
     delta_seconds: f32,
 ) {
     let mut spent_missiles = Vec::new();
@@ -2304,7 +2422,13 @@ fn update_lira_e_missiles(
                 let distance = to_target.length();
 
                 if distance <= missile.missile_radius + DEVELOPMENT_PLAYER_HIT_RADIUS {
-                    apply_damage(target, missile.damage);
+                    apply_damage(
+                        combat_events,
+                        target_player_id,
+                        target,
+                        missile.damage,
+                        NetworkCombatNumberKind::Spell,
+                    );
                     spent_missiles.push(missile_index);
                     continue;
                 }
@@ -2329,6 +2453,7 @@ fn update_lira_e_missiles(
 fn update_ignara_q_zones(
     abilities: &mut ActiveServerAbilities,
     players: &mut ConnectedPlayers,
+    combat_events: &mut ServerCombatNumberEvents,
     delta_seconds: f32,
 ) {
     for zone in &mut abilities.ignara_q_zones {
@@ -2348,7 +2473,13 @@ fn update_ignara_q_zones(
             }
 
             if point_in_oriented_rect_xz(target_state.position, zone.start, zone.end, zone.width) {
-                apply_damage(target_state, damage);
+                apply_damage(
+                    combat_events,
+                    *target_player_id,
+                    target_state,
+                    damage,
+                    NetworkCombatNumberKind::Spell,
+                );
             }
         }
     }
@@ -2363,6 +2494,7 @@ fn update_ignara_q_zones(
 fn update_ignara_w_fireballs(
     abilities: &mut ActiveServerAbilities,
     players: &mut ConnectedPlayers,
+    combat_events: &mut ServerCombatNumberEvents,
     delta_seconds: f32,
 ) {
     let mut finished_fireballs = Vec::new();
@@ -2372,7 +2504,13 @@ fn update_ignara_w_fireballs(
         if fireball.elapsed >= fireball.travel_seconds.max(f32::EPSILON) {
             finished_fireballs.push(index);
             if let Some(target) = players.states.get_mut(&fireball.target_player_id) {
-                apply_damage(target, fireball.damage);
+                apply_damage(
+                    combat_events,
+                    fireball.target_player_id,
+                    target,
+                    fireball.damage,
+                    NetworkCombatNumberKind::Spell,
+                );
             }
         }
     }
@@ -2387,6 +2525,7 @@ fn update_ignara_w_fireballs(
 fn update_ignara_e_snowballs(
     abilities: &mut ActiveServerAbilities,
     players: &mut ConnectedPlayers,
+    combat_events: &mut ServerCombatNumberEvents,
     delta_seconds: f32,
 ) {
     for snowball in &mut abilities.ignara_e_snowballs {
@@ -2425,7 +2564,13 @@ fn update_ignara_e_snowballs(
                 <= radius + DEVELOPMENT_PLAYER_HIT_RADIUS
             {
                 snowball.hit_targets.push(*target_player_id);
-                apply_damage(target_state, damage);
+                apply_damage(
+                    combat_events,
+                    *target_player_id,
+                    target_state,
+                    damage,
+                    NetworkCombatNumberKind::Spell,
+                );
             }
         }
     }
@@ -2440,6 +2585,7 @@ fn update_ignara_e_snowballs(
 fn update_yuna_q_orbs(
     abilities: &mut ActiveServerAbilities,
     players: &mut ConnectedPlayers,
+    combat_events: &mut ServerCombatNumberEvents,
     delta_seconds: f32,
 ) {
     for orb in &mut abilities.yuna_q_orbs {
@@ -2467,7 +2613,13 @@ fn update_yuna_q_orbs(
                 continue;
             }
 
-            apply_damage(target_state, damage);
+            apply_damage(
+                combat_events,
+                *target_player_id,
+                target_state,
+                damage,
+                NetworkCombatNumberKind::Spell,
+            );
             let pull_delta = Vec3::new(
                 orb.position.x - target_state.position.x,
                 0.0,
@@ -2492,6 +2644,7 @@ fn update_yuna_q_orbs(
 fn update_yuna_w_fields(
     abilities: &mut ActiveServerAbilities,
     players: &mut ConnectedPlayers,
+    combat_events: &mut ServerCombatNumberEvents,
     catalog: &ServerChampionCatalog,
     delta_seconds: f32,
 ) {
@@ -2532,7 +2685,13 @@ fn update_yuna_w_fields(
 
             let max_health = development_player_max_health(catalog, players, target_player_id);
             if let Some(target_state) = players.states.get_mut(&target_player_id) {
-                apply_heal(target_state, heal_amount, max_health);
+                apply_heal(
+                    combat_events,
+                    target_player_id,
+                    target_state,
+                    heal_amount,
+                    max_health,
+                );
             }
         }
     }
@@ -2547,6 +2706,7 @@ fn update_yuna_w_fields(
 fn update_sophia_q_orbs(
     abilities: &mut ActiveServerAbilities,
     players: &mut ConnectedPlayers,
+    combat_events: &mut ServerCombatNumberEvents,
     delta_seconds: f32,
 ) {
     for orb in &mut abilities.sophia_q_orbs {
@@ -2562,7 +2722,13 @@ fn update_sophia_q_orbs(
                 continue;
             };
             if Some(target.team) != caster_team && target.health > 0.0 {
-                apply_damage(target, orb.damage_per_second);
+                apply_damage(
+                    combat_events,
+                    orb.target_player_id,
+                    target,
+                    orb.damage_per_second,
+                    NetworkCombatNumberKind::Spell,
+                );
             }
         }
     }
@@ -2577,6 +2743,7 @@ fn update_sophia_q_orbs(
 fn update_sophia_minions(
     abilities: &mut ActiveServerAbilities,
     players: &mut ConnectedPlayers,
+    combat_events: &mut ServerCombatNumberEvents,
     delta_seconds: f32,
 ) {
     let mut spent_minions = Vec::new();
@@ -2626,7 +2793,13 @@ fn update_sophia_minions(
         let to_target = target_back - minion.position;
         let distance = to_target.length();
         if distance <= minion.radius + DEVELOPMENT_PLAYER_HIT_RADIUS {
-            apply_damage(target, minion.damage);
+            apply_damage(
+                combat_events,
+                target_player_id,
+                target,
+                minion.damage,
+                NetworkCombatNumberKind::Spell,
+            );
             target.slow_timer = target.slow_timer.max(minion.slow_seconds);
             target.slow_multiplier = target.slow_multiplier.min(minion.slow_multiplier);
             target.moving = false;
@@ -2737,27 +2910,6 @@ fn find_nearest_enemy_target_around_point(
 }
 
 /// Description:
-/// Checks whether a world-space point lies inside an oriented XZ rectangle.
-fn point_in_oriented_rect_xz(point: Vec3, start: Vec3, end: Vec3, width: f32) -> bool {
-    let start_2d = Vec2::new(start.x, start.z);
-    let end_2d = Vec2::new(end.x, end.z);
-    let point_2d = Vec2::new(point.x, point.z);
-    let axis = end_2d - start_2d;
-    let length = axis.length();
-    if length <= f32::EPSILON {
-        return false;
-    }
-
-    let forward = axis / length;
-    let right = Vec2::new(forward.y, -forward.x);
-    let local = point_2d - start_2d;
-    let forward_distance = local.dot(forward);
-    let side_distance = local.dot(right).abs();
-
-    forward_distance >= 0.0 && forward_distance <= length && side_distance <= width * 0.5
-}
-
-/// Description:
 /// Returns Ignara E damage for the travelled projectile distance.
 fn ignara_e_damage_for_distance(
     distance: f32,
@@ -2793,125 +2945,13 @@ fn positive_or(value: f32, fallback: f32) -> f32 {
     }
 }
 
-/// Description:
-/// Applies area damage to all valid enemy players in radius.
-///
-/// Params:
-/// - `players`: Server-side development player state cache.
-/// - `caster_player_id`: Player id that owns the damage source.
-/// - `center`: Area center position.
-/// - `radius`: Damage radius.
-/// - `amount`: Damage amount to apply.
-fn apply_area_damage(
-    players: &mut ConnectedPlayers,
-    caster_player_id: u64,
-    center: Vec3,
-    radius: f32,
-    amount: f32,
-) {
-    let caster_team = players
-        .states
-        .get(&caster_player_id)
-        .map(|caster| caster.team);
-    for (target_player_id, target_state) in &mut players.states {
-        if *target_player_id == caster_player_id
-            || Some(target_state.team) == caster_team
-            || target_state.health <= 0.0
-        {
-            continue;
-        }
-
-        if horizontal_distance(target_state.position, center)
-            <= radius + DEVELOPMENT_PLAYER_HIT_RADIUS
-        {
-            apply_damage(target_state, amount);
-        }
-    }
-}
-
-/// Description:
-/// Applies damage to one server-side player state.
-///
-/// Params:
-/// - `target`: Player state to damage.
-/// - `amount`: Damage amount to apply.
-fn apply_damage(target: &mut ConnectedPlayerState, amount: f32) {
-    if target.health <= 0.0 {
-        return;
-    }
-
-    target.health = (target.health - amount).max(0.0);
-    if target.health <= 0.0 {
-        target.moving = false;
-        target.respawn_timer = Some(RESPAWN_SECONDS);
-    }
-}
-
-/// Description:
-/// Applies capped healing to one server-side player state.
-fn apply_heal(target: &mut ConnectedPlayerState, amount: f32, max_health: f32) {
-    if target.health <= 0.0 {
-        return;
-    }
-
-    target.health = (target.health + amount).min(max_health.max(1.0));
-}
-
-/// Description:
-/// Clamps a cast target to a maximum range from an origin.
-///
-/// Params:
-/// - `origin`: Cast origin position.
-/// - `target`: Requested target position.
-/// - `range`: Maximum allowed cast range.
-///
-/// Return:
-/// - Clamped target position.
-fn clamp_cast_target(origin: Vec3, target: Vec3, range: f32) -> Vec3 {
-    let delta = Vec3::new(target.x - origin.x, 0.0, target.z - origin.z);
-    if delta.length_squared() <= range * range {
-        return Vec3::new(target.x, origin.y, target.z);
-    }
-
-    origin + delta.normalize_or_zero() * range
-}
-
-/// Description:
-/// Computes the horizontal distance from a point to a segment.
-///
-/// Params:
-/// - `point`: World-space point to test.
-/// - `segment_start`: Segment start position.
-/// - `segment_end`: Segment end position.
-///
-/// Return:
-/// - Shortest horizontal distance from the point to the segment.
-fn distance_to_segment_xz(point: Vec3, segment_start: Vec3, segment_end: Vec3) -> f32 {
-    let point = Vec2::new(point.x, point.z);
-    let segment_start = Vec2::new(segment_start.x, segment_start.z);
-    let segment_end = Vec2::new(segment_end.x, segment_end.z);
-    let segment = segment_end - segment_start;
-    let segment_length_squared = segment.length_squared();
-
-    if segment_length_squared <= f32::EPSILON {
-        return point.distance(segment_start);
-    }
-
-    let t = ((point - segment_start).dot(segment) / segment_length_squared).clamp(0.0, 1.0);
-    point.distance(segment_start + segment * t)
-}
-
-/// Description:
-/// Computes horizontal distance between two world-space positions.
-///
-/// Params:
-/// - `left`: First world-space position.
-/// - `right`: Second world-space position.
-///
-/// Return:
-/// - XZ-plane distance between both positions.
-fn horizontal_distance(left: Vec3, right: Vec3) -> f32 {
-    Vec2::new(left.x, left.z).distance(Vec2::new(right.x, right.z))
+/// Runs the auto attack travel seconds step for the dedicated server lobby simulation system.
+fn auto_attack_travel_seconds(distance: f32) -> f32 {
+    let range_ratio = (distance / AUTO_ATTACK_RANGE).clamp(0.0, 1.0);
+    (range_ratio * AUTO_ATTACK_MAX_TRAVEL_SECONDS).clamp(
+        AUTO_ATTACK_MIN_TRAVEL_SECONDS,
+        AUTO_ATTACK_MAX_TRAVEL_SECONDS,
+    )
 }
 
 #[cfg(test)]
@@ -2922,6 +2962,7 @@ mod tests {
     #[test]
     fn accepted_auto_attacks_apply_champion_combo_damage() {
         let mut players = ConnectedPlayers::default();
+        let mut combat_events = ServerCombatNumberEvents::default();
         players.states.insert(
             1,
             test_player_state(LIRA_CHAMPION_ID, DevelopmentTeam::Light, Vec3::ZERO),
@@ -2942,21 +2983,28 @@ mod tests {
         let mut expected_health = 100.0;
 
         for expected_damage in expected_damages {
-            accept_auto_attack(1, 2, &mut players);
+            accept_auto_attack(1, 2, &mut players, &mut combat_events);
             expected_health -= expected_damage;
             assert_approx_eq(players.states.get(&2).unwrap().health, expected_health);
             players.states.get_mut(&1).unwrap().auto_attack_cooldown = 0.0;
         }
 
-        accept_auto_attack(1, 2, &mut players);
+        accept_auto_attack(1, 2, &mut players, &mut combat_events);
         expected_health -= combo.damage_for_stage(0);
         assert_approx_eq(players.states.get(&2).unwrap().health, expected_health);
+        assert!(
+            combat_events
+                .events
+                .iter()
+                .all(|event| event.kind == NetworkCombatNumberKind::AutoAttack)
+        );
     }
 
     /// Verifies auto attack combo resets when target changes behavior for the dedicated server lobby simulation system.
     #[test]
     fn auto_attack_combo_resets_when_target_changes() {
         let mut players = ConnectedPlayers::default();
+        let mut combat_events = ServerCombatNumberEvents::default();
         players.states.insert(
             1,
             test_player_state(YUNA_CHAMPION_ID, DevelopmentTeam::Light, Vec3::ZERO),
@@ -2980,9 +3028,9 @@ mod tests {
 
         let first_hit_damage = auto_attack_combo(YUNA_CHAMPION_ID).damage_for_stage(0);
 
-        accept_auto_attack(1, 2, &mut players);
+        accept_auto_attack(1, 2, &mut players, &mut combat_events);
         players.states.get_mut(&1).unwrap().auto_attack_cooldown = 0.0;
-        accept_auto_attack(1, 3, &mut players);
+        accept_auto_attack(1, 3, &mut players, &mut combat_events);
 
         assert_approx_eq(
             players.states.get(&3).unwrap().health,
@@ -2994,6 +3042,7 @@ mod tests {
     #[test]
     fn auto_attack_combo_resets_after_idle_timeout() {
         let mut players = ConnectedPlayers::default();
+        let mut combat_events = ServerCombatNumberEvents::default();
         players.states.insert(
             1,
             test_player_state(YUNA_CHAMPION_ID, DevelopmentTeam::Light, Vec3::ZERO),
@@ -3009,10 +3058,14 @@ mod tests {
 
         let first_hit_damage = auto_attack_combo(YUNA_CHAMPION_ID).damage_for_stage(0);
 
-        accept_auto_attack(1, 2, &mut players);
+        accept_auto_attack(1, 2, &mut players, &mut combat_events);
         players.states.get_mut(&1).unwrap().auto_attack_cooldown = 0.0;
-        tick_ability_cooldowns(&mut players, AUTO_ATTACK_COMBO_RESET_SECONDS);
-        accept_auto_attack(1, 2, &mut players);
+        tick_ability_cooldowns(
+            &mut players,
+            AUTO_ATTACK_COMBO_RESET_SECONDS
+                + auto_attack_combo(YUNA_CHAMPION_ID).cooldown_seconds(),
+        );
+        accept_auto_attack(1, 2, &mut players, &mut combat_events);
 
         assert_approx_eq(
             players.states.get(&2).unwrap().health,

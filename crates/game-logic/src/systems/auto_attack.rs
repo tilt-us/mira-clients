@@ -11,7 +11,9 @@ use game_shared::game::{
     map::MapGround,
     player::{Health, MoveTarget, Player, PlayerControlled},
 };
-use game_shared::network::{ChampionId, PlayerCommand, ReliableCommandChannel};
+use game_shared::network::{
+    AutoAttackVisualEvent, ChampionId, PlayerCommand, ReliableCommandChannel,
+};
 use lightyear::prelude::*;
 
 const AUTO_ATTACK_RANGE: f32 = 5.0;
@@ -201,8 +203,13 @@ pub(super) fn update_auto_attack_target(
     let combo = auto_attack_combo(champion);
     let target_player_id = target_player.map(|player| player.id.0);
     let apply_local_damage = target_player_id.is_none();
+    let combo_stage = next_combo_stage(
+        &mut attack_state,
+        target_entity,
+        combo.combo_length,
+        combo.cooldown_seconds(),
+    );
     let damage = if apply_local_damage {
-        let combo_stage = next_combo_stage(&mut attack_state, target_entity, combo.combo_length);
         combo.damage_for_stage(combo_stage)
     } else {
         0.0
@@ -212,20 +219,17 @@ pub(super) fn update_auto_attack_target(
     let end = target_transform.translation + Vec3::Y * AUTO_ATTACK_PROJECTILE_HEIGHT;
     let travel_seconds = auto_attack_travel_seconds(attack_distance);
 
-    commands.spawn((
-        Name::new("AutoAttackProjectile"),
-        AutoAttackProjectile {
-            target: target_entity,
-            start,
-            end,
-            timer: Timer::from_seconds(travel_seconds, TimerMode::Once),
-            damage,
-            apply_local_damage,
-        },
-        Mesh3d(meshes.add(Sphere::new(AUTO_ATTACK_PROJECTILE_RADIUS))),
-        MeshMaterial3d(materials.add(auto_attack_projectile_material())),
-        Transform::from_translation(start),
-    ));
+    spawn_auto_attack_projectile(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        target_entity,
+        start,
+        end,
+        travel_seconds,
+        damage,
+        apply_local_damage,
+    );
     if let Some(target_player_id) = target_player_id {
         send_auto_attack_command(&mut command_senders, target_player_id);
     }
@@ -236,26 +240,68 @@ pub(super) fn update_auto_attack_target(
 }
 
 /// Description:
+/// Receives server-accepted remote auto attacks and renders their projectile for this client.
+pub(super) fn receive_remote_auto_attack_visuals(
+    mut commands: Commands,
+    mut receivers: Query<&mut MessageReceiver<AutoAttackVisualEvent>, With<Client>>,
+    player_query: Query<(Entity, &Player)>,
+    local_player_query: Query<&Player, With<PlayerControlled>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    let local_player_id = local_player_query.single().ok().map(|player| player.id.0);
+
+    for mut receiver in &mut receivers {
+        for event in receiver.receive() {
+            if local_player_id == Some(event.caster_player_id) {
+                continue;
+            }
+
+            let Some((target_entity, _)) = player_query
+                .iter()
+                .find(|(_, player)| player.id.0 == event.target_player_id)
+            else {
+                continue;
+            };
+
+            spawn_auto_attack_projectile(
+                &mut commands,
+                &mut meshes,
+                &mut materials,
+                target_entity,
+                event.start.into(),
+                event.end.into(),
+                event.travel_seconds.max(AUTO_ATTACK_MIN_TRAVEL_SECONDS),
+                0.0,
+                false,
+            );
+        }
+    }
+}
+
+/// Description:
 /// Moves active auto-attack projectiles and applies damage when they reach their target.
 pub(super) fn update_auto_attack_projectiles(
     time: Res<Time>,
     mut commands: Commands,
-    mut target_query: Query<
-        (&mut TrainingDummy, &Transform),
-        (Without<AutoAttackProjectile>, With<TrainingDummy>),
-    >,
+    target_transform_query: Query<&Transform, Without<AutoAttackProjectile>>,
+    mut dummy_query: Query<&mut TrainingDummy, Without<AutoAttackProjectile>>,
     mut projectile_query: Query<
         (Entity, &mut AutoAttackProjectile, &mut Transform),
         Without<TrainingDummy>,
     >,
 ) {
     for (projectile_entity, mut projectile, mut transform) in &mut projectile_query {
-        let Ok((mut target, target_transform)) = target_query.get_mut(projectile.target) else {
+        let Ok(target_transform) = target_transform_query.get(projectile.target) else {
             commands.entity(projectile_entity).despawn();
             continue;
         };
 
-        if target.health <= 0.0 {
+        if projectile.apply_local_damage
+            && !dummy_query
+                .get(projectile.target)
+                .is_ok_and(|target| target.health > 0.0)
+        {
             commands.entity(projectile_entity).despawn();
             continue;
         }
@@ -273,11 +319,13 @@ pub(super) fn update_auto_attack_projectiles(
                 continue;
             }
 
-            target.apply_damage(projectile.damage, TrainingDummyHealthChangeKind::AutoAttack);
-            info!(
-                "TrainingDummy hit by auto attack: -{:.1} HP (remaining {:.1})",
-                projectile.damage, target.health
-            );
+            if let Ok(mut target) = dummy_query.get_mut(projectile.target) {
+                target.apply_damage(projectile.damage, TrainingDummyHealthChangeKind::AutoAttack);
+                info!(
+                    "TrainingDummy hit by auto attack: -{:.1} HP (remaining {:.1})",
+                    projectile.damage, target.health
+                );
+            }
             commands.entity(projectile_entity).despawn();
         }
     }
@@ -358,6 +406,7 @@ fn next_combo_stage(
     attack_state: &mut AutoAttackState,
     target: Entity,
     combo_length: usize,
+    cooldown_seconds: f32,
 ) -> usize {
     let combo_length = combo_length.max(1);
     let stage = if attack_state.combo_target == Some(target) {
@@ -368,7 +417,7 @@ fn next_combo_stage(
 
     attack_state.combo_stage = (stage + 1) % combo_length;
     attack_state.combo_target = Some(target);
-    attack_state.combo_reset_seconds = AUTO_ATTACK_COMBO_RESET_SECONDS;
+    attack_state.combo_reset_seconds = AUTO_ATTACK_COMBO_RESET_SECONDS + cooldown_seconds;
     stage
 }
 
@@ -392,6 +441,34 @@ fn auto_attack_travel_seconds(distance: f32) -> f32 {
         AUTO_ATTACK_MIN_TRAVEL_SECONDS,
         AUTO_ATTACK_MAX_TRAVEL_SECONDS,
     )
+}
+
+/// Runs the spawn auto attack projectile step for the client auto-attack system.
+fn spawn_auto_attack_projectile(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    target: Entity,
+    start: Vec3,
+    end: Vec3,
+    travel_seconds: f32,
+    damage: f32,
+    apply_local_damage: bool,
+) {
+    commands.spawn((
+        Name::new("AutoAttackProjectile"),
+        AutoAttackProjectile {
+            target,
+            start,
+            end,
+            timer: Timer::from_seconds(travel_seconds, TimerMode::Once),
+            damage,
+            apply_local_damage,
+        },
+        Mesh3d(meshes.add(Sphere::new(AUTO_ATTACK_PROJECTILE_RADIUS))),
+        MeshMaterial3d(materials.add(auto_attack_projectile_material())),
+        Transform::from_translation(start),
+    ));
 }
 
 /// Runs the auto attack projectile material step for the client auto-attack system.

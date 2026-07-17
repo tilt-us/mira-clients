@@ -1538,12 +1538,26 @@ pub(in crate::systems) fn update_e_contact_missiles(
         if missile.mode == LiraEMissileMode::Orbiting {
             let target = if missile.can_apply_damage {
                 let dummies = dummy_queries.p0();
-                find_e_damage_target(
+                let damage_target = find_e_damage_target(
                     &dummies,
                     owner_position,
                     missile_transform.translation,
                     missile.settings.search_radius,
-                )
+                );
+                if damage_target.is_some() {
+                    damage_target
+                } else {
+                    let owner_team = missile.owner.and_then(|owner| team_query.get(owner).ok());
+                    find_e_visual_target(
+                        &dummies,
+                        local_player,
+                        owner_team,
+                        missile.owner,
+                        owner_position,
+                        missile_transform.translation,
+                        missile.settings.search_radius,
+                    )
+                }
             } else {
                 let dummies = dummy_queries.p0();
                 let owner_team = missile.owner.and_then(|owner| team_query.get(owner).ok());
@@ -1579,25 +1593,23 @@ pub(in crate::systems) fn update_e_contact_missiles(
                         commands.entity(entity).despawn();
                         continue;
                     };
-                    if !dummy.local_damage_enabled {
-                        commands.entity(entity).despawn();
-                        continue;
-                    }
 
                     let target_position = dummy_transform.translation + Vec3::Y * 0.7;
                     let to_target = target_position - missile_transform.translation;
                     let distance = to_target.length();
 
                     if distance <= missile.settings.missile_radius + dummy.hit_radius {
-                        dummy.apply_damage(
-                            missile.settings.damage,
-                            TrainingDummyHealthChangeKind::Spell,
-                        );
-                        info!(
-                            "TrainingDummy hit by Lira E missile: -{:.1} HP (remaining {:.1})",
-                            missile.settings.damage,
-                            dummy.health.max(0.0)
-                        );
+                        if dummy.local_damage_enabled {
+                            dummy.apply_damage(
+                                missile.settings.damage,
+                                TrainingDummyHealthChangeKind::Spell,
+                            );
+                            info!(
+                                "TrainingDummy hit by Lira E missile: -{:.1} HP (remaining {:.1})",
+                                missile.settings.damage,
+                                dummy.health.max(0.0)
+                            );
+                        }
                         commands.entity(entity).despawn();
                         continue;
                     }

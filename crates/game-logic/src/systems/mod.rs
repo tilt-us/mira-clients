@@ -94,7 +94,7 @@ pub(super) struct MoveTargetMarker;
 /// Fields:
 /// - `health`: Current health value for the dummy.
 /// - `hit_radius`: Collision radius used by projectile and area checks.
-#[derive(Component, Debug, Clone, Copy)]
+#[derive(Component, Debug, Clone)]
 pub(super) struct TrainingDummy {
     pub(super) health: f32,
     pub(super) max_health: f32,
@@ -105,7 +105,7 @@ pub(super) struct TrainingDummy {
     pub(super) track_total_damage: bool,
     pub(super) total_damage: f32,
     pub(super) total_damage_idle_seconds: f32,
-    pending_combat_number: Option<(f32, TrainingDummyHealthChangeKind)>,
+    pending_combat_numbers: Vec<(f32, TrainingDummyHealthChangeKind)>,
     pub(super) last_health_change_kind: TrainingDummyHealthChangeKind,
 }
 
@@ -132,7 +132,7 @@ impl TrainingDummy {
             track_total_damage: true,
             total_damage: 0.0,
             total_damage_idle_seconds: 0.0,
-            pending_combat_number: None,
+            pending_combat_numbers: Vec::new(),
             last_health_change_kind: TrainingDummyHealthChangeKind::AutoAttack,
         }
     }
@@ -149,7 +149,7 @@ impl TrainingDummy {
             track_total_damage: false,
             total_damage: 0.0,
             total_damage_idle_seconds: 0.0,
-            pending_combat_number: None,
+            pending_combat_numbers: Vec::new(),
             last_health_change_kind: TrainingDummyHealthChangeKind::AutoAttack,
         }
     }
@@ -163,7 +163,7 @@ impl TrainingDummy {
         self.health = (self.health - damage).max(self.min_health);
         self.idle_seconds = 0.0;
         self.last_health_change_kind = kind;
-        self.pending_combat_number = Some((damage, kind));
+        self.pending_combat_numbers.push((damage, kind));
         if self.track_total_damage {
             self.total_damage += damage;
             self.total_damage_idle_seconds = 0.0;
@@ -176,6 +176,13 @@ impl TrainingDummy {
         let min_health = self.min_health.clamp(0.0, max_health);
         self.health = health.clamp(min_health, max_health);
         self.max_health = max_health;
+        self.idle_seconds = 0.0;
+        self.pending_combat_numbers.clear();
+    }
+
+    /// Runs the can auto heal step for the gameplay systems plugin registry.
+    pub(super) fn can_auto_heal(&self) -> bool {
+        self.local_damage_enabled && self.track_total_damage
     }
 
     /// Runs the heal to full step for the gameplay systems plugin registry.
@@ -188,15 +195,16 @@ impl TrainingDummy {
         self.health = self.max_health;
         self.idle_seconds = 0.0;
         self.last_health_change_kind = TrainingDummyHealthChangeKind::Heal;
-        self.pending_combat_number = Some((heal, TrainingDummyHealthChangeKind::Heal));
+        self.pending_combat_numbers
+            .push((heal, TrainingDummyHealthChangeKind::Heal));
         heal
     }
 
-    /// Runs the take pending combat number step for the gameplay systems plugin registry.
-    pub(super) fn take_pending_combat_number(
+    /// Runs the take pending combat numbers step for the gameplay systems plugin registry.
+    pub(super) fn take_pending_combat_numbers(
         &mut self,
-    ) -> Option<(f32, TrainingDummyHealthChangeKind)> {
-        self.pending_combat_number.take()
+    ) -> Vec<(f32, TrainingDummyHealthChangeKind)> {
+        std::mem::take(&mut self.pending_combat_numbers)
     }
 }
 
@@ -434,8 +442,14 @@ impl Plugin for AutoAttackSystemsPlugin {
             )
             .add_systems(
                 Update,
-                auto_attack::update_auto_attack_projectiles
+                auto_attack::receive_remote_auto_attack_visuals
                     .after(auto_attack::update_auto_attack_target)
+                    .run_if(resource_exists::<AssetServer>),
+            )
+            .add_systems(
+                Update,
+                auto_attack::update_auto_attack_projectiles
+                    .after(auto_attack::receive_remote_auto_attack_visuals)
                     .run_if(resource_exists::<AssetServer>),
             );
     }
@@ -629,8 +643,14 @@ impl Plugin for DamageNumberSystemsPlugin {
         )
         .add_systems(
             Update,
-            damage_numbers::spawn_damage_numbers_from_dummy_health
+            damage_numbers::receive_server_combat_number_events
                 .after(damage_numbers::heal_idle_training_dummies)
+                .run_if(resource_exists::<AssetServer>),
+        )
+        .add_systems(
+            Update,
+            damage_numbers::spawn_damage_numbers_from_dummy_health
+                .after(damage_numbers::receive_server_combat_number_events)
                 .run_if(resource_exists::<AssetServer>),
         )
         .add_systems(
@@ -656,8 +676,8 @@ mod tests {
         assert_eq!(dummy.health, 1.0);
         assert_eq!(dummy.total_damage, 50.0);
         assert_eq!(
-            dummy.take_pending_combat_number(),
-            Some((50.0, TrainingDummyHealthChangeKind::Spell))
+            dummy.take_pending_combat_numbers(),
+            vec![(50.0, TrainingDummyHealthChangeKind::Spell)]
         );
     }
 
@@ -671,5 +691,6 @@ mod tests {
         assert_eq!(dummy.health, 0.0);
         assert_eq!(dummy.total_damage, 0.0);
         assert!(!dummy.local_damage_enabled);
+        assert!(!dummy.can_auto_heal());
     }
 }

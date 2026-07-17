@@ -47,7 +47,7 @@ const ENEMY_HEALTH_COLOR: Color = Color::srgb_u8(0xd9, 0x23, 0x2f);
 const LOCAL_HEALTH_COLOR: Color = Color::srgb_u8(0x4a, 0xd1, 0x1b);
 const MANA_COLOR: Color = Color::srgb_u8(0x1b, 0x5a, 0xd1);
 const DEFAULT_ACCENT_COLOR: Color = Color::srgb_u8(0xf2, 0xc4, 0x5b);
-const HEALTH_BAR_PANEL_COLOR: Color = Color::srgb_u8(0x10, 0x12, 0x16);
+const HEALTH_BAR_PANEL_COLOR: Color = Color::srgb_u8(0x00, 0x00, 0x00);
 
 /// Description:
 /// Stores visual options used by overhead health bars.
@@ -469,7 +469,6 @@ fn spawn_health_bar(
     let background_material = materials.add(StandardMaterial {
         base_color: HEALTH_BAR_PANEL_COLOR,
         emissive: Color::BLACK.into(),
-        alpha_mode: AlphaMode::Blend,
         cull_mode: None,
         unlit: true,
         ..default()
