@@ -14,6 +14,7 @@ pub struct ServerNetworkSettings {
 }
 
 impl Default for ServerNetworkSettings {
+    /// Returns the default configuration used by the dedicated server network settings system.
     fn default() -> Self {
         Self {
             listen_addr: DEFAULT_SERVER_ADDR,

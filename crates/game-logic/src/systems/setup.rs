@@ -1,6 +1,7 @@
 use super::{
     CurrentChampionVisual, HoldMoveDirection, LOCAL_CHAMPION_ID, LocalChampionAnimationState,
-    LocalChampionAnimations, MoveTargetMarker, MoveTargetMarkerFx,
+    LocalChampionAnimations, MiraClientGameplaySettings, MoveTargetMarker, MoveTargetMarkerFx,
+    TrainingDummy,
     characters::lira::{
         LiraECastState, LiraESettings, LiraQCastState, LiraQIndicatorBody, LiraQIndicatorTip,
         LiraQSettings, LiraWAoeIndicator, LiraWCastState, LiraWRangeIndicator, LiraWSettings,
@@ -23,13 +24,13 @@ use super::{
 };
 use bevy::ecs::system::SystemParam;
 use bevy::gltf::GltfAssetLabel;
-use bevy::math::primitives::{Cuboid, Cylinder};
+use bevy::math::primitives::{Capsule3d, Cuboid, Cylinder};
 use bevy::prelude::*;
 use bevy_transform_interpolation::prelude::{RotationInterpolation, TranslationInterpolation};
 use game_shared::game::{
     camera::TopDownCameraBundle,
-    player::{PlayerBundle, PlayerId, PlayerProfile},
-    team::TeamSpec,
+    player::{Health, PlayerBundle, PlayerId, PlayerProfile},
+    team::{Team, TeamSpec},
 };
 use game_shared::network::{
     ChampionCatalogUpdate, ChampionId, NetworkChampionAbilities, NetworkChampionDefinition,
@@ -39,7 +40,10 @@ use lightyear::prelude::*;
 use serde::Deserialize;
 use std::{collections::HashMap, path::PathBuf};
 
-#[derive(Debug, Deserialize)]
+const DEV_DUMMY_HEALTH: f32 = 120.0;
+const DEV_DUMMY_HIT_RADIUS: f32 = 0.9;
+const DEV_DUMMY_POSITION: Vec3 = Vec3::new(3.5, 0.0, -2.5);
+
 /// Description:
 /// Represents the champion data loaded from the local champion JSON file.
 ///
@@ -47,19 +51,20 @@ use std::{collections::HashMap, path::PathBuf};
 /// - `localized_name`: Directory slug used for local champion assets.
 /// - `model_name`: GLB model filename loaded from the champion model directory.
 /// - `animations`: Animation key-to-index mappings used to build the graph.
+#[derive(Debug, Deserialize)]
 struct ChampionDataFile {
     localized_name: String,
     model_name: String,
     animations: Vec<ChampionAnimationEntry>,
 }
 
-#[derive(Debug, Deserialize)]
 /// Description:
 /// Represents one animation clip entry from a champion data file.
 ///
 /// Fields:
 /// - `key`: Logical animation name such as idle or walk.
 /// - `index`: GLTF animation index for the animation clip.
+#[derive(Debug, Deserialize)]
 struct ChampionAnimationEntry {
     key: String,
     index: usize,
@@ -75,6 +80,7 @@ pub(super) struct ClientChampionCatalog {
     champions: HashMap<ChampionId, NetworkChampionDefinition>,
 }
 
+/// Stores Client Champion Tuning Params data used by the client setup and champion tuning system.
 #[derive(SystemParam)]
 pub(super) struct ClientChampionTuningParams<'w> {
     q_settings: ResMut<'w, LiraQSettings>,
@@ -125,6 +131,7 @@ pub(super) fn spawn_local_player_and_camera(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     health_bar_style: Res<super::healthbar::OverheadHealthBarStyle>,
+    gameplay_settings: Res<MiraClientGameplaySettings>,
 ) {
     let champion_data = load_champion_data(LOCAL_CHAMPION_ID).unwrap_or_else(|| {
         warn!(
@@ -312,6 +319,59 @@ pub(super) fn spawn_local_player_and_camera(
         Transform::from_xyz(0.0, w_settings.elevation + 0.02, 0.0),
         Visibility::Hidden,
     ));
+
+    if gameplay_settings.spawn_dev_dummy {
+        spawn_dev_preview_dummy(
+            &mut commands,
+            &asset_server,
+            &mut meshes,
+            &mut materials,
+            health_bar_style.accent_color,
+        );
+    }
+}
+
+/// Runs the spawn dev preview dummy step for the client setup and champion tuning system.
+fn spawn_dev_preview_dummy(
+    commands: &mut Commands,
+    asset_server: &AssetServer,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    accent_color: Color,
+) {
+    let dummy_material = materials.add(StandardMaterial {
+        base_color: Color::srgb_u8(0xbd, 0x2d, 0x36),
+        emissive: Color::srgb_u8(0x4c, 0x08, 0x10).into(),
+        perceptual_roughness: 0.72,
+        ..default()
+    });
+    let dummy_entity = commands
+        .spawn((
+            Name::new("DevPreviewAttackDummy"),
+            TrainingDummy::new(DEV_DUMMY_HEALTH, DEV_DUMMY_HIT_RADIUS),
+            Health {
+                current: DEV_DUMMY_HEALTH as u32,
+                max: DEV_DUMMY_HEALTH as u32,
+            },
+            Team(TeamSpec::Dark),
+            PlayerProfile {
+                display_name: "Dev Dummy".to_string(),
+            },
+            Mesh3d(meshes.add(Mesh::from(Capsule3d::new(0.45, 1.35)))),
+            MeshMaterial3d(dummy_material),
+            Transform::from_translation(DEV_DUMMY_POSITION + Vec3::Y * 0.9),
+        ))
+        .id();
+
+    healthbar::spawn_remote_enemy_player_health_bar(
+        commands,
+        asset_server,
+        meshes,
+        materials,
+        dummy_entity,
+        DEV_DUMMY_HEALTH,
+        accent_color,
+    );
 }
 
 /// Description:
@@ -513,6 +573,7 @@ fn apply_lira_prediction_tuning(
     e_settings.damage = positive_or(e.damage.missile, e_settings.damage);
 }
 
+/// Runs the apply ignara prediction tuning step for the client setup and champion tuning system.
 fn apply_ignara_prediction_tuning(
     abilities: &NetworkChampionAbilities,
     q_settings: &mut IgnaraQSettings,
@@ -535,6 +596,7 @@ fn apply_ignara_prediction_tuning(
     e_settings.travel_seconds = positive_or(e.travel_seconds, e_settings.travel_seconds);
 }
 
+/// Runs the apply yuna prediction tuning step for the client setup and champion tuning system.
 fn apply_yuna_prediction_tuning(
     abilities: &NetworkChampionAbilities,
     q_settings: &mut YunaQSettings,
@@ -558,6 +620,7 @@ fn apply_yuna_prediction_tuning(
     e_settings.projectile_radius = positive_or(e.projectile_radius, e_settings.projectile_radius);
 }
 
+/// Runs the apply sophia prediction tuning step for the client setup and champion tuning system.
 fn apply_sophia_prediction_tuning(
     abilities: &NetworkChampionAbilities,
     q_settings: &mut SophiaQSettings,

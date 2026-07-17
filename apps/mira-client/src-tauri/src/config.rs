@@ -30,6 +30,7 @@ const DEFAULT_KEYCLOAK_REALM: &str = "mira";
 const DEFAULT_KEYCLOAK_CLIENT_ID: &str = "mira-bevy";
 const DEFAULT_KEYCLOAK_PASSWORD_CLIENT_ID: &str = "mira-e2e";
 
+/// Stores Client Config data used by the desktop client configuration system.
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ClientConfig {
@@ -45,12 +46,14 @@ pub(crate) struct ClientConfig {
     no_shared_auth: bool,
 }
 
+/// Stores Client Config File data used by the desktop client configuration system.
 #[derive(Default, serde::Deserialize)]
 struct ClientConfigFile {
     services: Option<ServiceConfigFile>,
     keycloak: Option<KeycloakConfigFile>,
 }
 
+/// Stores Service Config File data used by the desktop client configuration system.
 #[derive(Default, serde::Deserialize)]
 struct ServiceConfigFile {
     api_base_url: Option<String>,
@@ -60,6 +63,7 @@ struct ServiceConfigFile {
     chat_api_base_url: Option<String>,
 }
 
+/// Stores Keycloak Config File data used by the desktop client configuration system.
 #[derive(Default, serde::Deserialize)]
 struct KeycloakConfigFile {
     base_url: Option<String>,
@@ -68,11 +72,13 @@ struct KeycloakConfigFile {
     password_client_id: Option<String>,
 }
 
+/// Runs the client config step for the desktop client configuration system.
 #[tauri::command]
 pub(crate) fn client_config(app: tauri::AppHandle) -> Result<ClientConfig, String> {
     load_client_config(&app)
 }
 
+/// Runs the load client config step for the desktop client configuration system.
 fn load_client_config(app: &tauri::AppHandle) -> Result<ClientConfig, String> {
     let config_file = find_config_file(app);
     let parsed_config = match config_file {
@@ -101,12 +107,14 @@ fn load_client_config(app: &tauri::AppHandle) -> Result<ClientConfig, String> {
     Ok(parsed_config.into_runtime_config())
 }
 
+/// Runs the find config file step for the desktop client configuration system.
 fn find_config_file(app: &tauri::AppHandle) -> Option<PathBuf> {
     config_file_candidates(app)
         .into_iter()
         .find(|candidate| candidate.is_file())
 }
 
+/// Runs the config file candidates step for the desktop client configuration system.
 fn config_file_candidates(app: &tauri::AppHandle) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
 
@@ -143,6 +151,7 @@ fn config_file_candidates(app: &tauri::AppHandle) -> Vec<PathBuf> {
 }
 
 impl ClientConfigFile {
+    /// Runs the into runtime config step for the desktop client configuration system.
     fn into_runtime_config(self) -> ClientConfig {
         let services = self.services.unwrap_or_default();
         let keycloak = self.keycloak.unwrap_or_default();
@@ -186,6 +195,7 @@ impl ClientConfigFile {
     }
 }
 
+/// Runs the env flag enabled step for the desktop client configuration system.
 fn env_flag_enabled(name: &str) -> bool {
     std::env::var(name)
         .map(|value| {
@@ -197,12 +207,14 @@ fn env_flag_enabled(name: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Runs the normalize base url step for the desktop client configuration system.
 fn normalize_base_url(value: Option<&str>, default_value: &str) -> String {
     value_or_default(value, default_value)
         .trim_end_matches('/')
         .to_string()
 }
 
+/// Runs the value or default step for the desktop client configuration system.
 fn value_or_default(value: Option<&str>, default_value: &str) -> String {
     value
         .map(str::trim)

@@ -69,7 +69,7 @@ fn parses_short_aliases_and_inline_port() {
         "-p4242",
         "--screen=full",
         "--stage=Local",
-        "--dev-preview",
+        "--offline-preview",
     ])
     .expect("settings should parse")
     .expect("help should not be requested");
@@ -104,6 +104,7 @@ fn returns_none_for_help() {
     );
     assert!(usage().contains("--player-public-id"));
     assert!(usage().contains("--stage"));
+    assert!(usage().contains("--offline-preview"));
 }
 
 #[test]

@@ -4,49 +4,49 @@ use crate::network::ChampionId;
 
 use super::team::{Team, TeamSpec};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 /// Description:
 /// Identifies a player entity in gameplay systems.
 ///
 /// Fields:
 /// - `0`: Stable numeric player id.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PlayerId(pub u64);
 
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 /// Description:
 /// Stores the player id assigned to a gameplay entity.
 ///
 /// Fields:
 /// - `id`: Stable player id.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Player {
     pub id: PlayerId,
 }
 
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 /// Description:
 /// Stores the champion content id assigned to a gameplay entity.
 ///
 /// Fields:
 /// - `0`: Stable champion id shared by client, server, and content files.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Champion(pub ChampionId);
 
-#[derive(Component, Debug, Clone, PartialEq, Eq, Default)]
 /// Description:
 /// Stores display metadata for a player entity.
 ///
 /// Fields:
 /// - `display_name`: Name shown for the player.
+#[derive(Component, Debug, Clone, PartialEq, Eq, Default)]
 pub struct PlayerProfile {
     pub display_name: String,
 }
 
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 /// Description:
 /// Stores current and maximum health for a gameplay entity.
 ///
 /// Fields:
 /// - `current`: Current health value.
 /// - `max`: Maximum health value.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Health {
     pub current: u32,
     pub max: u32,
@@ -78,13 +78,13 @@ impl Health {
     }
 }
 
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 /// Description:
 /// Stores current and maximum mana for a gameplay entity.
 ///
 /// Fields:
 /// - `current`: Current mana value.
 /// - `max`: Maximum mana value.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Mana {
     pub current: u32,
     pub max: u32,
@@ -104,31 +104,31 @@ impl Mana {
     }
 }
 
-#[derive(Component, Debug, Clone, Copy, PartialEq)]
 /// Description:
 /// Stores ground movement speed for a gameplay entity.
 ///
 /// Fields:
 /// - `0`: Movement speed in world units per second.
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub struct MoveSpeed(pub f32);
 
-#[derive(Component, Debug, Clone, Copy, PartialEq)]
 /// Description:
 /// Stores the entity facing angle around the vertical axis.
 ///
 /// Fields:
 /// - `radians`: Yaw angle in radians.
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub struct Facing {
     pub radians: f32,
 }
 
-#[derive(Component, Debug, Clone, Copy, PartialEq)]
 /// Description:
 /// Stores the active movement destination for a gameplay entity.
 ///
 /// Fields:
 /// - `position`: World-space destination position.
 /// - `stop_distance`: Distance at which the destination is considered reached.
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub struct MoveTarget {
     pub position: Vec3,
     pub stop_distance: f32,
@@ -151,22 +151,21 @@ impl MoveTarget {
     }
 }
 
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
 /// Description:
 /// Marks the locally controlled player entity.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct PlayerControlled;
 
-#[derive(Component, Debug, Clone, Copy, PartialEq)]
 /// Description:
 /// Marks an entity as selectable and attackable by gameplay systems.
 ///
 /// Fields:
 /// - `radius`: World-space targeting radius.
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub struct Targetable {
     pub radius: f32,
 }
 
-#[derive(Bundle, Debug, Clone)]
 /// Description:
 /// Bundles core gameplay components for a player entity.
 ///
@@ -177,6 +176,7 @@ pub struct Targetable {
 /// - `mana`: Mana component.
 /// - `move_speed`: Movement speed component.
 /// - `controlled`: Local control marker component.
+#[derive(Bundle, Debug, Clone)]
 pub struct PlayerBundle {
     pub player: Player,
     pub team: Team,

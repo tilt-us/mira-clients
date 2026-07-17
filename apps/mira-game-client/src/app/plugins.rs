@@ -4,9 +4,14 @@ use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
 use bevy::feathers::{FeathersPlugins, dark_theme::create_dark_theme, theme::UiTheme};
 use bevy::prelude::*;
 use bevy::ui::IsDefaultUiCamera;
-use bevy::window::{MonitorSelection, VideoModeSelection, WindowMode, WindowResolution};
+use bevy::window::{
+    MonitorSelection, PresentMode, VideoModeSelection, WindowMode, WindowResolution,
+};
 use bevy_transform_interpolation::prelude::TransformInterpolationPlugin;
-use game_logic::{MiraClientSystemsPlugin, MiraGameplaySystemsPlugin, OverheadHealthBarStyle};
+use game_logic::{
+    MiraClientGameplaySettings, MiraClientSystemsPlugin, MiraGameplaySystemsPlugin,
+    OverheadHealthBarStyle,
+};
 use game_shared::MiraSharedPlugin;
 use game_shared::network::FIXED_TIMESTEP_HZ;
 use game_world::MiraWorldPlugin;
@@ -42,6 +47,13 @@ impl Plugin for ClientAppPlugins {
                 accent_color: settings.accent_color_bevy(),
             })
             .unwrap_or_default();
+        let gameplay_settings = app
+            .world()
+            .get_resource::<ClientLaunchSettings>()
+            .map(|settings| MiraClientGameplaySettings {
+                spawn_dev_dummy: settings.dev_preview,
+            })
+            .unwrap_or_default();
         let launch_blocked = app
             .world()
             .get_resource::<ClientLaunchGate>()
@@ -60,6 +72,7 @@ impl Plugin for ClientAppPlugins {
 
         app.insert_resource(Time::<Fixed>::from_hz(FIXED_TIMESTEP_HZ))
             .insert_resource(health_bar_style)
+            .insert_resource(gameplay_settings)
             .insert_resource(settings)
             .add_plugins(
                 DefaultPlugins
@@ -68,6 +81,7 @@ impl Plugin for ClientAppPlugins {
                             title: "mira-game-client".to_string(),
                             resolution: window_resolution,
                             mode: window_mode,
+                            present_mode: PresentMode::AutoNoVsync,
                             ..default()
                         }),
                         ..default()

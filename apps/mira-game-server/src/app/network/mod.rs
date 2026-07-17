@@ -1,3 +1,5 @@
+mod combat;
+mod geometry;
 mod lobby;
 mod plugin;
 mod settings;

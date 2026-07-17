@@ -1,3 +1,4 @@
+/// Runs the main step for the installer build script.
 fn main() {
     #[cfg(target_os = "windows")]
     {

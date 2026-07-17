@@ -3,8 +3,10 @@ use bevy_fontmesh::FontMeshPlugin;
 use game_shared::network::ChampionId;
 
 mod animation;
+mod auto_attack;
 mod camera;
 mod characters;
+mod damage_numbers;
 mod healthbar;
 mod movement;
 mod networked_players;
@@ -28,6 +30,13 @@ pub struct MiraGameplaySystemsPlugin;
 /// Used by the playable client after Bevy asset, render, and input plugins are available.
 pub struct MiraClientSystemsPlugin;
 
+/// Client-side gameplay setup flags supplied by the embedding game client.
+#[derive(Resource, Debug, Clone, Copy, Default)]
+pub struct MiraClientGameplaySettings {
+    /// Whether local development-only target dummies should be spawned.
+    pub spawn_dev_dummy: bool,
+}
+
 /// Compatibility plugin that registers both gameplay and client systems.
 ///
 /// Description:
@@ -47,6 +56,9 @@ struct AnimationSystemsPlugin;
 /// Registers local movement input and movement simulation systems.
 struct MovementSystemsPlugin;
 
+/// Registers local auto-attack input and projectile presentation systems.
+struct AutoAttackSystemsPlugin;
+
 /// Registers Lira ability prototype systems.
 struct LiraAbilitySystemsPlugin;
 
@@ -65,29 +77,140 @@ struct CameraSystemsPlugin;
 /// Registers HUD state and health bar presentation systems.
 struct HudSystemsPlugin;
 
+/// Registers floating combat text presentation systems.
+struct DamageNumberSystemsPlugin;
+
 pub(super) const LOCAL_CHAMPION_ID: u32 = 6606;
 pub(super) const HOLD_CURSOR_MIN_DISTANCE: f32 = 1.35;
 
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
 /// Description:
 /// Marks the transient click marker shown at the current movement target.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(super) struct MoveTargetMarker;
 
-#[derive(Component, Debug, Clone, Copy)]
 /// Description:
 /// Stores combat data for enemy training targets used by ability prototypes.
 ///
 /// Fields:
 /// - `health`: Current health value for the dummy.
 /// - `hit_radius`: Collision radius used by projectile and area checks.
+#[derive(Component, Debug, Clone)]
 pub(super) struct TrainingDummy {
     pub(super) health: f32,
+    pub(super) max_health: f32,
     pub(super) hit_radius: f32,
+    pub(super) idle_seconds: f32,
+    pub(super) min_health: f32,
+    pub(super) local_damage_enabled: bool,
+    pub(super) track_total_damage: bool,
+    pub(super) total_damage: f32,
+    pub(super) total_damage_idle_seconds: f32,
+    pending_combat_numbers: Vec<(f32, TrainingDummyHealthChangeKind)>,
+    pub(super) last_health_change_kind: TrainingDummyHealthChangeKind,
 }
 
-#[derive(Component, Debug, Clone, Copy, PartialEq)]
+/// Description:
+/// Describes the source of the latest dummy health change for floating combat text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(super) enum TrainingDummyHealthChangeKind {
+    #[default]
+    AutoAttack,
+    Spell,
+    Heal,
+}
+
+impl TrainingDummy {
+    /// Runs the new step for the gameplay systems plugin registry.
+    pub(super) fn new(health: f32, hit_radius: f32) -> Self {
+        Self {
+            health,
+            max_health: health,
+            hit_radius,
+            idle_seconds: 0.0,
+            min_health: 1.0,
+            local_damage_enabled: true,
+            track_total_damage: true,
+            total_damage: 0.0,
+            total_damage_idle_seconds: 0.0,
+            pending_combat_numbers: Vec::new(),
+            last_health_change_kind: TrainingDummyHealthChangeKind::AutoAttack,
+        }
+    }
+
+    /// Runs the remote player step for the gameplay systems plugin registry.
+    pub(super) fn remote_player(health: f32, max_health: f32, hit_radius: f32) -> Self {
+        Self {
+            health: health.clamp(0.0, max_health.max(0.0)),
+            max_health: max_health.max(0.0),
+            hit_radius,
+            idle_seconds: 0.0,
+            min_health: 0.0,
+            local_damage_enabled: false,
+            track_total_damage: false,
+            total_damage: 0.0,
+            total_damage_idle_seconds: 0.0,
+            pending_combat_numbers: Vec::new(),
+            last_health_change_kind: TrainingDummyHealthChangeKind::AutoAttack,
+        }
+    }
+
+    /// Runs the apply damage step for the gameplay systems plugin registry.
+    pub(super) fn apply_damage(&mut self, damage: f32, kind: TrainingDummyHealthChangeKind) {
+        if damage <= 0.0 || (self.health <= 0.0 && self.min_health <= 0.0) {
+            return;
+        }
+
+        self.health = (self.health - damage).max(self.min_health);
+        self.idle_seconds = 0.0;
+        self.last_health_change_kind = kind;
+        self.pending_combat_numbers.push((damage, kind));
+        if self.track_total_damage {
+            self.total_damage += damage;
+            self.total_damage_idle_seconds = 0.0;
+        }
+    }
+
+    /// Runs the set server health step for the gameplay systems plugin registry.
+    pub(super) fn set_server_health(&mut self, health: f32, max_health: f32) {
+        let max_health = max_health.max(0.0);
+        let min_health = self.min_health.clamp(0.0, max_health);
+        self.health = health.clamp(min_health, max_health);
+        self.max_health = max_health;
+        self.idle_seconds = 0.0;
+        self.pending_combat_numbers.clear();
+    }
+
+    /// Runs the can auto heal step for the gameplay systems plugin registry.
+    pub(super) fn can_auto_heal(&self) -> bool {
+        self.local_damage_enabled && self.track_total_damage
+    }
+
+    /// Runs the heal to full step for the gameplay systems plugin registry.
+    pub(super) fn heal_to_full(&mut self) -> f32 {
+        let heal = (self.max_health - self.health).max(0.0);
+        if heal <= f32::EPSILON {
+            return 0.0;
+        }
+
+        self.health = self.max_health;
+        self.idle_seconds = 0.0;
+        self.last_health_change_kind = TrainingDummyHealthChangeKind::Heal;
+        self.pending_combat_numbers
+            .push((heal, TrainingDummyHealthChangeKind::Heal));
+        heal
+    }
+
+    /// Runs the take pending combat numbers step for the gameplay systems plugin registry.
+    pub(super) fn take_pending_combat_numbers(
+        &mut self,
+    ) -> Vec<(f32, TrainingDummyHealthChangeKind)> {
+        std::mem::take(&mut self.pending_combat_numbers)
+    }
+}
+
 /// Description:
 /// Stores server-provided temporary movement modifiers for the local player.
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub(super) struct ExternalMovementModifier {
     pub(super) speed_multiplier: f32,
     pub(super) pull_center: Option<Vec3>,
@@ -95,19 +218,18 @@ pub(super) struct ExternalMovementModifier {
     pub(super) stunned: bool,
 }
 
-#[derive(Component, Debug, Clone)]
 /// Description:
 /// Tracks the pulse animation state for the movement target marker.
 ///
 /// Fields:
 /// - `timer`: Animation timer for the marker pulse.
 /// - `active`: Whether the marker pulse is currently visible and animating.
+#[derive(Component, Debug, Clone)]
 pub(super) struct MoveTargetMarkerFx {
     pub(super) timer: Timer,
     pub(super) active: bool,
 }
 
-#[derive(Resource, Debug, Clone)]
 /// Description:
 /// Stores the local champion animation graph and clip node indices.
 ///
@@ -115,44 +237,46 @@ pub(super) struct MoveTargetMarkerFx {
 /// - `graph`: Animation graph handle assigned to spawned animation players.
 /// - `idle`: Node index for the idle animation.
 /// - `walk`: Node index for the walking animation.
+#[derive(Resource, Debug, Clone)]
 pub(super) struct LocalChampionAnimations {
     pub(super) graph: Handle<AnimationGraph>,
     pub(super) idle: AnimationNodeIndex,
     pub(super) walk: AnimationNodeIndex,
 }
 
-#[derive(Resource, Debug, Clone, Copy, Default)]
 /// Description:
 /// Stores the currently selected local champion locomotion animation state.
 ///
 /// Fields:
 /// - `moving`: Whether the controlled champion is currently moving.
 /// - `stop_grace_seconds`: Time accumulated since movement stopped before switching to idle.
+#[derive(Resource, Debug, Clone, Copy, Default)]
 pub(super) struct LocalChampionAnimationState {
     pub(super) moving: bool,
     pub(super) stop_grace_seconds: f32,
 }
 
-#[derive(Resource, Debug, Clone, Copy)]
 /// Description:
 /// Stores the last meaningful movement direction while right-click movement is held.
 ///
 /// Fields:
 /// - `0`: Normalized world-space movement direction.
+#[derive(Resource, Debug, Clone, Copy)]
 pub(super) struct HoldMoveDirection(pub(super) Vec3);
 
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
 /// Description:
 /// Tracks which server-assigned champion model is currently attached to an entity.
 ///
 /// Fields:
 /// - `champion`: Champion id whose scene is already attached to this entity.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(super) struct CurrentChampionVisual {
     pub(super) champion: Option<ChampionId>,
     pub(super) model_root: Option<Entity>,
 }
 
 impl Default for MoveTargetMarkerFx {
+    /// Returns the default configuration used by the gameplay systems plugin registry.
     fn default() -> Self {
         Self {
             timer: Timer::from_seconds(0.28, TimerMode::Once),
@@ -162,36 +286,43 @@ impl Default for MoveTargetMarkerFx {
 }
 
 impl Plugin for MiraGameplaySystemsPlugin {
+    /// Registers Bevy resources, plugins, or systems for the gameplay systems plugin registry.
     fn build(&self, _app: &mut App) {}
 }
 
 impl Plugin for MiraClientSystemsPlugin {
+    /// Registers Bevy resources, plugins, or systems for the gameplay systems plugin registry.
     fn build(&self, app: &mut App) {
         app.add_plugins(FontMeshPlugin::<StandardMaterial>::default());
         app.add_plugins((
             LocalSpawnSystemsPlugin,
             NetworkedPlayersSystemsPlugin,
             AnimationSystemsPlugin,
+            AutoAttackSystemsPlugin,
             MovementSystemsPlugin,
             LiraAbilitySystemsPlugin,
             IgnaraAbilitySystemsPlugin,
             YunaAbilitySystemsPlugin,
             SophiaAbilitySystemsPlugin,
             CameraSystemsPlugin,
+            DamageNumberSystemsPlugin,
             HudSystemsPlugin,
         ));
     }
 }
 
 impl Plugin for MiraSystemsPlugin {
+    /// Registers Bevy resources, plugins, or systems for the gameplay systems plugin registry.
     fn build(&self, app: &mut App) {
         app.add_plugins((MiraGameplaySystemsPlugin, MiraClientSystemsPlugin));
     }
 }
 
 impl Plugin for LocalSpawnSystemsPlugin {
+    /// Registers Bevy resources, plugins, or systems for the gameplay systems plugin registry.
     fn build(&self, app: &mut App) {
-        app.init_resource::<characters::lira::LiraQSettings>()
+        app.init_resource::<MiraClientGameplaySettings>()
+            .init_resource::<characters::lira::LiraQSettings>()
             .init_resource::<characters::lira::LiraQCastState>()
             .init_resource::<characters::lira::LiraQIndicatorState>()
             .init_resource::<characters::lira::LiraWSettings>()
@@ -233,6 +364,7 @@ impl Plugin for LocalSpawnSystemsPlugin {
 }
 
 impl Plugin for NetworkedPlayersSystemsPlugin {
+    /// Registers Bevy resources, plugins, or systems for the gameplay systems plugin registry.
     fn build(&self, app: &mut App) {
         app.add_systems(
             Update,
@@ -257,6 +389,7 @@ impl Plugin for NetworkedPlayersSystemsPlugin {
 }
 
 impl Plugin for AnimationSystemsPlugin {
+    /// Registers Bevy resources, plugins, or systems for the gameplay systems plugin registry.
     fn build(&self, app: &mut App) {
         app.add_systems(
             Update,
@@ -272,10 +405,13 @@ impl Plugin for AnimationSystemsPlugin {
 }
 
 impl Plugin for MovementSystemsPlugin {
+    /// Registers Bevy resources, plugins, or systems for the gameplay systems plugin registry.
     fn build(&self, app: &mut App) {
         app.add_systems(
             Update,
-            movement::set_move_target_from_mouse_input.run_if(resource_exists::<AssetServer>),
+            movement::set_move_target_from_mouse_input
+                .after(auto_attack::handle_auto_attack_input)
+                .run_if(resource_exists::<AssetServer>),
         )
         .add_systems(
             FixedUpdate,
@@ -288,7 +424,39 @@ impl Plugin for MovementSystemsPlugin {
     }
 }
 
+impl Plugin for AutoAttackSystemsPlugin {
+    /// Registers Bevy resources, plugins, or systems for the gameplay systems plugin registry.
+    fn build(&self, app: &mut App) {
+        app.init_resource::<auto_attack::AutoAttackState>()
+            .init_resource::<auto_attack::AutoAttackInputState>()
+            .init_resource::<auto_attack::AutoAttackTarget>()
+            .add_systems(
+                Update,
+                auto_attack::handle_auto_attack_input.run_if(resource_exists::<AssetServer>),
+            )
+            .add_systems(
+                Update,
+                auto_attack::update_auto_attack_target
+                    .after(auto_attack::handle_auto_attack_input)
+                    .run_if(resource_exists::<AssetServer>),
+            )
+            .add_systems(
+                Update,
+                auto_attack::receive_remote_auto_attack_visuals
+                    .after(auto_attack::update_auto_attack_target)
+                    .run_if(resource_exists::<AssetServer>),
+            )
+            .add_systems(
+                Update,
+                auto_attack::update_auto_attack_projectiles
+                    .after(auto_attack::receive_remote_auto_attack_visuals)
+                    .run_if(resource_exists::<AssetServer>),
+            );
+    }
+}
+
 impl Plugin for LiraAbilitySystemsPlugin {
+    /// Registers Bevy resources, plugins, or systems for the gameplay systems plugin registry.
     fn build(&self, app: &mut App) {
         app.add_systems(
             Update,
@@ -327,6 +495,7 @@ impl Plugin for LiraAbilitySystemsPlugin {
 }
 
 impl Plugin for IgnaraAbilitySystemsPlugin {
+    /// Registers Bevy resources, plugins, or systems for the gameplay systems plugin registry.
     fn build(&self, app: &mut App) {
         app.add_systems(
             Startup,
@@ -357,6 +526,7 @@ impl Plugin for IgnaraAbilitySystemsPlugin {
 }
 
 impl Plugin for YunaAbilitySystemsPlugin {
+    /// Registers Bevy resources, plugins, or systems for the gameplay systems plugin registry.
     fn build(&self, app: &mut App) {
         app.add_systems(
             Startup,
@@ -388,6 +558,7 @@ impl Plugin for YunaAbilitySystemsPlugin {
 }
 
 impl Plugin for SophiaAbilitySystemsPlugin {
+    /// Registers Bevy resources, plugins, or systems for the gameplay systems plugin registry.
     fn build(&self, app: &mut App) {
         app.add_systems(
             Startup,
@@ -418,6 +589,7 @@ impl Plugin for SophiaAbilitySystemsPlugin {
 }
 
 impl Plugin for CameraSystemsPlugin {
+    /// Registers Bevy resources, plugins, or systems for the gameplay systems plugin registry.
     fn build(&self, app: &mut App) {
         app.add_systems(
             Update,
@@ -433,16 +605,92 @@ impl Plugin for CameraSystemsPlugin {
 }
 
 impl Plugin for HudSystemsPlugin {
+    /// Registers Bevy resources, plugins, or systems for the gameplay systems plugin registry.
     fn build(&self, app: &mut App) {
         app.add_systems(
             Update,
             (
                 healthbar::update_health_bar_positions.after(camera::update_top_down_camera),
                 healthbar::update_health_bar_fills,
+                healthbar::update_health_bar_texts,
                 ui_state::update_mira_hud_state,
             )
                 .chain()
                 .run_if(resource_exists::<AssetServer>),
         );
+    }
+}
+
+impl Plugin for DamageNumberSystemsPlugin {
+    /// Registers Bevy resources, plugins, or systems for the gameplay systems plugin registry.
+    fn build(&self, app: &mut App) {
+        app.add_systems(
+            Update,
+            damage_numbers::initialize_damage_number_health_trackers
+                .run_if(resource_exists::<AssetServer>),
+        )
+        .add_systems(
+            Update,
+            damage_numbers::heal_idle_training_dummies
+                .after(damage_numbers::initialize_damage_number_health_trackers)
+                .after(auto_attack::update_auto_attack_projectiles)
+                .after(characters::lira::update_q_skillshot_projectiles)
+                .after(characters::lira::update_q_skillshot_explosions)
+                .after(characters::lira::update_w_arc_explosions)
+                .after(characters::lira::update_e_contact_missiles)
+                .after(characters::sophia::update_q_orbs)
+                .run_if(resource_exists::<AssetServer>),
+        )
+        .add_systems(
+            Update,
+            damage_numbers::receive_server_combat_number_events
+                .after(damage_numbers::heal_idle_training_dummies)
+                .run_if(resource_exists::<AssetServer>),
+        )
+        .add_systems(
+            Update,
+            damage_numbers::spawn_damage_numbers_from_dummy_health
+                .after(damage_numbers::receive_server_combat_number_events)
+                .run_if(resource_exists::<AssetServer>),
+        )
+        .add_systems(
+            Update,
+            damage_numbers::update_damage_numbers
+                .after(camera::update_top_down_camera)
+                .run_if(resource_exists::<AssetServer>),
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Verifies local training dummy keeps one health and tracks total damage behavior for the gameplay systems plugin registry.
+    #[test]
+    fn local_training_dummy_keeps_one_health_and_tracks_total_damage() {
+        let mut dummy = TrainingDummy::new(20.0, 0.9);
+
+        dummy.apply_damage(50.0, TrainingDummyHealthChangeKind::Spell);
+
+        assert_eq!(dummy.health, 1.0);
+        assert_eq!(dummy.total_damage, 50.0);
+        assert_eq!(
+            dummy.take_pending_combat_numbers(),
+            vec![(50.0, TrainingDummyHealthChangeKind::Spell)]
+        );
+    }
+
+    /// Verifies remote training dummy allows zero health without local total damage behavior for the gameplay systems plugin registry.
+    #[test]
+    fn remote_training_dummy_allows_zero_health_without_local_total_damage() {
+        let mut dummy = TrainingDummy::remote_player(20.0, 20.0, 0.9);
+
+        dummy.apply_damage(50.0, TrainingDummyHealthChangeKind::Spell);
+
+        assert_eq!(dummy.health, 0.0);
+        assert_eq!(dummy.total_damage, 0.0);
+        assert!(!dummy.local_damage_enabled);
+        assert!(!dummy.can_auto_heal());
     }
 }

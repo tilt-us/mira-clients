@@ -55,6 +55,9 @@ where
             }
             "--dev-preview" => {
                 launch_settings.dev_preview = true;
+            }
+            "--offline-preview" => {
+                launch_settings.dev_preview = true;
                 network_settings.auto_connect = false;
             }
             _ => {
@@ -83,7 +86,7 @@ where
 /// Description:
 /// Returns CLI usage text for the playable client.
 pub fn usage() -> &'static str {
-    "Usage: mira-game-client [OPTIONS]\n\nOptions:\n  --access-token <TOKEN>                 Matchmaking access token\n  --accent-color <HEX>                   Mira client accent color override\n  --match-id <MATCH_ID>                  Matchmaking match id\n  --player-public-id <PLAYER_PUBLIC_ID>  Public player id\n  --champion <CHAMPION>                  Champion slug or id\n  --matchmaking-api-base-url <URL>       Matchmaking API base URL\n  --server-control-base-url <URL>        Dedicated server REST control API base URL\n  --server-host <HOST>                   Hostname or IP of the dedicated server\n  --stage <Local|Dev>                    API stage for release auth validation\n  --screen <full|window|borderless>      Game window mode\n  --dev-preview                          Development-only map and mechanics preview\n  -p, --port <PORT>                      UDP port of the dedicated server\n  -h, --help                             Print help"
+    "Usage: mira-game-client [OPTIONS]\n\nOptions:\n  --access-token <TOKEN>                 Matchmaking access token\n  --accent-color <HEX>                   Mira client accent color override\n  --match-id <MATCH_ID>                  Matchmaking match id\n  --player-public-id <PLAYER_PUBLIC_ID>  Public player id\n  --champion <CHAMPION>                  Champion slug or id\n  --matchmaking-api-base-url <URL>       Matchmaking API base URL\n  --server-control-base-url <URL>        Dedicated server REST control API base URL\n  --server-host <HOST>                   Hostname or IP of the dedicated server\n  --stage <Local|Dev>                    API stage for release auth validation\n  --screen <full|window|borderless>      Game window mode\n  --dev-preview                          Development preview using the configured server\n  --offline-preview                      Development preview without server networking\n  -p, --port <PORT>                      UDP port of the dedicated server\n  -h, --help                             Print help"
 }
 
 fn apply_client_arg(
@@ -202,4 +205,60 @@ fn parse_port(value: &str) -> Result<u16, String> {
     value
         .parse::<u16>()
         .map_err(|_| format!("Invalid port: {value}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dev_preview_keeps_server_connection_enabled() {
+        let (launch_settings, network_settings) = client_settings_from_args(["--dev-preview"])
+            .unwrap()
+            .unwrap();
+
+        assert!(launch_settings.dev_preview);
+        assert!(network_settings.auto_connect);
+    }
+
+    #[test]
+    fn offline_preview_disables_server_connection() {
+        let (launch_settings, network_settings) = client_settings_from_args(["--offline-preview"])
+            .unwrap()
+            .unwrap();
+
+        assert!(launch_settings.dev_preview);
+        assert!(!network_settings.auto_connect);
+    }
+
+    #[test]
+    fn parses_local_server_launch_params_without_access_token() {
+        let (launch_settings, network_settings) = client_settings_from_args([
+            "--dev-preview",
+            "--match-id",
+            "local-dev",
+            "--player-public-id",
+            "1001",
+            "--champion",
+            "lira",
+            "--server-host",
+            "127.0.0.1",
+            "--port",
+            "5000",
+            "--server-control-base-url",
+            "http://127.0.0.1:6000",
+            "--stage",
+            "Local",
+        ])
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(launch_settings.access_token, None);
+        assert_eq!(launch_settings.match_id.as_deref(), Some("local-dev"));
+        assert_eq!(launch_settings.player_public_id.as_deref(), Some("1001"));
+        assert_eq!(launch_settings.champion.as_deref(), Some("lira"));
+        assert_eq!(network_settings.client_id, 1001);
+        assert_eq!(network_settings.server_addr.to_string(), "127.0.0.1:5000");
+        assert!(network_settings.auto_connect);
+    }
 }

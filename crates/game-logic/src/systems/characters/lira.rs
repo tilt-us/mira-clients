@@ -4,7 +4,7 @@ use super::{
     yuna::{YunaESettings, YunaQSettings, YunaWSettings},
 };
 use crate::systems::{
-    CurrentChampionVisual, TrainingDummy,
+    CurrentChampionVisual, TrainingDummy, TrainingDummyHealthChangeKind,
     targeting::{clamp_world_point_to_map_top, ray_hit_map_top},
 };
 use bevy::math::primitives::Sphere;
@@ -50,7 +50,6 @@ const E_MISSILE_RADIUS: f32 = 0.24;
 const E_MISSILE_DAMAGE: f32 = 18.0;
 const REMOTE_PLAYER_VISUAL_HIT_RADIUS: f32 = 0.9;
 
-#[derive(Resource, Debug, Clone, Copy)]
 /// Description:
 /// Stores visual and gameplay tuning for Lira's Q skillshot preview and projectile.
 ///
@@ -71,6 +70,7 @@ const REMOTE_PLAYER_VISUAL_HIT_RADIUS: f32 = 0.9;
 /// - `saturation`: Preview color saturation.
 /// - `lightness`: Preview color lightness.
 /// - `alpha`: Preview color opacity.
+#[derive(Resource, Debug, Clone, Copy)]
 pub(in crate::systems) struct LiraQSettings {
     pub(in crate::systems) range: f32,
     pub(in crate::systems) width: f32,
@@ -105,6 +105,7 @@ impl LiraQSettings {
 }
 
 impl Default for LiraQSettings {
+    /// Returns the default configuration used by the Lira ability system.
     fn default() -> Self {
         Self {
             range: 11.5,
@@ -127,7 +128,6 @@ impl Default for LiraQSettings {
     }
 }
 
-#[derive(Resource, Debug, Clone, Copy)]
 /// Description:
 /// Stores visual and gameplay tuning for Lira's W arcing area spell.
 ///
@@ -142,6 +142,7 @@ impl Default for LiraQSettings {
 /// - `thickness`: Vertical thickness used by preview meshes.
 /// - `elevation`: Height above the map used by preview meshes.
 /// - `alpha`: Preview color opacity.
+#[derive(Resource, Debug, Clone, Copy)]
 pub(in crate::systems) struct LiraWSettings {
     pub(in crate::systems) range: f32,
     pub(in crate::systems) aoe_radius: f32,
@@ -170,6 +171,7 @@ impl LiraWSettings {
 }
 
 impl Default for LiraWSettings {
+    /// Returns the default configuration used by the Lira ability system.
     fn default() -> Self {
         Self {
             range: 8.0,
@@ -186,7 +188,6 @@ impl Default for LiraWSettings {
     }
 }
 
-#[derive(Resource, Debug, Clone, Copy)]
 /// Description:
 /// Stores local prediction and visual tuning for Lira's E contact missiles.
 ///
@@ -201,6 +202,7 @@ impl Default for LiraWSettings {
 /// - `chase_speed`: Local prediction missile chase speed.
 /// - `missile_radius`: Local prediction missile visual and hit radius.
 /// - `damage`: Local debug damage for missile contact.
+#[derive(Resource, Debug, Clone, Copy)]
 pub(in crate::systems) struct LiraESettings {
     pub(in crate::systems) cooldown_seconds: f32,
     pub(in crate::systems) missile_count: usize,
@@ -215,6 +217,7 @@ pub(in crate::systems) struct LiraESettings {
 }
 
 impl Default for LiraESettings {
+    /// Returns the default configuration used by the Lira ability system.
     fn default() -> Self {
         Self {
             cooldown_seconds: E_CAST_COOLDOWN_SECONDS,
@@ -264,17 +267,16 @@ impl LiraESettings {
     }
 }
 
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
 /// Description:
 /// Marks the rectangular body mesh used by Lira's Q skillshot preview.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(in crate::systems) struct LiraQIndicatorBody;
 
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
 /// Description:
 /// Marks the circular tip mesh used by Lira's Q skillshot preview.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(in crate::systems) struct LiraQIndicatorTip;
 
-#[derive(Component, Debug, Clone)]
 /// Description:
 /// Stores runtime state for an active Lira Q projectile.
 ///
@@ -288,6 +290,7 @@ pub(in crate::systems) struct LiraQIndicatorTip;
 /// - `area_damage`: Damage applied by the impact explosion.
 /// - `hit_targets`: Entities already hit by this projectile pass-through.
 /// - `can_apply_damage`: Whether this projectile should apply local damage.
+#[derive(Component, Debug, Clone)]
 pub(in crate::systems) struct LiraQProjectile {
     start: Vec3,
     end: Vec3,
@@ -300,7 +303,6 @@ pub(in crate::systems) struct LiraQProjectile {
     can_apply_damage: bool,
 }
 
-#[derive(Component, Debug, Clone)]
 /// Description:
 /// Stores runtime state for the Lira Q impact explosion.
 ///
@@ -310,6 +312,7 @@ pub(in crate::systems) struct LiraQProjectile {
 /// - `damage`: Damage applied by the explosion.
 /// - `did_apply_damage`: Whether the explosion damage pass has already run.
 /// - `can_apply_damage`: Whether this explosion should apply local damage.
+#[derive(Component, Debug, Clone)]
 pub(in crate::systems) struct LiraQExplosion {
     timer: Timer,
     radius: f32,
@@ -318,17 +321,16 @@ pub(in crate::systems) struct LiraQExplosion {
     can_apply_damage: bool,
 }
 
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
 /// Description:
 /// Marks the range preview mesh used while aiming Lira's W spell.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(in crate::systems) struct LiraWRangeIndicator;
 
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
 /// Description:
 /// Marks the cursor-following area preview mesh used while aiming Lira's W spell.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(in crate::systems) struct LiraWAoeIndicator;
 
-#[derive(Component, Debug, Clone)]
 /// Description:
 /// Stores runtime state for an active Lira W arcing projectile.
 ///
@@ -340,6 +342,7 @@ pub(in crate::systems) struct LiraWAoeIndicator;
 /// - `explosion_radius`: Radius passed to the landing explosion.
 /// - `damage`: Damage passed to the landing explosion.
 /// - `can_apply_damage`: Whether the landing explosion should apply local damage.
+#[derive(Component, Debug, Clone)]
 pub(in crate::systems) struct LiraWProjectile {
     start: Vec3,
     end: Vec3,
@@ -350,7 +353,6 @@ pub(in crate::systems) struct LiraWProjectile {
     can_apply_damage: bool,
 }
 
-#[derive(Component, Debug, Clone)]
 /// Description:
 /// Stores runtime state for the Lira W landing explosion.
 ///
@@ -360,6 +362,7 @@ pub(in crate::systems) struct LiraWProjectile {
 /// - `damage`: Damage applied by the explosion.
 /// - `did_apply_damage`: Whether the explosion damage pass has already run.
 /// - `can_apply_damage`: Whether this explosion should apply local damage.
+#[derive(Component, Debug, Clone)]
 pub(in crate::systems) struct LiraWExplosion {
     timer: Timer,
     radius: f32,
@@ -368,7 +371,6 @@ pub(in crate::systems) struct LiraWExplosion {
     can_apply_damage: bool,
 }
 
-#[derive(Component, Debug, Clone)]
 /// Description:
 /// Stores runtime state for one Lira E contact missile.
 ///
@@ -380,6 +382,7 @@ pub(in crate::systems) struct LiraWExplosion {
 /// - `owner`: Optional owner entity used by remote visual-only missiles.
 /// - `settings`: E settings used for missile movement and collision visuals.
 /// - `can_apply_damage`: Whether this missile should search and damage targets.
+#[derive(Component, Debug, Clone)]
 pub(in crate::systems) struct LiraEMissile {
     phase: f32,
     lifetime: Timer,
@@ -390,81 +393,84 @@ pub(in crate::systems) struct LiraEMissile {
     can_apply_damage: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// Description:
 /// Defines the current behavior mode of a Lira E contact missile.
 ///
 /// Fields:
 /// - `Orbiting`: Missile is orbiting Lira and searching for a target.
 /// - `Chasing`: Missile is moving toward the stored target entity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LiraEMissileMode {
     Orbiting,
     Chasing(Entity),
 }
 
-#[derive(Resource, Debug, Clone)]
 /// Description:
 /// Stores cooldown state for Lira's Q skillshot.
 ///
 /// Fields:
 /// - `cooldown`: Timer that gates Q casts.
+#[derive(Resource, Debug, Clone)]
 pub(in crate::systems) struct LiraQCastState {
     cooldown: Timer,
 }
 
-#[derive(Resource, Debug, Clone, Copy, Default)]
 /// Description:
 /// Stores aim-preview state for Lira's Q skillshot.
 ///
 /// Fields:
 /// - `suppress_until_release`: Whether the preview should stay hidden until Q is released.
+#[derive(Resource, Debug, Clone, Copy, Default)]
 pub(in crate::systems) struct LiraQIndicatorState {
     suppress_until_release: bool,
 }
 
-#[derive(Resource, Debug, Clone)]
 /// Description:
 /// Stores cooldown state for Lira's W arcing area spell.
 ///
 /// Fields:
 /// - `cooldown`: Timer that gates W casts.
+#[derive(Resource, Debug, Clone)]
 pub(in crate::systems) struct LiraWCastState {
     cooldown: Timer,
 }
 
-#[derive(Resource, Debug, Clone, Copy, Default)]
 /// Description:
 /// Stores aim-preview state for Lira's W arcing area spell.
 ///
 /// Fields:
 /// - `suppress_until_release`: Whether the preview should stay hidden until W is released.
+#[derive(Resource, Debug, Clone, Copy, Default)]
 pub(in crate::systems) struct LiraWIndicatorState {
     suppress_until_release: bool,
 }
 
-#[derive(Resource, Debug, Clone)]
 /// Description:
 /// Stores cooldown state for Lira's E contact missiles.
 ///
 /// Fields:
 /// - `cooldown`: Timer that gates E casts.
+#[derive(Resource, Debug, Clone)]
 pub(in crate::systems) struct LiraECastState {
     cooldown: Timer,
 }
 
 impl Default for LiraQCastState {
+    /// Returns the default configuration used by the Lira ability system.
     fn default() -> Self {
         Self::ready(Q_CAST_COOLDOWN_SECONDS)
     }
 }
 
 impl Default for LiraWCastState {
+    /// Returns the default configuration used by the Lira ability system.
     fn default() -> Self {
         Self::ready(W_CAST_COOLDOWN_SECONDS)
     }
 }
 
 impl Default for LiraECastState {
+    /// Returns the default configuration used by the Lira ability system.
     fn default() -> Self {
         Self::ready(E_CAST_COOLDOWN_SECONDS)
     }
@@ -770,7 +776,7 @@ pub(in crate::systems) fn cast_q_skillshot_on_left_click(
         settings.direct_hit_damage,
         settings.explosion_radius,
         settings.area_damage,
-        false,
+        true,
     );
 
     send_ability_command(
@@ -832,6 +838,9 @@ pub(in crate::systems) fn update_q_skillshot_projectiles(
 
         if projectile.can_apply_damage {
             for (dummy_entity, mut dummy, dummy_transform) in &mut dummy_query {
+                if !dummy.local_damage_enabled {
+                    continue;
+                }
                 if projectile.hit_targets.contains(&dummy_entity) {
                     continue;
                 }
@@ -843,7 +852,7 @@ pub(in crate::systems) fn update_q_skillshot_projectiles(
                 );
                 if distance <= projectile.radius + dummy.hit_radius {
                     projectile.hit_targets.push(dummy_entity);
-                    dummy.health -= projectile.damage;
+                    dummy.apply_damage(projectile.damage, TrainingDummyHealthChangeKind::Spell);
                     info!(
                         "TrainingDummy hit by Lira Q projectile: -{:.1} HP (remaining {:.1})",
                         projectile.damage,
@@ -916,9 +925,12 @@ pub(in crate::systems) fn update_q_skillshot_explosions(
 
         if explosion.can_apply_damage && !explosion.did_apply_damage {
             for (mut dummy, dummy_transform) in &mut dummy_query {
+                if !dummy.local_damage_enabled {
+                    continue;
+                }
                 let distance = transform.translation.distance(dummy_transform.translation);
                 if distance <= explosion.radius + dummy.hit_radius {
-                    dummy.health -= explosion.damage;
+                    dummy.apply_damage(explosion.damage, TrainingDummyHealthChangeKind::Spell);
                     info!(
                         "TrainingDummy hit by Lira Q explosion: -{:.1} HP (remaining {:.1})",
                         explosion.damage,
@@ -1167,7 +1179,7 @@ pub(in crate::systems) fn cast_w_arc_on_left_click(
         settings.aoe_radius,
         settings.travel_seconds,
         settings.area_damage,
-        false,
+        true,
     );
 
     send_ability_command(
@@ -1263,10 +1275,13 @@ pub(in crate::systems) fn update_w_arc_explosions(
 
         if explosion.can_apply_damage && !explosion.did_apply_damage {
             for (mut dummy, dummy_transform) in &mut dummy_query {
+                if !dummy.local_damage_enabled {
+                    continue;
+                }
                 let distance =
                     horizontal_distance(transform.translation, dummy_transform.translation);
                 if distance <= explosion.radius + dummy.hit_radius {
-                    dummy.health -= explosion.damage;
+                    dummy.apply_damage(explosion.damage, TrainingDummyHealthChangeKind::Spell);
                     info!(
                         "TrainingDummy hit by Lira W explosion: -{:.1} HP (remaining {:.1})",
                         explosion.damage,
@@ -1459,7 +1474,7 @@ pub(in crate::systems) fn cast_e_contact_missiles(
         player_transform.translation,
         Some(player_entity),
         *settings,
-        false,
+        true,
     );
 
     send_ability_command(&mut command_senders, ChampionId(6606), AbilitySlot::E, None);
@@ -1523,12 +1538,26 @@ pub(in crate::systems) fn update_e_contact_missiles(
         if missile.mode == LiraEMissileMode::Orbiting {
             let target = if missile.can_apply_damage {
                 let dummies = dummy_queries.p0();
-                find_e_damage_target(
+                let damage_target = find_e_damage_target(
                     &dummies,
                     owner_position,
                     missile_transform.translation,
                     missile.settings.search_radius,
-                )
+                );
+                if damage_target.is_some() {
+                    damage_target
+                } else {
+                    let owner_team = missile.owner.and_then(|owner| team_query.get(owner).ok());
+                    find_e_visual_target(
+                        &dummies,
+                        local_player,
+                        owner_team,
+                        missile.owner,
+                        owner_position,
+                        missile_transform.translation,
+                        missile.settings.search_radius,
+                    )
+                }
             } else {
                 let dummies = dummy_queries.p0();
                 let owner_team = missile.owner.and_then(|owner| team_query.get(owner).ok());
@@ -1570,12 +1599,17 @@ pub(in crate::systems) fn update_e_contact_missiles(
                     let distance = to_target.length();
 
                     if distance <= missile.settings.missile_radius + dummy.hit_radius {
-                        dummy.health -= missile.settings.damage;
-                        info!(
-                            "TrainingDummy hit by Lira E missile: -{:.1} HP (remaining {:.1})",
-                            missile.settings.damage,
-                            dummy.health.max(0.0)
-                        );
+                        if dummy.local_damage_enabled {
+                            dummy.apply_damage(
+                                missile.settings.damage,
+                                TrainingDummyHealthChangeKind::Spell,
+                            );
+                            info!(
+                                "TrainingDummy hit by Lira E missile: -{:.1} HP (remaining {:.1})",
+                                missile.settings.damage,
+                                dummy.health.max(0.0)
+                            );
+                        }
                         commands.entity(entity).despawn();
                         continue;
                     }
@@ -1703,7 +1737,8 @@ fn find_e_damage_target(
     dummies
         .iter()
         .filter(|(_, dummy, dummy_transform)| {
-            dummy.health > 0.0
+            dummy.local_damage_enabled
+                && dummy.health > 0.0
                 && horizontal_distance(owner_position, dummy_transform.translation) <= search_radius
         })
         .min_by(|(_, _, left), (_, _, right)| {

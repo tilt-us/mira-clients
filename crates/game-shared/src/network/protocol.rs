@@ -50,6 +50,7 @@ pub struct WorldPosition {
 }
 
 impl From<Vec3> for WorldPosition {
+    /// Runs the from step for the shared network protocol system.
     fn from(value: Vec3) -> Self {
         Self {
             x: value.x,
@@ -60,6 +61,7 @@ impl From<Vec3> for WorldPosition {
 }
 
 impl From<WorldPosition> for Vec3 {
+    /// Runs the from step for the shared network protocol system.
     fn from(value: WorldPosition) -> Self {
         Self::new(value.x, value.y, value.z)
     }
@@ -93,6 +95,47 @@ pub struct AbilityVisualEvent {
     pub start: WorldPosition,
     pub end: Option<WorldPosition>,
     pub visual: AbilityVisualTuning,
+}
+
+/// Description:
+/// Describes one accepted auto-attack projectile that other clients should render.
+///
+/// Fields:
+/// - `caster_player_id`: Player id of the attacking player.
+/// - `target_player_id`: Player id of the attacked player.
+/// - `start`: World-space projectile start.
+/// - `end`: World-space projectile end.
+/// - `travel_seconds`: Projectile travel duration used by clients.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
+pub struct AutoAttackVisualEvent {
+    pub caster_player_id: u64,
+    pub target_player_id: u64,
+    pub start: WorldPosition,
+    pub end: WorldPosition,
+    pub travel_seconds: f32,
+}
+
+/// Description:
+/// Describes the gameplay source of a server-authoritative combat number.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NetworkCombatNumberKind {
+    AutoAttack,
+    Spell,
+    Heal,
+}
+
+/// Description:
+/// Sends one server-authoritative floating combat number to clients.
+///
+/// Fields:
+/// - `target_player_id`: Player id above which the number should be shown.
+/// - `amount`: Positive damage or healing amount to render.
+/// - `kind`: Source classification used for text sign and color.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
+pub struct NetworkCombatNumberEvent {
+    pub target_player_id: u64,
+    pub amount: f32,
+    pub kind: NetworkCombatNumberKind,
 }
 
 /// Description:
@@ -382,6 +425,7 @@ pub struct LoadingScreenPlayer {
 /// Fields:
 /// - `MoveTo`: Requests movement toward a world-space point.
 /// - `CastAbility`: Requests an ability cast for the given champion and slot.
+/// - `AutoAttack`: Requests a basic attack against a target player.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 pub enum PlayerCommand {
     MoveTo(WorldPosition),
@@ -390,6 +434,9 @@ pub enum PlayerCommand {
         slot: AbilitySlot,
         target: CastTarget,
     },
+    AutoAttack {
+        target_player_id: u64,
+    },
 }
 
 /// Description:
@@ -397,12 +444,19 @@ pub enum PlayerCommand {
 pub struct SharedNetworkPlugin;
 
 impl Plugin for SharedNetworkPlugin {
+    /// Registers Bevy resources, plugins, or systems for the shared network protocol system.
     fn build(&self, app: &mut App) {
         app.register_message::<PlayerCommand>()
             .add_direction(NetworkDirection::ClientToServer);
 
         app.register_message::<AbilityVisualEvent>()
             .add_direction(NetworkDirection::Bidirectional);
+
+        app.register_message::<AutoAttackVisualEvent>()
+            .add_direction(NetworkDirection::ServerToClient);
+
+        app.register_message::<NetworkCombatNumberEvent>()
+            .add_direction(NetworkDirection::ServerToClient);
 
         app.register_message::<PlayerStateUpdate>()
             .add_direction(NetworkDirection::ClientToServer);

@@ -598,14 +598,14 @@ function ChampionSelection({
         ? champions.filter((champion) =>
             availableChampionNames.has(champion.name.toLowerCase()),
           )
-        : champions,
+        : [],
     [availableChampionNames],
   );
   const confirmableChampion =
     canCurrentPlayerPick &&
     preselectedChampion &&
-    (!championAvailabilityLoaded ||
-      availableChampionNames.has(preselectedChampion.toLowerCase()))
+    championAvailabilityLoaded &&
+    availableChampionNames.has(preselectedChampion.toLowerCase())
       ? preselectedChampion
       : undefined;
 
@@ -614,7 +614,7 @@ function ChampionSelection({
   }
 
   function isChampionAvailable(champion: string) {
-    return !championAvailabilityLoaded || availableChampionNames.has(champion.toLowerCase());
+    return championAvailabilityLoaded && availableChampionNames.has(champion.toLowerCase());
   }
 
   async function handleChampionSelect(champion: string) {

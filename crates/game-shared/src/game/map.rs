@@ -1,12 +1,12 @@
 use bevy::prelude::*;
 
-#[derive(Component, Debug, Clone, Copy, PartialEq)]
 /// Description:
 /// Stores the dimensions of the playable ground plane.
 ///
 /// Fields:
 /// - `half_extents`: Half-width and half-depth of the map in local XZ space.
 /// - `thickness`: Vertical thickness of the ground mesh.
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub struct MapGround {
     pub half_extents: Vec2,
     pub thickness: f32,

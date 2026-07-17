@@ -1,5 +1,5 @@
 use crate::systems::{
-    CurrentChampionVisual, TrainingDummy,
+    CurrentChampionVisual, TrainingDummy, TrainingDummyHealthChangeKind,
     targeting::{clamp_world_point_to_map_top, ray_hit_map_top},
 };
 use bevy::ecs::query::QueryFilter;
@@ -40,6 +40,7 @@ const E_SPEED_SECONDS: f32 = 2.0;
 
 const INDICATOR_ELEVATION: f32 = 0.09;
 
+/// Stores Sophia QSettings data used by the Sophia ability system.
 #[derive(Resource, Debug, Clone, Copy)]
 pub(in crate::systems) struct SophiaQSettings {
     pub(in crate::systems) range: f32,
@@ -50,6 +51,7 @@ pub(in crate::systems) struct SophiaQSettings {
 }
 
 impl Default for SophiaQSettings {
+    /// Returns the default configuration used by the Sophia ability system.
     fn default() -> Self {
         Self {
             range: Q_RANGE,
@@ -61,6 +63,7 @@ impl Default for SophiaQSettings {
     }
 }
 
+/// Stores Sophia WSettings data used by the Sophia ability system.
 #[derive(Resource, Debug, Clone, Copy)]
 pub(in crate::systems) struct SophiaWSettings {
     pub(in crate::systems) minion_count: usize,
@@ -71,6 +74,7 @@ pub(in crate::systems) struct SophiaWSettings {
 }
 
 impl Default for SophiaWSettings {
+    /// Returns the default configuration used by the Sophia ability system.
     fn default() -> Self {
         Self {
             minion_count: W_MINION_COUNT,
@@ -83,6 +87,7 @@ impl Default for SophiaWSettings {
 }
 
 impl SophiaWSettings {
+    /// Runs the from visual step for the Sophia ability system.
     fn from_visual(visual: AbilityVisualTuning, fallback: Self) -> Self {
         Self {
             minion_count: if visual.missile_count > 0 {
@@ -101,6 +106,7 @@ impl SophiaWSettings {
     }
 }
 
+/// Stores Sophia ESettings data used by the Sophia ability system.
 #[derive(Resource, Debug, Clone, Copy)]
 pub(in crate::systems) struct SophiaESettings {
     pub(in crate::systems) buff_seconds: f32,
@@ -109,6 +115,7 @@ pub(in crate::systems) struct SophiaESettings {
 }
 
 impl Default for SophiaESettings {
+    /// Returns the default configuration used by the Sophia ability system.
     fn default() -> Self {
         Self {
             buff_seconds: E_BUFF_SECONDS,
@@ -118,16 +125,19 @@ impl Default for SophiaESettings {
     }
 }
 
+/// Stores Sophia QCast State data used by the Sophia ability system.
 #[derive(Resource, Debug, Clone)]
 pub(in crate::systems) struct SophiaQCastState {
     cooldown: Timer,
 }
 
+/// Stores Sophia WCast State data used by the Sophia ability system.
 #[derive(Resource, Debug, Clone)]
 pub(in crate::systems) struct SophiaWCastState {
     cooldown: Timer,
 }
 
+/// Stores Sophia ECast State data used by the Sophia ability system.
 #[derive(Resource, Debug, Clone)]
 pub(in crate::systems) struct SophiaECastState {
     cooldown: Timer,
@@ -136,64 +146,76 @@ pub(in crate::systems) struct SophiaECastState {
 }
 
 impl Default for SophiaQCastState {
+    /// Returns the default configuration used by the Sophia ability system.
     fn default() -> Self {
         Self::ready(Q_COOLDOWN_SECONDS)
     }
 }
 
 impl Default for SophiaWCastState {
+    /// Returns the default configuration used by the Sophia ability system.
     fn default() -> Self {
         Self::ready(W_COOLDOWN_SECONDS)
     }
 }
 
 impl Default for SophiaECastState {
+    /// Returns the default configuration used by the Sophia ability system.
     fn default() -> Self {
         Self::ready(E_COOLDOWN_SECONDS)
     }
 }
 
 impl SophiaQCastState {
+    /// Runs the ready step for the Sophia ability system.
     pub(in crate::systems) fn ready(cooldown_seconds: f32) -> Self {
         Self {
             cooldown: ready_timer(cooldown_seconds),
         }
     }
 
+    /// Runs the remaining seconds step for the Sophia ability system.
     pub(in crate::systems) fn remaining_seconds(&self) -> f32 {
         remaining_timer_seconds(&self.cooldown)
     }
 
+    /// Runs the total seconds step for the Sophia ability system.
     pub(in crate::systems) fn total_seconds(&self) -> f32 {
         total_timer_seconds(&self.cooldown)
     }
 
+    /// Runs the ready percent step for the Sophia ability system.
     pub(in crate::systems) fn ready_percent(&self) -> f32 {
         ready_timer_percent(&self.cooldown)
     }
 }
 
 impl SophiaWCastState {
+    /// Runs the ready step for the Sophia ability system.
     pub(in crate::systems) fn ready(cooldown_seconds: f32) -> Self {
         Self {
             cooldown: ready_timer(cooldown_seconds),
         }
     }
 
+    /// Runs the remaining seconds step for the Sophia ability system.
     pub(in crate::systems) fn remaining_seconds(&self) -> f32 {
         remaining_timer_seconds(&self.cooldown)
     }
 
+    /// Runs the total seconds step for the Sophia ability system.
     pub(in crate::systems) fn total_seconds(&self) -> f32 {
         total_timer_seconds(&self.cooldown)
     }
 
+    /// Runs the ready percent step for the Sophia ability system.
     pub(in crate::systems) fn ready_percent(&self) -> f32 {
         ready_timer_percent(&self.cooldown)
     }
 }
 
 impl SophiaECastState {
+    /// Runs the ready step for the Sophia ability system.
     pub(in crate::systems) fn ready(cooldown_seconds: f32) -> Self {
         Self {
             cooldown: ready_timer(cooldown_seconds),
@@ -202,18 +224,22 @@ impl SophiaECastState {
         }
     }
 
+    /// Runs the remaining seconds step for the Sophia ability system.
     pub(in crate::systems) fn remaining_seconds(&self) -> f32 {
         remaining_timer_seconds(&self.cooldown)
     }
 
+    /// Runs the total seconds step for the Sophia ability system.
     pub(in crate::systems) fn total_seconds(&self) -> f32 {
         total_timer_seconds(&self.cooldown)
     }
 
+    /// Runs the ready percent step for the Sophia ability system.
     pub(in crate::systems) fn ready_percent(&self) -> f32 {
         ready_timer_percent(&self.cooldown)
     }
 
+    /// Runs the consume damage amp step for the Sophia ability system.
     fn consume_damage_amp(&mut self, multiplier: f32) -> f32 {
         if !self.buff.is_finished() {
             self.buff.set_elapsed(self.buff.duration());
@@ -224,6 +250,7 @@ impl SophiaECastState {
     }
 }
 
+/// Stores Sophia QOrb data used by the Sophia ability system.
 #[derive(Component, Debug, Clone)]
 pub(in crate::systems) struct SophiaQOrb {
     timer: Timer,
@@ -234,6 +261,7 @@ pub(in crate::systems) struct SophiaQOrb {
     radius: f32,
 }
 
+/// Stores Sophia Minion data used by the Sophia ability system.
 #[derive(Component, Debug, Clone)]
 pub(in crate::systems) struct SophiaMinion {
     timer: Timer,
@@ -244,23 +272,29 @@ pub(in crate::systems) struct SophiaMinion {
     settings: SophiaWSettings,
 }
 
+/// Stores Sophia Buff Arrow data used by the Sophia ability system.
 #[derive(Component, Debug, Clone)]
 pub(in crate::systems) struct SophiaBuffArrow {
     timer: Timer,
 }
 
+/// Stores Sophia QRange Indicator data used by the Sophia ability system.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(in crate::systems) struct SophiaQRangeIndicator;
 
+/// Stores Sophia QTarget Indicator data used by the Sophia ability system.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(in crate::systems) struct SophiaQTargetIndicator;
 
+/// Stores Sophia WIndicator data used by the Sophia ability system.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(in crate::systems) struct SophiaWIndicator;
 
+/// Stores Sophia EIndicator data used by the Sophia ability system.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(in crate::systems) struct SophiaEIndicator;
 
+/// Runs the spawn sophia indicators step for the Sophia ability system.
 pub(in crate::systems) fn spawn_sophia_indicators(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -318,6 +352,7 @@ pub(in crate::systems) fn spawn_sophia_indicators(
     ));
 }
 
+/// Runs the cast q orb on left click step for the Sophia ability system.
 pub(in crate::systems) fn cast_q_orb_on_left_click(
     time: Res<Time>,
     mouse_buttons: Res<ButtonInput<MouseButton>>,
@@ -388,6 +423,7 @@ pub(in crate::systems) fn cast_q_orb_on_left_click(
     q_state.cooldown.reset();
 }
 
+/// Runs the cast w minions step for the Sophia ability system.
 pub(in crate::systems) fn cast_w_minions(
     time: Res<Time>,
     keyboard: Res<ButtonInput<KeyCode>>,
@@ -430,6 +466,7 @@ pub(in crate::systems) fn cast_w_minions(
     w_state.cooldown.reset();
 }
 
+/// Runs the cast e self buff step for the Sophia ability system.
 pub(in crate::systems) fn cast_e_self_buff(
     time: Res<Time>,
     keyboard: Res<ButtonInput<KeyCode>>,
@@ -469,6 +506,7 @@ pub(in crate::systems) fn cast_e_self_buff(
     send_ability_command(&mut command_senders, AbilitySlot::E, None);
 }
 
+/// Runs the update sophia indicators step for the Sophia ability system.
 pub(in crate::systems) fn update_sophia_indicators(
     keyboard: Res<ButtonInput<KeyCode>>,
     windows: Query<&Window, With<PrimaryWindow>>,
@@ -579,6 +617,7 @@ pub(in crate::systems) fn update_sophia_indicators(
     }
 }
 
+/// Runs the update q orbs step for the Sophia ability system.
 pub(in crate::systems) fn update_q_orbs(
     time: Res<Time>,
     mut commands: Commands,
@@ -620,8 +659,9 @@ pub(in crate::systems) fn update_q_orbs(
         if orb.damage_timer.just_finished()
             && let Some(target) = orb.target
             && let Ok(mut dummy) = dummy_query.get_mut(target)
+            && dummy.local_damage_enabled
         {
-            dummy.health = (dummy.health - orb.damage_per_second).max(0.0);
+            dummy.apply_damage(orb.damage_per_second, TrainingDummyHealthChangeKind::Spell);
         }
 
         let progress = timer_progress(&orb.timer);
@@ -637,6 +677,7 @@ pub(in crate::systems) fn update_q_orbs(
     }
 }
 
+/// Runs the update minions step for the Sophia ability system.
 pub(in crate::systems) fn update_minions(
     time: Res<Time>,
     mut commands: Commands,
@@ -694,6 +735,7 @@ pub(in crate::systems) fn update_minions(
     }
 }
 
+/// Runs the update buff arrows step for the Sophia ability system.
 pub(in crate::systems) fn update_buff_arrows(
     time: Res<Time>,
     mut commands: Commands,
@@ -728,6 +770,7 @@ pub(in crate::systems) fn update_buff_arrows(
     }
 }
 
+/// Runs the spawn remote ability visual step for the Sophia ability system.
 pub(in crate::systems) fn spawn_remote_ability_visual(
     event: AbilityVisualEvent,
     q_settings: &SophiaQSettings,
@@ -792,6 +835,7 @@ pub(in crate::systems) fn spawn_remote_ability_visual(
     }
 }
 
+/// Runs the spawn q orb step for the Sophia ability system.
 fn spawn_q_orb(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -826,6 +870,7 @@ fn spawn_q_orb(
     ));
 }
 
+/// Runs the spawn minions step for the Sophia ability system.
 fn spawn_minions(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -866,6 +911,7 @@ fn spawn_minions(
     }
 }
 
+/// Runs the spawn buff arrow step for the Sophia ability system.
 fn spawn_buff_arrow(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -892,6 +938,7 @@ fn spawn_buff_arrow(
     ));
 }
 
+/// Runs the indicator material step for the Sophia ability system.
 fn indicator_material(base_color: Color, emissive: Color) -> StandardMaterial {
     StandardMaterial {
         base_color,
@@ -902,6 +949,7 @@ fn indicator_material(base_color: Color, emissive: Color) -> StandardMaterial {
     }
 }
 
+/// Runs the minion follow position step for the Sophia ability system.
 fn minion_follow_position(
     minion: &SophiaMinion,
     player_query: &Query<(Entity, &Player, &Team, &Health, &Transform), Without<SophiaMinion>>,
@@ -934,6 +982,7 @@ fn minion_follow_position(
     Some(owner_transform.translation - forward * 1.05 + right * side_offset + Vec3::Y * 0.35)
 }
 
+/// Runs the find minion target step for the Sophia ability system.
 fn find_minion_target(
     position: Vec3,
     radius: f32,
@@ -962,35 +1011,42 @@ fn find_minion_target(
         .map(|(entity, _, _, _, _)| entity)
 }
 
+/// Runs the ready timer step for the Sophia ability system.
 fn ready_timer(cooldown_seconds: f32) -> Timer {
     let mut timer = Timer::from_seconds(cooldown_seconds.max(f32::EPSILON), TimerMode::Once);
     timer.set_elapsed(timer.duration());
     timer
 }
 
+/// Runs the expired timer step for the Sophia ability system.
 fn expired_timer(seconds: f32) -> Timer {
     let mut timer = Timer::from_seconds(seconds.max(f32::EPSILON), TimerMode::Once);
     timer.set_elapsed(timer.duration());
     timer
 }
 
+/// Runs the total timer seconds step for the Sophia ability system.
 fn total_timer_seconds(timer: &Timer) -> f32 {
     timer.duration().as_secs_f32().max(f32::EPSILON)
 }
 
+/// Runs the remaining timer seconds step for the Sophia ability system.
 fn remaining_timer_seconds(timer: &Timer) -> f32 {
     (total_timer_seconds(timer) - timer.elapsed().as_secs_f32()).max(0.0)
 }
 
+/// Runs the ready timer percent step for the Sophia ability system.
 fn ready_timer_percent(timer: &Timer) -> f32 {
     let total = total_timer_seconds(timer);
     ((total - remaining_timer_seconds(timer)) / total * 100.0).clamp(0.0, 100.0)
 }
 
+/// Runs the timer progress step for the Sophia ability system.
 fn timer_progress(timer: &Timer) -> f32 {
     (timer.elapsed_secs() / timer.duration().as_secs_f32().max(f32::EPSILON)).clamp(0.0, 1.0)
 }
 
+/// Runs the send ability command step for the Sophia ability system.
 fn send_ability_command(
     senders: &mut Query<&mut MessageSender<PlayerCommand>, With<Client>>,
     slot: AbilitySlot,
@@ -1007,6 +1063,7 @@ fn send_ability_command(
     }
 }
 
+/// Runs the cursor hit on map step for the Sophia ability system.
 fn cursor_hit_on_map(
     windows: &Query<&Window, With<PrimaryWindow>>,
     camera_query: &Query<(&Camera, &GlobalTransform), With<TopDownCamera>>,
@@ -1028,6 +1085,7 @@ fn cursor_hit_on_map(
         .and_then(|ray| ray_hit_map_top(ray, map_transform, map_ground))
 }
 
+/// Runs the find clicked enemy target step for the Sophia ability system.
 fn find_clicked_enemy_target<'a, F>(
     cursor_hit: Vec3,
     enemy_query: &'a Query<(Entity, &TrainingDummy, &Transform), F>,
@@ -1048,10 +1106,12 @@ where
         })
 }
 
+/// Runs the horizontal distance step for the Sophia ability system.
 fn horizontal_distance(a: Vec3, b: Vec3) -> f32 {
     Vec2::new(a.x - b.x, a.z - b.z).length()
 }
 
+/// Runs the positive or step for the Sophia ability system.
 fn positive_or(candidate: f32, fallback: f32) -> f32 {
     if candidate.is_finite() && candidate > 0.0 {
         candidate

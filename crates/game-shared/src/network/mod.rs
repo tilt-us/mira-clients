@@ -6,10 +6,11 @@ pub use config::{
     PROTOCOL_ID, SERVER_REPLICATION_INTERVAL,
 };
 pub use protocol::{
-    AbilitySlot, AbilityVisualEvent, AbilityVisualTuning, CastTarget, ChampionCatalogUpdate,
-    ChampionId, ClientLeave, DisplayReady, LoadingScreenPlayer, LoadingScreenStatus, MatchSnapshot,
-    NetworkAbilityDamage, NetworkAbilityDefinition, NetworkChampionAbilities,
-    NetworkChampionBaseStats, NetworkChampionDefinition, NetworkChampionStats, NetworkPlayer,
+    AbilitySlot, AbilityVisualEvent, AbilityVisualTuning, AutoAttackVisualEvent, CastTarget,
+    ChampionCatalogUpdate, ChampionId, ClientLeave, DisplayReady, LoadingScreenPlayer,
+    LoadingScreenStatus, MatchSnapshot, NetworkAbilityDamage, NetworkAbilityDefinition,
+    NetworkChampionAbilities, NetworkChampionBaseStats, NetworkChampionDefinition,
+    NetworkChampionStats, NetworkCombatNumberEvent, NetworkCombatNumberKind, NetworkPlayer,
     PlayerCommand, PlayerStateChannel, PlayerStateUpdate, ReliableCommandChannel,
     SharedNetworkPlugin, WorldPosition,
 };

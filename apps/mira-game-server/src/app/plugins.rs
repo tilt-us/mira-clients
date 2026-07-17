@@ -13,6 +13,7 @@ use super::states::ServerState;
 pub struct ServerPlugins;
 
 impl Plugin for ServerPlugins {
+    /// Registers Bevy resources, plugins, or systems for the dedicated server plugin registry.
     fn build(&self, app: &mut App) {
         app.add_plugins(MinimalPlugins)
             .add_plugins(LogPlugin::default())

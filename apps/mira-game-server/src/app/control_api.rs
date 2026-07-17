@@ -6,12 +6,14 @@ use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
+/// Stores Server Control Api Settings data used by the dedicated server control API system.
 #[derive(Debug, Clone, Copy)]
 pub struct ServerControlApiSettings {
     pub listen_addr: SocketAddr,
 }
 
 impl Default for ServerControlApiSettings {
+    /// Returns the default configuration used by the dedicated server control API system.
     fn default() -> Self {
         Self {
             listen_addr: SocketAddr::new(IpAddr::from([127, 0, 0, 1]), 6000),
@@ -19,6 +21,7 @@ impl Default for ServerControlApiSettings {
     }
 }
 
+/// Stores Control State data used by the dedicated server control API system.
 #[derive(Clone)]
 struct ControlState {
     match_id: Option<String>,
@@ -26,6 +29,7 @@ struct ControlState {
     ready_players: Arc<Mutex<HashSet<u64>>>,
 }
 
+/// Stores Display Ready Response data used by the dedicated server control API system.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DisplayReadyResponse {
@@ -38,6 +42,7 @@ struct DisplayReadyResponse {
     all_clients_ready: bool,
 }
 
+/// Stores Loading Screen Response data used by the dedicated server control API system.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct LoadingScreenResponse {
@@ -48,12 +53,14 @@ struct LoadingScreenResponse {
     can_close: bool,
 }
 
+/// Stores Error Response data used by the dedicated server control API system.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ErrorResponse {
     error: String,
 }
 
+/// Runs the spawn step for the dedicated server control API system.
 pub fn spawn(settings: ServerControlApiSettings, manifest: ServerMatchManifest) {
     let state = ControlState {
         match_id: manifest.match_id.clone(),
@@ -87,6 +94,7 @@ pub fn spawn(settings: ServerControlApiSettings, manifest: ServerMatchManifest) 
     });
 }
 
+/// Runs the handle connection step for the dedicated server control API system.
 fn handle_connection(mut stream: TcpStream, state: &ControlState) {
     let Ok(request) = read_request(&stream) else {
         write_json(
@@ -106,6 +114,7 @@ fn handle_connection(mut stream: TcpStream, state: &ControlState) {
     }
 }
 
+/// Runs the route step for the dedicated server control API system.
 fn route(method: &str, path: &str, state: &ControlState) -> RouteResponse {
     if method == "OPTIONS" {
         return RouteResponse::NoContent;
@@ -146,6 +155,7 @@ fn route(method: &str, path: &str, state: &ControlState) -> RouteResponse {
     json_error(404, "Endpoint was not found.")
 }
 
+/// Runs the mark display ready step for the dedicated server control API system.
 fn mark_display_ready(
     match_id: &str,
     player_public_id: u64,
@@ -178,6 +188,7 @@ fn mark_display_ready(
     json_response(200, &response)
 }
 
+/// Runs the loading screen step for the dedicated server control API system.
 fn loading_screen(match_id: &str, state: &ControlState) -> RouteResponse {
     if !match_matches(match_id, state) {
         return json_error(404, "Match was not found on this server.");
@@ -200,12 +211,14 @@ fn loading_screen(match_id: &str, state: &ControlState) -> RouteResponse {
     json_response(200, &response)
 }
 
+/// Runs the ready player ids step for the dedicated server control API system.
 fn ready_player_ids(ready_players: &HashSet<u64>) -> Vec<u64> {
     let mut player_ids = ready_players.iter().copied().collect::<Vec<_>>();
     player_ids.sort_unstable();
     player_ids
 }
 
+/// Runs the match matches step for the dedicated server control API system.
 fn match_matches(match_id: &str, state: &ControlState) -> bool {
     state
         .match_id
@@ -214,6 +227,7 @@ fn match_matches(match_id: &str, state: &ControlState) -> bool {
         .unwrap_or(true)
 }
 
+/// Runs the total players step for the dedicated server control API system.
 fn total_players(state: &ControlState, ready_count: usize) -> usize {
     if state.allowed_players.is_empty() {
         ready_count.max(1)
@@ -222,6 +236,7 @@ fn total_players(state: &ControlState, ready_count: usize) -> usize {
     }
 }
 
+/// Runs the json response step for the dedicated server control API system.
 fn json_response<T: Serialize>(status: u16, body: &T) -> RouteResponse {
     RouteResponse::Json(
         status,
@@ -230,6 +245,7 @@ fn json_response<T: Serialize>(status: u16, body: &T) -> RouteResponse {
     )
 }
 
+/// Runs the json error step for the dedicated server control API system.
 fn json_error(status: u16, error: &str) -> RouteResponse {
     json_response(
         status,
@@ -239,6 +255,7 @@ fn json_error(status: u16, error: &str) -> RouteResponse {
     )
 }
 
+/// Runs the read request step for the dedicated server control API system.
 fn read_request(stream: &TcpStream) -> Result<HttpRequest, std::io::Error> {
     let mut reader = BufReader::new(stream);
     let mut request_line = String::new();
@@ -249,12 +266,14 @@ fn read_request(stream: &TcpStream) -> Result<HttpRequest, std::io::Error> {
     Ok(HttpRequest { method, path })
 }
 
+/// Runs the write json step for the dedicated server control API system.
 fn write_json<T: Serialize>(stream: &mut TcpStream, status: u16, body: &T) {
     let body = serde_json::to_string(body)
         .unwrap_or_else(|_| "{\"error\":\"Serialization failed.\"}".to_string());
     write_raw_json(stream, status, &body);
 }
 
+/// Runs the write raw json step for the dedicated server control API system.
 fn write_raw_json(stream: &mut TcpStream, status: u16, body: &str) {
     let status_text = status_text(status);
     let _ = write!(
@@ -265,6 +284,7 @@ fn write_raw_json(stream: &mut TcpStream, status: u16, body: &str) {
     );
 }
 
+/// Runs the write no content step for the dedicated server control API system.
 fn write_no_content(stream: &mut TcpStream) {
     let _ = write!(
         stream,
@@ -272,6 +292,7 @@ fn write_no_content(stream: &mut TcpStream) {
     );
 }
 
+/// Runs the status text step for the dedicated server control API system.
 fn status_text(status: u16) -> &'static str {
     match status {
         200 => "OK",
@@ -283,11 +304,13 @@ fn status_text(status: u16) -> &'static str {
     }
 }
 
+/// Stores Http Request data used by the dedicated server control API system.
 struct HttpRequest {
     method: String,
     path: String,
 }
 
+/// Enumerates Route Response states or variants used by the dedicated server control API system.
 enum RouteResponse {
     Json(u16, String),
     NoContent,
@@ -297,6 +320,7 @@ enum RouteResponse {
 mod tests {
     use super::*;
 
+    /// Runs the marks manifest player ready step for the dedicated server control API system.
     #[test]
     fn marks_manifest_player_ready() {
         let state = ControlState {
@@ -315,6 +339,7 @@ mod tests {
         assert_eq!(state.ready_players.lock().unwrap().len(), 1);
     }
 
+    /// Verifies rejects player outside manifest behavior for the dedicated server control API system.
     #[test]
     fn rejects_player_outside_manifest() {
         let state = ControlState {

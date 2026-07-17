@@ -11,7 +11,6 @@ use bevy::prelude::*;
 use game_shared::game::player::{Health, PlayerControlled};
 use game_shared::network::ChampionId;
 
-#[derive(Resource, Debug, Clone, PartialEq)]
 /// Description:
 /// Stores gameplay values that the client HUD can render without depending on
 /// private gameplay resources.
@@ -36,6 +35,7 @@ use game_shared::network::ChampionId;
 /// - `e_cooldown_remaining`: Remaining local E cooldown in seconds.
 /// - `e_cooldown_total`: Total local E cooldown in seconds.
 /// - `e_ready_percent`: E readiness ratio in percent.
+#[derive(Resource, Debug, Clone, PartialEq)]
 pub struct MiraHudState {
     /// Current health of the locally controlled player.
     pub health_current: u32,
@@ -78,6 +78,7 @@ pub struct MiraHudState {
 }
 
 impl Default for MiraHudState {
+    /// Returns the default configuration used by the HUD state projection system.
     fn default() -> Self {
         Self {
             health_current: 100,

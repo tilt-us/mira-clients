@@ -31,12 +31,14 @@ const FOUR_K_INSTALLER_SIZE: InstallerWindowSize = InstallerWindowSize {
     height: 825.0,
 };
 
+/// Stores Installer Window Size data used by the installer Tauri backend system.
 #[derive(Clone, Copy)]
 struct InstallerWindowSize {
     width: f64,
     height: f64,
 }
 
+/// Stores Install Progress data used by the installer Tauri backend system.
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct InstallProgress {
@@ -44,6 +46,7 @@ struct InstallProgress {
     progress: f32,
 }
 
+/// Stores Platform Info data used by the installer Tauri backend system.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PlatformInfo {
@@ -52,6 +55,7 @@ struct PlatformInfo {
     package_extension: String,
 }
 
+/// Stores Latest Manifest data used by the installer Tauri backend system.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct LatestManifest {
@@ -61,6 +65,7 @@ struct LatestManifest {
     manifest_url: String,
 }
 
+/// Stores Download Manifest data used by the installer Tauri backend system.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DownloadManifest {
@@ -72,6 +77,7 @@ struct DownloadManifest {
     files: Vec<ManifestFile>,
 }
 
+/// Stores Manifest File data used by the installer Tauri backend system.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct ManifestFile {
     path: String,
@@ -80,22 +86,26 @@ struct ManifestFile {
     sha256: String,
 }
 
+/// Stores Install Result data used by the installer Tauri backend system.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct InstallResult {
     launcher_path: String,
 }
 
+/// Runs the detect platform step for the installer Tauri backend system.
 #[tauri::command]
 fn detect_platform() -> PlatformInfo {
     detect_platform_info()
 }
 
+/// Runs the default install path step for the installer Tauri backend system.
 #[tauri::command]
 fn default_install_path() -> String {
     default_install_path_buf().to_string_lossy().into_owned()
 }
 
+/// Runs the path has content step for the installer Tauri backend system.
 #[tauri::command]
 fn path_has_content(install_path: String) -> Result<bool, String> {
     let path = PathBuf::from(install_path);
@@ -114,6 +124,7 @@ fn path_has_content(install_path: String) -> Result<bool, String> {
         .is_some())
 }
 
+/// Runs the install game step for the installer Tauri backend system.
 #[tauri::command]
 async fn install_game(
     app: tauri::AppHandle,
@@ -129,11 +140,13 @@ async fn install_game(
     result
 }
 
+/// Runs the launch installed launcher step for the installer Tauri backend system.
 #[tauri::command]
 fn launch_installed_launcher(launcher_path: String) -> Result<(), String> {
     launch_path(PathBuf::from(launcher_path))
 }
 
+/// Runs the run step for the installer Tauri backend system.
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -156,6 +169,7 @@ pub fn run() {
         .expect("error while running Mira Installer");
 }
 
+/// Runs the disable webview hardware acceleration step for the installer Tauri backend system.
 #[cfg(target_os = "linux")]
 fn disable_webview_hardware_acceleration(window: &tauri::WebviewWindow) {
     let _ = window.with_webview(|webview| {
@@ -167,9 +181,11 @@ fn disable_webview_hardware_acceleration(window: &tauri::WebviewWindow) {
     });
 }
 
+/// Runs the disable webview hardware acceleration step for the installer Tauri backend system.
 #[cfg(not(target_os = "linux"))]
 fn disable_webview_hardware_acceleration(_window: &tauri::WebviewWindow) {}
 
+/// Runs the configure main window size step for the installer Tauri backend system.
 fn configure_main_window_size(app: &mut tauri::App) {
     let Some(window) = app.get_webview_window("main") else {
         return;
@@ -195,6 +211,7 @@ fn configure_main_window_size(app: &mut tauri::App) {
     let _ = window.center();
 }
 
+/// Runs the installer window size for monitor step for the installer Tauri backend system.
 fn installer_window_size_for_monitor(width: u32, height: u32) -> InstallerWindowSize {
     let long_side = width.max(height);
     let short_side = width.min(height);
@@ -208,6 +225,7 @@ fn installer_window_size_for_monitor(width: u32, height: u32) -> InstallerWindow
     }
 }
 
+/// Runs the default install path buf step for the installer Tauri backend system.
 fn default_install_path_buf() -> PathBuf {
     if cfg!(windows) {
         let mut install_path = std::env::var_os("ProgramFiles")
@@ -226,6 +244,7 @@ fn default_install_path_buf() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
+/// Runs the install game blocking step for the installer Tauri backend system.
 fn install_game_blocking(
     app: tauri::AppHandle,
     install_path: String,
@@ -368,6 +387,7 @@ fn install_game_blocking(
     })
 }
 
+/// Runs the detect platform info step for the installer Tauri backend system.
 fn detect_platform_info() -> PlatformInfo {
     match std::env::consts::OS {
         "windows" => PlatformInfo {
@@ -403,6 +423,7 @@ fn detect_platform_info() -> PlatformInfo {
     }
 }
 
+/// Runs the detect linux family step for the installer Tauri backend system.
 fn detect_linux_family() -> Option<String> {
     let release = fs::read_to_string("/etc/os-release").ok()?.to_lowercase();
     let values = release
@@ -448,6 +469,7 @@ fn detect_linux_family() -> Option<String> {
     None
 }
 
+/// Runs the game client suffix step for the installer Tauri backend system.
 fn game_client_suffix(platform: &PlatformInfo) -> &'static str {
     match platform.os.as_str() {
         "windows" => "-windows.exe",
@@ -456,6 +478,7 @@ fn game_client_suffix(platform: &PlatformInfo) -> &'static str {
     }
 }
 
+/// Runs the launcher filename step for the installer Tauri backend system.
 fn launcher_filename(platform: &PlatformInfo) -> &'static str {
     match platform.os.as_str() {
         "windows" => "mira-client.exe",
@@ -470,6 +493,7 @@ fn launcher_filename(platform: &PlatformInfo) -> &'static str {
     }
 }
 
+/// Runs the game client filename step for the installer Tauri backend system.
 fn game_client_filename(platform: &PlatformInfo) -> &'static str {
     match platform.os.as_str() {
         "windows" => "mira-game-client.exe",
@@ -477,6 +501,7 @@ fn game_client_filename(platform: &PlatformInfo) -> &'static str {
     }
 }
 
+/// Runs the remove legacy install entries step for the installer Tauri backend system.
 fn remove_legacy_install_entries(root: &Path) -> Result<(), String> {
     for entry in [
         "mira-client",
@@ -494,6 +519,7 @@ fn remove_legacy_install_entries(root: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Runs the install windows launcher step for the installer Tauri backend system.
 fn install_windows_launcher(installer_path: &Path, install_dir: &Path) -> Result<(), String> {
     let install_dir_arg = format!("/D={}", install_dir.to_string_lossy());
     let status = Command::new(installer_path)
@@ -519,6 +545,7 @@ fn install_windows_launcher(installer_path: &Path, install_dir: &Path) -> Result
     ))
 }
 
+/// Runs the resolve windows launcher path step for the installer Tauri backend system.
 fn resolve_windows_launcher_path(install_dir: &Path) -> Result<PathBuf, String> {
     let mut candidates = vec![
         install_dir.join("mira-client.exe"),
@@ -568,6 +595,7 @@ fn resolve_windows_launcher_path(install_dir: &Path) -> Result<PathBuf, String> 
     }
 }
 
+/// Runs the find archive step for the installer Tauri backend system.
 fn find_archive(
     manifest: &DownloadManifest,
     archive_name: &str,
@@ -581,6 +609,7 @@ fn find_archive(
     })
 }
 
+/// Runs the find manifest file step for the installer Tauri backend system.
 fn find_manifest_file<F>(manifest: &DownloadManifest, predicate: F) -> Result<ManifestFile, String>
 where
     F: Fn(&ManifestFile) -> bool,
@@ -593,6 +622,7 @@ where
         .ok_or_else(|| "required download file is missing in manifest".to_string())
 }
 
+/// Runs the normalize install error code step for the installer Tauri backend system.
 fn normalize_install_error_code(error: &str) -> &'static str {
     let normalized = error.to_lowercase();
 
@@ -609,6 +639,7 @@ fn normalize_install_error_code(error: &str) -> &'static str {
     ERROR_CODE_GAME_DATA
 }
 
+/// Runs the launch path step for the installer Tauri backend system.
 fn launch_path(path: PathBuf) -> Result<(), String> {
     if !path.exists() {
         return Err(format!("launcher does not exist: {}", path.display()));
@@ -649,6 +680,7 @@ fn launch_path(path: PathBuf) -> Result<(), String> {
         .map_err(|error| format!("failed to launch mira-launcher: {error}"))
 }
 
+/// Runs the configure linux webkit command step for the installer Tauri backend system.
 #[cfg(target_os = "linux")]
 fn configure_linux_webkit_command(command: &mut Command) {
     command.env_remove("WEBKIT_DISABLE_DMABUF_RENDERER");
@@ -657,9 +689,11 @@ fn configure_linux_webkit_command(command: &mut Command) {
     command.env_remove("LIBGL_ALWAYS_SOFTWARE");
 }
 
+/// Runs the configure linux webkit command step for the installer Tauri backend system.
 #[cfg(not(target_os = "linux"))]
 fn configure_linux_webkit_command(_command: &mut Command) {}
 
+/// Runs the download file step for the installer Tauri backend system.
 fn download_file(
     app: &tauri::AppHandle,
     client: &Client,
@@ -729,6 +763,7 @@ fn download_file(
     Ok(())
 }
 
+/// Runs the unzip archive step for the installer Tauri backend system.
 fn unzip_archive(
     app: &tauri::AppHandle,
     archive_path: &Path,
@@ -776,6 +811,7 @@ fn unzip_archive(
     Ok(())
 }
 
+/// Runs the replace dir step for the installer Tauri backend system.
 fn replace_dir(path: &Path) -> Result<(), String> {
     if path.exists() {
         fs::remove_dir_all(path)
@@ -785,6 +821,7 @@ fn replace_dir(path: &Path) -> Result<(), String> {
     fs::create_dir_all(path).map_err(|error| format!("failed to create folder: {error}"))
 }
 
+/// Runs the remove if exists step for the installer Tauri backend system.
 fn remove_if_exists(path: &Path) -> Result<(), String> {
     if path.exists() {
         if path.is_dir() {
@@ -798,6 +835,7 @@ fn remove_if_exists(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Runs the make executable step for the installer Tauri backend system.
 #[cfg(unix)]
 fn make_executable(path: &Path) -> Result<(), String> {
     let mut permissions = fs::metadata(path)
@@ -808,17 +846,20 @@ fn make_executable(path: &Path) -> Result<(), String> {
         .map_err(|error| format!("failed to mark file executable: {error}"))
 }
 
+/// Runs the make executable step for the installer Tauri backend system.
 #[cfg(not(unix))]
 fn make_executable(_path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Runs the write json step for the installer Tauri backend system.
 fn write_json<T: Serialize>(path: PathBuf, value: &T) -> Result<(), String> {
     let json = serde_json::to_vec_pretty(value)
         .map_err(|error| format!("failed to serialize json: {error}"))?;
     fs::write(path, json).map_err(|error| format!("failed to write json: {error}"))
 }
 
+/// Runs the part path step for the installer Tauri backend system.
 fn part_path(destination: &Path) -> Result<PathBuf, String> {
     let filename = destination
         .file_name()
@@ -827,6 +868,7 @@ fn part_path(destination: &Path) -> Result<PathBuf, String> {
     Ok(destination.with_file_name(format!("{filename}.part")))
 }
 
+/// Runs the emit progress step for the installer Tauri backend system.
 fn emit_progress(app: &tauri::AppHandle, label_key: &'static str, progress: f32) {
     let _ = app.emit(
         "installer:progress",
@@ -837,6 +879,7 @@ fn emit_progress(app: &tauri::AppHandle, label_key: &'static str, progress: f32)
     );
 }
 
+/// Runs the to hex step for the installer Tauri backend system.
 fn to_hex(bytes: &[u8]) -> String {
     let mut output = String::with_capacity(bytes.len() * 2);
     for byte in bytes {

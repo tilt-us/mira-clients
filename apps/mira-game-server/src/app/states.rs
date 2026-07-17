@@ -1,7 +1,5 @@
 use bevy::prelude::*;
 
-#[derive(States, Debug, Clone, Copy, Eq, PartialEq, Hash, Default)]
-#[allow(dead_code)]
 /// Description:
 /// Defines the high-level lifecycle state of the dedicated server app.
 ///
@@ -10,6 +8,8 @@ use bevy::prelude::*;
 /// - `Loading`: State used while server data is loading.
 /// - `Running`: State used while the server is actively simulating.
 /// - `ShuttingDown`: State used while the server is shutting down.
+#[derive(States, Debug, Clone, Copy, Eq, PartialEq, Hash, Default)]
+#[allow(dead_code)]
 pub enum ServerState {
     #[default]
     Boot,

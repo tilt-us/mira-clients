@@ -20,6 +20,7 @@ const OAUTH_MODAL_MIN_HEIGHT: f64 = 520.0;
 const OAUTH_PROVIDER_FAILED_ERROR: &str = "oauth_provider_failed";
 static OAUTH_WINDOW_COUNTER: AtomicU64 = AtomicU64::new(1);
 
+/// Stores OAuth Window Request data used by the desktop OAuth window system.
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct OAuthWindowRequest {
@@ -34,6 +35,7 @@ pub(crate) struct OAuthWindowRequest {
     visible: bool,
 }
 
+/// Stores OAuth Window Response data used by the desktop OAuth window system.
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct OAuthWindowResponse {
@@ -41,22 +43,26 @@ pub(crate) struct OAuthWindowResponse {
     redirect_uri: Option<String>,
 }
 
+/// Stores OAuth Callback Payload data used by the desktop OAuth window system.
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct OAuthCallbackPayload {
     url: String,
 }
 
+/// Stores OAuth Theme data used by the desktop OAuth window system.
 #[derive(Clone)]
 struct OAuthTheme {
     accent_color: Option<String>,
     font_color: Option<String>,
 }
 
+/// Runs the default oauth window visible step for the desktop OAuth window system.
 fn default_oauth_window_visible() -> bool {
     true
 }
 
+/// Runs the oauth window label step for the desktop OAuth window system.
 fn oauth_window_label(visible: bool) -> String {
     if visible {
         return "mira-oauth".to_string();
@@ -66,6 +72,7 @@ fn oauth_window_label(visible: bool) -> String {
     format!("mira-oauth-logout-{id}")
 }
 
+/// Runs the start oauth window step for the desktop OAuth window system.
 #[tauri::command]
 pub(crate) fn start_oauth_window(
     app: tauri::AppHandle,
@@ -315,6 +322,7 @@ pub(crate) fn start_oauth_window(
     })
 }
 
+/// Stores OAuth Modal Geometry data used by the desktop OAuth window system.
 struct OAuthModalGeometry {
     height: f64,
     width: f64,
@@ -322,6 +330,7 @@ struct OAuthModalGeometry {
     y: f64,
 }
 
+/// Runs the oauth modal geometry step for the desktop OAuth window system.
 fn oauth_modal_geometry(main_window: &tauri::WebviewWindow) -> Result<OAuthModalGeometry, String> {
     let scale_factor = main_window
         .scale_factor()
@@ -365,6 +374,7 @@ fn oauth_modal_geometry(main_window: &tauri::WebviewWindow) -> Result<OAuthModal
     })
 }
 
+/// Runs the sync oauth modal to main step for the desktop OAuth window system.
 fn sync_oauth_modal_to_main(app: &tauri::AppHandle, window_label: &str) -> Result<(), String> {
     let Some(main_window) = app.get_webview_window("main") else {
         return Ok(());
@@ -390,6 +400,7 @@ fn sync_oauth_modal_to_main(app: &tauri::AppHandle, window_label: &str) -> Resul
     Ok(())
 }
 
+/// Runs the is oauth redirect url step for the desktop OAuth window system.
 fn is_oauth_redirect_url(target_url: &str, redirect_uri: &str) -> bool {
     target_url == redirect_uri
         || target_url
@@ -397,6 +408,7 @@ fn is_oauth_redirect_url(target_url: &str, redirect_uri: &str) -> bool {
             .is_some_and(|rest| rest.starts_with('?') || rest.starts_with('#'))
 }
 
+/// Runs the oauth callback url from terminal url step for the desktop OAuth window system.
 fn oauth_callback_url_from_terminal_url(target_url: &str, redirect_uri: &str) -> Option<String> {
     if is_oauth_redirect_url(target_url, redirect_uri) {
         return Some(target_url.to_string());
@@ -412,6 +424,7 @@ fn oauth_callback_url_from_terminal_url(target_url: &str, redirect_uri: &str) ->
     None
 }
 
+/// Runs the is mira public oauth error url step for the desktop OAuth window system.
 fn is_mira_public_oauth_error_url(target_url: &str) -> bool {
     let Ok(url) = target_url.parse::<tauri::Url>() else {
         return false;
@@ -438,6 +451,7 @@ fn is_mira_public_oauth_error_url(target_url: &str) -> bool {
     }) || url.path() == "/"
 }
 
+/// Runs the oauth error from url step for the desktop OAuth window system.
 fn oauth_error_from_url(target_url: &str) -> Option<String> {
     let url = target_url.parse::<tauri::Url>().ok()?;
 
@@ -454,6 +468,7 @@ fn oauth_error_from_url(target_url: &str) -> Option<String> {
     None
 }
 
+/// Runs the normalize oauth error value step for the desktop OAuth window system.
 fn normalize_oauth_error_value(error: &str) -> String {
     let normalized = error.trim();
     let lower = normalized.to_ascii_lowercase();
@@ -477,6 +492,7 @@ fn normalize_oauth_error_value(error: &str) -> String {
     normalized.to_string()
 }
 
+/// Runs the oauth error callback url step for the desktop OAuth window system.
 fn oauth_error_callback_url(redirect_uri: &str, error: Option<&str>) -> String {
     let separator = if redirect_uri.contains('?') { '&' } else { '?' };
     let error = error.unwrap_or(OAUTH_PROVIDER_FAILED_ERROR);
@@ -487,6 +503,7 @@ fn oauth_error_callback_url(redirect_uri: &str, error: Option<&str>) -> String {
     )
 }
 
+/// Runs the is localhost url step for the desktop OAuth window system.
 fn is_localhost_url(target_url: &str) -> bool {
     let Ok(url) = target_url.parse::<tauri::Url>() else {
         return false;
@@ -495,10 +512,12 @@ fn is_localhost_url(target_url: &str) -> bool {
     matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "::1"))
 }
 
+/// Runs the is connection refused error step for the desktop OAuth window system.
 fn is_connection_refused_error(error: &str) -> bool {
     error.to_ascii_lowercase().contains("connection refused")
 }
 
+/// Runs the install oauth load failed handler step for the desktop OAuth window system.
 #[cfg(target_os = "linux")]
 fn install_oauth_load_failed_handler(
     oauth_window: &tauri::WebviewWindow,
@@ -544,6 +563,7 @@ fn install_oauth_load_failed_handler(
         .map_err(|error| format!("OAuth-Fehlerhandler konnte nicht installiert werden: {error}"))
 }
 
+/// Runs the is keycloak password reset login url step for the desktop OAuth window system.
 fn is_keycloak_password_reset_login_url(target_url: &str) -> bool {
     let Ok(url) = target_url.parse::<tauri::Url>() else {
         return false;
@@ -553,15 +573,18 @@ fn is_keycloak_password_reset_login_url(target_url: &str) -> bool {
     path.contains("/protocol/openid-connect/auth") || path.contains("/login-actions/authenticate")
 }
 
+/// Runs the password reset sent redirect uri step for the desktop OAuth window system.
 fn password_reset_sent_redirect_uri(redirect_uri: &str) -> String {
     let separator = if redirect_uri.contains('?') { '&' } else { '?' };
     format!("{redirect_uri}{separator}mira_password_reset=sent")
 }
 
+/// Runs the oauth start redirect uri step for the desktop OAuth window system.
 fn oauth_start_redirect_uri(redirect_uri: &str) -> String {
     format!("{}mira-oauth-start", redirect_uri)
 }
 
+/// Runs the is oauth start url step for the desktop OAuth window system.
 fn is_oauth_start_url(target_url: &str, redirect_uri: &str) -> bool {
     let start_uri = oauth_start_redirect_uri(redirect_uri);
 
@@ -571,6 +594,7 @@ fn is_oauth_start_url(target_url: &str, redirect_uri: &str) -> bool {
             .is_some_and(|rest| rest.starts_with('?') || rest.starts_with('#'))
 }
 
+/// Runs the oauth loading url step for the desktop OAuth window system.
 fn oauth_loading_url(auth_url: &str, theme: &OAuthTheme) -> tauri::WebviewUrl {
     let mut query = format!("authUrl={}", encode_url_component(auth_url));
 
@@ -592,6 +616,7 @@ fn oauth_loading_url(auth_url: &str, theme: &OAuthTheme) -> tauri::WebviewUrl {
     tauri::WebviewUrl::App(format!("oauth-loading.html?{query}").into())
 }
 
+/// Runs the start windows browser oauth step for the desktop OAuth window system.
 fn start_windows_browser_oauth(
     app: tauri::AppHandle,
     mut auth_url: tauri::Url,
@@ -694,6 +719,7 @@ fn start_windows_browser_oauth(
     Ok(redirect_uri)
 }
 
+/// Runs the start windows browser logout step for the desktop OAuth window system.
 fn start_windows_browser_logout(
     app: tauri::AppHandle,
     mut logout_url: tauri::Url,
@@ -756,12 +782,14 @@ fn start_windows_browser_logout(
     Ok(redirect_uri)
 }
 
+/// Enumerates Windows Browser OAuth Request states or variants used by the desktop OAuth window system.
 enum WindowsBrowserOAuthRequest {
     StartLogin,
     Callback(String),
     Ignore,
 }
 
+/// Runs the read windows browser oauth request step for the desktop OAuth window system.
 fn read_windows_browser_oauth_request(
     stream: &mut std::net::TcpStream,
     redirect_uri: &str,
@@ -802,6 +830,7 @@ fn read_windows_browser_oauth_request(
     ))
 }
 
+/// Runs the windows browser keycloak logout url step for the desktop OAuth window system.
 fn windows_browser_keycloak_logout_url(
     auth_url: &tauri::Url,
     post_logout_redirect_uri: &str,
@@ -830,10 +859,12 @@ fn windows_browser_keycloak_logout_url(
     Some(logout_url)
 }
 
+/// Runs the is windows browser oauth response target step for the desktop OAuth window system.
 fn is_windows_browser_oauth_response_target(target: &str) -> bool {
     target.contains("code=") || target.contains("error=") || target.contains("error_description=")
 }
 
+/// Runs the is windows browser logout callback step for the desktop OAuth window system.
 fn is_windows_browser_logout_callback(stream: &mut std::net::TcpStream) -> bool {
     let mut buffer = [0_u8; 4096];
     let bytes_read = match stream.read(&mut buffer) {
@@ -855,6 +886,7 @@ fn is_windows_browser_logout_callback(stream: &mut std::net::TcpStream) -> bool 
     method == "GET" && (target == "/" || target.starts_with("/?"))
 }
 
+/// Runs the write windows browser oauth ignored response step for the desktop OAuth window system.
 fn write_windows_browser_oauth_ignored_response(
     stream: &mut std::net::TcpStream,
 ) -> std::io::Result<()> {
@@ -868,6 +900,7 @@ fn write_windows_browser_oauth_ignored_response(
     stream.write_all(response.as_bytes())
 }
 
+/// Runs the write windows browser oauth redirect step for the desktop OAuth window system.
 fn write_windows_browser_oauth_redirect(
     stream: &mut std::net::TcpStream,
     target_url: &str,
@@ -880,6 +913,7 @@ fn write_windows_browser_oauth_redirect(
     stream.write_all(response.as_bytes())
 }
 
+/// Runs the write windows browser oauth response step for the desktop OAuth window system.
 fn write_windows_browser_oauth_response(stream: &mut std::net::TcpStream) -> std::io::Result<()> {
     let body = r#"<!doctype html><html lang="de"><head><meta charset="utf-8"><title>Mira Login</title><style>html,body{height:100%;margin:0;background:#101216;color:#edf2f7;font:16px system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}body{display:grid;place-items:center}.panel{display:grid;gap:12px;text-align:center}.mark{width:54px;height:54px;border-radius:10px;background:#f2c45b;color:#101216;display:grid;place-items:center;font-weight:800;font-size:28px;margin:auto}p{margin:0;color:#aeb7c5}</style></head><body><main class="panel"><div class="mark">M</div><h1>Login abgeschlossen</h1><p>Du kannst dieses Browserfenster jetzt schliessen.</p></main><script>(function(){function closeTab(){window.open("","_self");window.close()}window.setTimeout(closeTab,250);window.setTimeout(closeTab,700);window.setTimeout(function(){closeTab();document.body.innerHTML=""},1500)})();</script></body></html>"#;
     let response = format!(
@@ -891,6 +925,7 @@ fn write_windows_browser_oauth_response(stream: &mut std::net::TcpStream) -> std
     stream.write_all(response.as_bytes())
 }
 
+/// Runs the encode url component step for the desktop OAuth window system.
 fn encode_url_component(value: &str) -> String {
     let mut encoded = String::new();
 
@@ -908,6 +943,7 @@ fn encode_url_component(value: &str) -> String {
     encoded
 }
 
+/// Runs the oauth theme from url step for the desktop OAuth window system.
 fn oauth_theme_from_url(auth_url: &tauri::Url) -> OAuthTheme {
     let mut accent_color = None;
     let mut font_color = None;
@@ -930,6 +966,7 @@ fn oauth_theme_from_url(auth_url: &tauri::Url) -> OAuthTheme {
     }
 }
 
+/// Runs the normalize oauth accent color step for the desktop OAuth window system.
 fn normalize_oauth_accent_color(value: &str) -> Option<String> {
     let normalized = value.trim().trim_start_matches('#').to_ascii_lowercase();
 
@@ -944,6 +981,7 @@ fn normalize_oauth_accent_color(value: &str) -> Option<String> {
     None
 }
 
+/// Runs the normalize oauth font color step for the desktop OAuth window system.
 fn normalize_oauth_font_color(value: &str) -> Option<String> {
     match value.trim().to_ascii_lowercase().as_str() {
         "white" => Some("#ffffff".to_string()),
@@ -952,6 +990,7 @@ fn normalize_oauth_font_color(value: &str) -> Option<String> {
     }
 }
 
+/// Runs the localhost connection refused close script step for the desktop OAuth window system.
 fn localhost_connection_refused_close_script(
     redirect_uri: &str,
 ) -> Result<String, serde_json::Error> {
@@ -980,6 +1019,7 @@ fn localhost_connection_refused_close_script(
     .replace("__MIRA_REDIRECT_URI__", &redirect_uri))
 }
 
+/// Runs the oauth window init script step for the desktop OAuth window system.
 fn oauth_window_init_script(
     redirect_uri: &str,
     theme: OAuthTheme,

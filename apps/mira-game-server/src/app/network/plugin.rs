@@ -1,4 +1,5 @@
 use super::ServerNetworkSettings;
+use super::combat::{ServerCombatNumberEvents, broadcast_combat_number_events};
 use super::lobby::{
     ActiveServerAbilities, ConnectedPlayers, LeavingPlayers, LoadingScreenReadyPlayers,
     MatchSnapshotBroadcastTimer, SentChampionCatalogClients, broadcast_loading_screen_status,
@@ -19,6 +20,7 @@ const EMPTY_SERVER_SHUTDOWN_SECONDS: f32 = 60.0;
 /// Registers Lightyear server networking and starts the development UDP listener.
 pub struct ServerNetworkPlugin;
 
+/// Stores Empty Server Shutdown data used by the dedicated server network plugin.
 #[derive(Resource, Debug, Default)]
 struct EmptyServerShutdown {
     had_clients: bool,
@@ -26,6 +28,7 @@ struct EmptyServerShutdown {
 }
 
 impl Plugin for ServerNetworkPlugin {
+    /// Registers Bevy resources, plugins, or systems for the dedicated server network plugin.
     fn build(&self, app: &mut App) {
         app.add_plugins(ServerPlugins {
             tick_duration: Duration::from_secs_f64(1.0 / FIXED_TIMESTEP_HZ),
@@ -33,6 +36,7 @@ impl Plugin for ServerNetworkPlugin {
         .add_plugins(SharedNetworkPlugin)
         .init_resource::<ServerNetworkSettings>()
         .init_resource::<ConnectedPlayers>()
+        .init_resource::<ServerCombatNumberEvents>()
         .init_resource::<ActiveServerAbilities>()
         .init_resource::<LoadingScreenReadyPlayers>()
         .init_resource::<LeavingPlayers>()
@@ -51,6 +55,7 @@ impl Plugin for ServerNetworkPlugin {
                 receive_player_commands,
                 update_server_abilities,
                 update_player_death_and_respawn,
+                broadcast_combat_number_events,
                 rebroadcast_ability_visuals,
                 broadcast_match_snapshots,
             )
