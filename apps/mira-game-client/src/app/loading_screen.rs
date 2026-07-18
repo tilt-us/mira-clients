@@ -1,3 +1,5 @@
+//! Provides the client loading screen, including readiness tracking, player data, and UI synchronization.
+
 use super::settings::{ClientAppSettings, ClientLaunchSettings};
 use bevy::asset::RenderAssetUsages;
 use bevy::ecs::spawn::SpawnIter;
@@ -5,6 +7,7 @@ use bevy::image::{CompressedImageFormats, ImageSampler, ImageType};
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use game_logic::OverheadPlayerProfiles;
+use game_shared::game::player::{non_empty_string, public_display_name};
 use game_shared::game::team::TeamSpec;
 use game_shared::network::{
     ChampionId, DisplayReady, LoadingScreenPlayer, LoadingScreenStatus, ReliableCommandChannel,
@@ -30,11 +33,13 @@ const PROGRESS_BADGE_WIDTH: u32 = 112;
 const PROGRESS_BADGE_HEIGHT: u32 = 30;
 const MATCH_MANIFEST_ENV: &str = "MIRA_MATCH_MANIFEST_JSON";
 
+/// Stores the shared state used to control and render the client loading screen.
 #[derive(Resource, Clone)]
 pub struct LoadingScreenState {
     shared: Arc<Mutex<LoadingScreenSnapshot>>,
 }
 
+/// Stores the current loading progress, readiness, and player data.
 #[derive(Debug, Clone, PartialEq)]
 struct LoadingScreenSnapshot {
     active: bool,
@@ -60,6 +65,7 @@ struct LoadingPlayer {
     ready: bool,
 }
 
+/// Stores player profile metadata parsed from the client match manifest.
 #[derive(Resource, Debug, Clone)]
 struct ClientLoadingMatchManifest {
     players: HashMap<u64, ClientLoadingMatchPlayer>,
@@ -87,11 +93,13 @@ struct ClientLoadingMatchPlayerFile {
     avatar_url: Option<String>,
 }
 
+/// Tracks the minimum local loading duration before the client reports readiness.
 #[derive(Resource, Debug)]
 struct LoadingScreenReadyGate {
     minimum_timer: Timer,
 }
 
+/// Tracks wallpaper assets while they are being preloaded.
 #[derive(Resource, Debug, Default)]
 struct LoadingScreenWallpaperPreload {
     handles: Vec<Handle<Image>>,
@@ -111,11 +119,13 @@ struct LoadingProgressBadgeImage {
     handle: Handle<Image>,
 }
 
+/// Caches the loading state and image handles for player avatars.
 #[derive(Resource, Default)]
 struct LoadingAvatarCache {
     entries: HashMap<String, LoadingAvatarEntry>,
 }
 
+/// Represents a pending, ready, or failed avatar cache entry.
 enum LoadingAvatarEntry {
     Loading(Arc<Mutex<Receiver<Result<DownloadedAvatar, String>>>>),
     Ready(Handle<Image>),
@@ -166,7 +176,7 @@ impl FromWorld for ClientLoadingMatchManifest {
     }
 }
 
-/// Mirrors the loading-screen state into the Bevy UI loading component.
+/// Registers the resources and systems that manage the client loading screen.
 pub struct LoadingScreenPlugin;
 
 impl Plugin for LoadingScreenPlugin {
@@ -186,6 +196,7 @@ impl Plugin for LoadingScreenPlugin {
     }
 }
 
+/// Seeds in-world player profile names from match-manifest metadata.
 fn seed_overhead_profiles_from_manifest(
     manifest: Res<ClientLoadingMatchManifest>,
     mut overhead_profiles: ResMut<OverheadPlayerProfiles>,
@@ -258,6 +269,7 @@ fn wallpaper_handles_ready(
             .all(|handle| images.get(handle.id()).is_some())
 }
 
+/// Creates loading-screen state from the supplied launch settings.
 pub fn loading_screen_state(settings: &ClientLaunchSettings) -> LoadingScreenState {
     let enabled = loading_screen_enabled(settings);
     let snapshot = LoadingScreenSnapshot {
@@ -288,6 +300,7 @@ fn loading_screen_enabled(settings: &ClientLaunchSettings) -> bool {
     settings.match_id.is_some() && settings.player_public_id.is_some()
 }
 
+/// Advances local loading progress and reports readiness after assets and the minimum delay complete.
 fn update_loading_screen_ready_gate(
     time: Res<Time>,
     mut gate: ResMut<LoadingScreenReadyGate>,
@@ -381,6 +394,7 @@ fn send_display_ready(
     });
 }
 
+/// Applies the latest server loading status to local state and player profiles.
 fn receive_loading_screen_status(
     state: Res<LoadingScreenState>,
     manifest: Res<ClientLoadingMatchManifest>,
@@ -860,6 +874,7 @@ fn loading_progress_panel(progress_badge_image: Handle<Image>) -> impl Bundle {
     )
 }
 
+/// Synchronizes loading-screen UI nodes with state, assets, and network ping.
 fn sync_loading_screen_ui(
     time: Res<Time>,
     state: Res<LoadingScreenState>,
@@ -1020,6 +1035,7 @@ fn sync_loading_screen_ui(
     }
 }
 
+/// Returns a cached avatar image handle or begins loading the avatar.
 fn loading_avatar_handle(
     source: &str,
     asset_server: &AssetServer,
@@ -1032,9 +1048,9 @@ fn loading_avatar_handle(
     }
 
     if let Some(entry) = cache.entries.get_mut(source) {
-        match entry {
-            LoadingAvatarEntry::Ready(handle) => return Some(handle.clone()),
-            LoadingAvatarEntry::Failed => return None,
+        return match entry {
+            LoadingAvatarEntry::Ready(handle) => Some(handle.clone()),
+            LoadingAvatarEntry::Failed => None,
             LoadingAvatarEntry::Loading(receiver) => {
                 let received = receiver
                     .lock()
@@ -1055,7 +1071,7 @@ fn loading_avatar_handle(
 
                         warn!("Failed to decode loading-screen avatar from '{}'.", source);
                         *entry = LoadingAvatarEntry::Failed;
-                        return None;
+                        None
                     }
                     Ok(Err(error)) => {
                         warn!(
@@ -1063,16 +1079,16 @@ fn loading_avatar_handle(
                             source, error
                         );
                         *entry = LoadingAvatarEntry::Failed;
-                        return None;
+                        None
                     }
-                    Err(std::sync::mpsc::TryRecvError::Empty) => return None,
+                    Err(std::sync::mpsc::TryRecvError::Empty) => None,
                     Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                         *entry = LoadingAvatarEntry::Failed;
-                        return None;
+                        None
                     }
                 }
             }
-        }
+        };
     }
 
     if source.starts_with("http://") || source.starts_with("https://") {
@@ -1155,10 +1171,7 @@ fn avatar_image_from_download(
         .find_map(|extension| avatar_image_from_buffer(bytes, ImageType::Extension(extension)).ok())
 }
 
-fn avatar_image_from_buffer(
-    bytes: &[u8],
-    image_type: ImageType,
-) -> Result<Image, bevy::image::TextureError> {
+fn avatar_image_from_buffer(bytes: &[u8], image_type: ImageType) -> Result<Image, TextureError> {
     Image::from_buffer(
         bytes,
         image_type,
@@ -1224,6 +1237,7 @@ fn mark_ready_players(
     }
 }
 
+/// Builds team-specific loading-screen players from the server status.
 fn loading_players_from_status(
     status_players: &[LoadingScreenPlayer],
     manifest: &ClientLoadingMatchManifest,
@@ -1262,6 +1276,7 @@ fn loading_players_from_status(
     (light_players, dark_players)
 }
 
+/// Resolves the display name from server and manifest player data.
 fn loading_player_display_name(
     player: &LoadingScreenPlayer,
     manifest: &ClientLoadingMatchManifest,
@@ -1289,26 +1304,6 @@ fn champion_name(champion: ChampionId) -> &'static str {
     }
 }
 
-fn public_display_name(value: &str) -> Option<String> {
-    let without_email_domain = value.trim().split('@').next().unwrap_or("").trim();
-    let public_name = without_email_domain
-        .split(|character: char| character.is_whitespace() || matches!(character, '.' | '_' | '-'))
-        .find(|part| !part.trim().is_empty())?
-        .trim();
-
-    non_empty_string(public_name)
-}
-
-fn non_empty_string(value: &str) -> Option<String> {
-    let value = value.trim();
-
-    if value.is_empty() {
-        None
-    } else {
-        Some(value.to_string())
-    }
-}
-
 fn initials(name: &str) -> String {
     let value = name
         .split_whitespace()
@@ -1326,8 +1321,10 @@ fn progress_badge_shape_image(accent: Color) -> Image {
     let width = PROGRESS_BADGE_WIDTH;
     let height = PROGRESS_BADGE_HEIGHT;
     let mut data = vec![0; (width * height * 4) as usize];
-    let fill = rgba_bytes(Color::srgba(0.027, 0.035, 0.055, 0.94));
-    let border = rgba_bytes(accent);
+    let fill = Color::srgba(0.027, 0.035, 0.055, 0.94)
+        .to_srgba()
+        .to_u8_array();
+    let border = accent.to_srgba().to_u8_array();
 
     for y in 0..height {
         let t = y as f32 / height.saturating_sub(1) as f32;
@@ -1381,20 +1378,6 @@ fn accent_foreground_for(color: Color) -> Color {
     }
 }
 
-fn rgba_bytes(color: Color) -> [u8; 4] {
-    let srgba = color.to_srgba();
-    [
-        channel_to_byte(srgba.red),
-        channel_to_byte(srgba.green),
-        channel_to_byte(srgba.blue),
-        channel_to_byte(srgba.alpha),
-    ]
-}
-
-fn channel_to_byte(value: f32) -> u8 {
-    (value.clamp(0.0, 1.0) * 255.0).round() as u8
-}
-
 fn update_snapshot(
     shared: &Arc<Mutex<LoadingScreenSnapshot>>,
     update: impl FnOnce(&mut LoadingScreenSnapshot),
@@ -1411,6 +1394,7 @@ impl LoadingScreenState {
             .clone()
     }
 
+    /// Returns whether the loading screen is currently visible.
     pub fn is_visible(&self) -> bool {
         let snapshot = self.snapshot();
         snapshot.active && !snapshot.complete
@@ -1418,6 +1402,7 @@ impl LoadingScreenState {
 }
 
 impl LoadingScreenSnapshot {
+    /// Calculates the progress percentage displayed by the loading screen.
     fn progress_percent(&self) -> f32 {
         if !self.ready_sent {
             return self.client_progress_percent.clamp(0.0, 100.0);
@@ -1480,22 +1465,5 @@ mod tests {
         };
 
         assert_eq!(snapshot.progress_percent(), 42.0);
-    }
-
-    #[test]
-    fn trims_loading_display_names_to_public_first_part() {
-        assert_eq!(
-            public_display_name("Exepta Mustermann").as_deref(),
-            Some("Exepta")
-        );
-        assert_eq!(
-            public_display_name("exepta.profile").as_deref(),
-            Some("exepta")
-        );
-        assert_eq!(
-            public_display_name("exepta@example.com").as_deref(),
-            Some("exepta")
-        );
-        assert_eq!(public_display_name("   ").as_deref(), None);
     }
 }

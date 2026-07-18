@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use game_shared::game::player::{non_empty_string, public_display_name};
 use game_shared::game::team::TeamSpec;
 use game_shared::network::ChampionId;
 use serde::Deserialize;
@@ -100,49 +101,9 @@ impl ServerMatchManifest {
     }
 }
 
-/// Runs the public display name step for the server match manifest system.
-fn public_display_name(value: &str) -> Option<String> {
-    let without_email_domain = value.trim().split('@').next().unwrap_or("").trim();
-    let public_name = without_email_domain
-        .split(|character: char| character.is_whitespace() || matches!(character, '.' | '_' | '-'))
-        .find(|part| !part.trim().is_empty())?
-        .trim();
-
-    non_empty_string(public_name)
-}
-
-/// Runs the non empty string step for the server match manifest system.
-fn non_empty_string(value: &str) -> Option<String> {
-    let value = value.trim();
-
-    if value.is_empty() {
-        None
-    } else {
-        Some(value.to_string())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Runs the trims display names to public first part step for the server match manifest system.
-    #[test]
-    fn trims_display_names_to_public_first_part() {
-        assert_eq!(
-            public_display_name("Exepta Mustermann").as_deref(),
-            Some("Exepta")
-        );
-        assert_eq!(
-            public_display_name("exepta.profile").as_deref(),
-            Some("exepta")
-        );
-        assert_eq!(
-            public_display_name("exepta@example.com").as_deref(),
-            Some("exepta")
-        );
-        assert_eq!(public_display_name("   ").as_deref(), None);
-    }
 
     /// Verifies parses player profile fields from manifest behavior for the server match manifest system.
     #[test]

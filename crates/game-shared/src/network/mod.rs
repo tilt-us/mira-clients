@@ -7,10 +7,11 @@ pub use config::{
 };
 pub use protocol::{
     AbilitySlot, AbilityVisualEvent, AbilityVisualTuning, AutoAttackVisualEvent, CastTarget,
-    ChampionCatalogUpdate, ChampionId, ClientLeave, DisplayReady, LoadingScreenPlayer,
-    LoadingScreenStatus, MatchSnapshot, NetworkAbilityDamage, NetworkAbilityDefinition,
-    NetworkChampionAbilities, NetworkChampionBaseStats, NetworkChampionDefinition,
-    NetworkChampionStats, NetworkCombatNumberEvent, NetworkCombatNumberKind, NetworkPlayer,
-    PlayerCommand, PlayerStateChannel, PlayerStateUpdate, ReliableCommandChannel,
-    SharedNetworkPlugin, WorldPosition,
+    ChampionCatalogUpdate, ChampionId, ClientLeave, DisplayReady, LaneSnapshot,
+    LoadingScreenPlayer, LoadingScreenStatus, MatchSnapshot, NetworkAbilityDamage,
+    NetworkAbilityDefinition, NetworkChampionAbilities, NetworkChampionBaseStats,
+    NetworkChampionDefinition, NetworkChampionStats, NetworkCombatNumberEvent,
+    NetworkCombatNumberKind, NetworkLaneUnit, NetworkPlayer, NetworkTargetId, PlayerCommand,
+    PlayerStateChannel, PlayerStateUpdate, ReliableCommandChannel, SharedNetworkPlugin,
+    WorldPosition,
 };

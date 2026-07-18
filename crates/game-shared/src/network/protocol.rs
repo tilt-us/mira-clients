@@ -1,4 +1,4 @@
-use crate::game::team::TeamSpec;
+use crate::game::{lane::LaneUnitKind, team::TeamSpec};
 use bevy::prelude::*;
 use lightyear::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -98,18 +98,27 @@ pub struct AbilityVisualEvent {
 }
 
 /// Description:
+/// Identifies a server-authoritative combat target.
+#[derive(Component, Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum NetworkTargetId {
+    /// A player identified by its stable network player id.
+    Player(u64),
+    /// A tower or minion identified by its stable lane-unit id.
+    LaneUnit(u64),
+}
+
 /// Describes one accepted auto-attack projectile that other clients should render.
 ///
 /// Fields:
 /// - `caster_player_id`: Player id of the attacking player.
-/// - `target_player_id`: Player id of the attacked player.
+/// - `target`: Stable identifier for the attacked player, tower, or minion.
 /// - `start`: World-space projectile start.
 /// - `end`: World-space projectile end.
 /// - `travel_seconds`: Projectile travel duration used by clients.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 pub struct AutoAttackVisualEvent {
     pub caster_player_id: u64,
-    pub target_player_id: u64,
+    pub target: NetworkTargetId,
     pub start: WorldPosition,
     pub end: WorldPosition,
     pub travel_seconds: f32,
@@ -353,6 +362,36 @@ pub struct MatchSnapshot {
     pub players: Vec<NetworkPlayer>,
 }
 
+/// Describes one server-authoritative tower or minion currently active on the lane.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct NetworkLaneUnit {
+    /// Stable lane-unit id used by commands and client reconciliation.
+    pub id: u64,
+    /// Visual and combat role of the unit.
+    pub kind: LaneUnitKind,
+    /// Team that owns the unit.
+    pub team: TeamSpec,
+    /// Latest authoritative world position.
+    pub position: WorldPosition,
+    /// Latest authoritative facing yaw in radians.
+    pub yaw: f32,
+    /// Current health.
+    pub health: f32,
+    /// Maximum health.
+    pub max_health: f32,
+    /// Targeting radius used by client-side click selection.
+    pub hit_radius: f32,
+    /// Current attack target, including active tower projectiles.
+    pub attack_target: Option<NetworkTargetId>,
+}
+
+/// Sends the latest server-authoritative single-lane state to clients.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+pub struct LaneSnapshot {
+    /// Active towers and minions sorted by stable lane-unit id.
+    pub units: Vec<NetworkLaneUnit>,
+}
+
 /// Description:
 /// Sends the local player's current visual state to the server.
 ///
@@ -425,7 +464,7 @@ pub struct LoadingScreenPlayer {
 /// Fields:
 /// - `MoveTo`: Requests movement toward a world-space point.
 /// - `CastAbility`: Requests an ability cast for the given champion and slot.
-/// - `AutoAttack`: Requests a basic attack against a target player.
+/// - `AutoAttack`: Requests a basic attack against a player, tower, or minion.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 pub enum PlayerCommand {
     MoveTo(WorldPosition),
@@ -435,7 +474,7 @@ pub enum PlayerCommand {
         target: CastTarget,
     },
     AutoAttack {
-        target_player_id: u64,
+        target: NetworkTargetId,
     },
 }
 
@@ -468,6 +507,9 @@ impl Plugin for SharedNetworkPlugin {
             .add_direction(NetworkDirection::ClientToServer);
 
         app.register_message::<MatchSnapshot>()
+            .add_direction(NetworkDirection::ServerToClient);
+
+        app.register_message::<LaneSnapshot>()
             .add_direction(NetworkDirection::ServerToClient);
 
         app.register_message::<LoadingScreenStatus>()

@@ -4,16 +4,18 @@ use super::combat::{ServerCombatNumberEvents, apply_area_damage, apply_damage, a
 use super::geometry::{
     clamp_cast_target, distance_to_segment_xz, horizontal_distance, point_in_oriented_rect_xz,
 };
+use super::lane::ServerLaneState;
 use bevy::prelude::*;
 use game_shared::game::{
     auto_attack::{AUTO_ATTACK_COMBO_RESET_SECONDS, auto_attack_combo},
+    lane::{LANE_HALF_WIDTH, LANE_SPAWN_Z, lane_forward_yaw, lane_spawn_position},
     team::TeamSpec,
 };
 use game_shared::network::{
     AbilitySlot, AbilityVisualEvent, AbilityVisualTuning, AutoAttackVisualEvent,
     ChampionCatalogUpdate, ChampionId, ClientLeave, DisplayReady, LoadingScreenPlayer,
-    LoadingScreenStatus, MatchSnapshot, NetworkCombatNumberKind, NetworkPlayer, PlayerCommand,
-    PlayerStateChannel, PlayerStateUpdate, ReliableCommandChannel, WorldPosition,
+    LoadingScreenStatus, MatchSnapshot, NetworkCombatNumberKind, NetworkPlayer, NetworkTargetId,
+    PlayerCommand, PlayerStateUpdate, ReliableCommandChannel, WorldPosition,
 };
 use lightyear::prelude::server::ClientOf;
 use lightyear::prelude::*;
@@ -25,8 +27,8 @@ const YUNA_CHAMPION_ID: ChampionId = ChampionId(6608);
 const SOPHIA_CHAMPION_ID: ChampionId = ChampionId(6609);
 const DEFAULT_DEVELOPMENT_TEAM: DevelopmentTeam = DevelopmentTeam::Light;
 pub(super) const DEVELOPMENT_PLAYER_HIT_RADIUS: f32 = 0.9;
-const DEVELOPMENT_PLAYER_SPACING: f32 = 4.5;
 const MATCH_SNAPSHOT_INTERVAL_SECONDS: f32 = 0.05;
+const LOADING_SCREEN_STATUS_INTERVAL_SECONDS: f32 = 0.1;
 pub(super) const RESPAWN_SECONDS: f32 = 5.0;
 const RESPAWN_INPUT_GRACE_SECONDS: f32 = 0.25;
 const AUTO_ATTACK_RANGE: f32 = 5.0;
@@ -70,7 +72,7 @@ pub(super) struct ConnectedPlayerState {
     pub(super) lira_e_cooldown: f32,
     pub(super) auto_attack_cooldown: f32,
     pub(super) auto_attack_combo_stage: usize,
-    pub(super) auto_attack_combo_target: Option<u64>,
+    pub(super) auto_attack_combo_target: Option<NetworkTargetId>,
     pub(super) auto_attack_combo_reset_timer: f32,
     pub(super) ignara_q_cooldown: f32,
     pub(super) ignara_w_cooldown: f32,
@@ -325,6 +327,10 @@ struct ServerSophiaMinion {
 #[derive(Resource, Debug)]
 pub(super) struct MatchSnapshotBroadcastTimer(Timer);
 
+/// Limits loading-screen status broadcasts so they cannot crowd out gameplay state.
+#[derive(Resource, Debug)]
+pub(super) struct LoadingScreenStatusBroadcastTimer(Timer);
+
 /// Description:
 /// Tracks connected clients that already received the current champion catalog.
 ///
@@ -354,6 +360,22 @@ impl Default for MatchSnapshotBroadcastTimer {
             MATCH_SNAPSHOT_INTERVAL_SECONDS,
             TimerMode::Repeating,
         ))
+    }
+}
+
+impl Default for LoadingScreenStatusBroadcastTimer {
+    /// Returns the default loading-screen status broadcast interval.
+    fn default() -> Self {
+        Self(Timer::from_seconds(
+            LOADING_SCREEN_STATUS_INTERVAL_SECONDS,
+            TimerMode::Repeating,
+        ))
+    }
+}
+
+impl LoadingScreenReadyPlayers {
+    pub(super) fn has_ready_players(&self) -> bool {
+        !self.ready_player_ids.is_empty()
     }
 }
 
@@ -419,7 +441,7 @@ pub(super) fn receive_display_ready(
 }
 
 /// Description:
-/// Broadcasts current loading-screen readiness to every connected client.
+/// Broadcasts current loading-screen readiness without competing with gameplay state snapshots.
 pub(super) fn broadcast_loading_screen_status(
     mut clients: Query<
         (&RemoteId, &mut MessageSender<LoadingScreenStatus>),
@@ -429,7 +451,13 @@ pub(super) fn broadcast_loading_screen_status(
     leaving_players: Res<LeavingPlayers>,
     manifest: Res<ServerMatchManifest>,
     players: Res<ConnectedPlayers>,
+    mut timer: ResMut<LoadingScreenStatusBroadcastTimer>,
+    time: Res<Time>,
 ) {
+    if !timer.0.tick(time.delta()).just_finished() {
+        return;
+    }
+
     let connected_player_ids = clients
         .iter()
         .filter_map(|(remote_id, _)| netcode_player_id(*remote_id))
@@ -463,7 +491,7 @@ pub(super) fn broadcast_loading_screen_status(
     );
 
     for (_, mut sender) in &mut clients {
-        sender.send::<PlayerStateChannel>(LoadingScreenStatus {
+        sender.send::<ReliableCommandChannel>(LoadingScreenStatus {
             ready_players: ready_count,
             total_players,
             ready_player_ids: ready_player_ids.clone(),
@@ -538,6 +566,7 @@ pub(super) fn receive_player_state_updates(
         };
 
         for update in receiver.receive() {
+            let reported_position = clamp_player_position_to_lane(update.position.into());
             let champion = match_player
                 .as_ref()
                 .map_or(update.champion, |player| player.champion);
@@ -563,15 +592,15 @@ pub(super) fn receive_player_state_updates(
                     {
                         state.moving = false;
                     } else {
-                        state.position = Vec3::from(update.position);
+                        state.position = reported_position;
                         state.yaw = update.yaw;
                         state.moving = update.moving;
                     }
                 })
                 .or_insert(ConnectedPlayerState {
-                    position: Vec3::from(update.position),
-                    yaw: update.yaw,
-                    moving: update.moving,
+                    position: lane_spawn_position(team),
+                    yaw: lane_forward_yaw(team),
+                    moving: false,
                     health: max_health,
                     champion,
                     lira_q_cooldown: 0.0,
@@ -599,7 +628,7 @@ pub(super) fn receive_player_state_updates(
                     team: team.into(),
                     respawn_timer: None,
                     respawn_generation: 0,
-                    respawn_input_grace: 0.0,
+                    respawn_input_grace: RESPAWN_INPUT_GRACE_SECONDS,
                 });
         }
     }
@@ -628,6 +657,7 @@ pub(super) fn receive_player_commands(
     )>,
     mut players: ResMut<ConnectedPlayers>,
     mut abilities: ResMut<ActiveServerAbilities>,
+    mut lane: ResMut<ServerLaneState>,
     mut combat_events: ResMut<ServerCombatNumberEvents>,
     catalog: Res<ServerChampionCatalog>,
     leaving_players: Res<LeavingPlayers>,
@@ -650,6 +680,7 @@ pub(super) fn receive_player_commands(
             }
 
             for command in receiver.receive() {
+                let visual_event_count = visual_events.len();
                 if let PlayerCommand::CastAbility { champion, .. } = command {
                     if !authorized_champion(&manifest, caster_player_id, champion) {
                         continue;
@@ -824,17 +855,22 @@ pub(super) fn receive_player_commands(
                             visual_events.push(event);
                         }
                     }
-                    PlayerCommand::AutoAttack { target_player_id } => {
-                        if let Some(event) = accept_auto_attack(
+                    PlayerCommand::AutoAttack { target } => {
+                        if let Some(event) = accept_auto_attack_target(
                             caster_player_id,
-                            target_player_id,
+                            target,
                             &mut players,
+                            Some(&mut lane),
                             &mut combat_events,
                         ) {
                             auto_attack_visual_events.push(event);
                         }
                     }
                     _ => {}
+                }
+
+                if let Some(event) = visual_events.get(visual_event_count) {
+                    apply_lane_spell_damage_from_visual(&mut lane, &players, &catalog, event);
                 }
             }
         }
@@ -964,8 +1000,7 @@ pub(super) fn update_player_death_and_respawn(
     let mut player_ids = players.states.keys().copied().collect::<Vec<_>>();
     player_ids.sort_unstable();
 
-    let player_count = player_ids.len();
-    for (index, player_id) in player_ids.into_iter().enumerate() {
+    for player_id in player_ids {
         let Some(state) = players.states.get_mut(&player_id) else {
             continue;
         };
@@ -979,8 +1014,9 @@ pub(super) fn update_player_death_and_respawn(
         }
 
         state.health = development_champion_max_health(&catalog, state.champion);
-        state.position = development_spawn_position(index, player_count);
-        state.yaw = 0.0;
+        let team = TeamSpec::from(state.team);
+        state.position = lane_spawn_position(team);
+        state.yaw = lane_forward_yaw(team);
         state.moving = false;
         state.lira_q_cooldown = 0.0;
         state.lira_w_cooldown = 0.0;
@@ -1099,8 +1135,7 @@ pub(super) fn broadcast_match_snapshots(
 
     let players = player_ids
         .iter()
-        .enumerate()
-        .map(|(index, player_id)| {
+        .map(|player_id| {
             let manifest_player = manifest.player(*player_id);
             let fallback_champion = manifest_player
                 .as_ref()
@@ -1115,8 +1150,8 @@ pub(super) fn broadcast_match_snapshots(
                 .states
                 .entry(*player_id)
                 .or_insert_with(|| ConnectedPlayerState {
-                    position: development_spawn_position(index, player_ids.len()),
-                    yaw: 0.0,
+                    position: lane_spawn_position(TeamSpec::from(fallback_team)),
+                    yaw: lane_forward_yaw(TeamSpec::from(fallback_team)),
                     moving: false,
                     health: fallback_max_health,
                     champion: fallback_champion,
@@ -1302,18 +1337,12 @@ fn authorized_champion(
         .unwrap_or(true)
 }
 
-/// Description:
-/// Computes a centered development spawn position for a connected player.
-///
-/// Params:
-/// - `index`: Sorted player index.
-/// - `player_count`: Total number of connected players.
-///
-/// Return:
-/// - World-space spawn position for the player.
-fn development_spawn_position(index: usize, player_count: usize) -> Vec3 {
-    let centered_index = index as f32 - (player_count.saturating_sub(1) as f32 * 0.5);
-    Vec3::new(centered_index * DEVELOPMENT_PLAYER_SPACING, 0.0, 0.0)
+/// Clamps a client-reported player position to the playable single-lane map bounds.
+fn clamp_player_position_to_lane(mut position: Vec3) -> Vec3 {
+    position.x = position.x.clamp(-LANE_HALF_WIDTH, LANE_HALF_WIDTH);
+    position.y = 0.0;
+    position.z = position.z.clamp(-LANE_SPAWN_Z, LANE_SPAWN_Z);
+    position
 }
 
 impl From<DevelopmentTeam> for TeamSpec {
@@ -1478,44 +1507,66 @@ fn consume_sophia_damage_multiplier(
 
 /// Description:
 /// Accepts a basic auto attack and applies immediate server-authoritative damage.
+#[cfg(test)]
 fn accept_auto_attack(
     caster_player_id: u64,
     target_player_id: u64,
     players: &mut ConnectedPlayers,
     combat_events: &mut ServerCombatNumberEvents,
 ) -> Option<AutoAttackVisualEvent> {
-    if caster_player_id == target_player_id {
-        return None;
-    }
+    accept_auto_attack_target(
+        caster_player_id,
+        NetworkTargetId::Player(target_player_id),
+        players,
+        None,
+        combat_events,
+    )
+}
 
-    let Some(caster) = players.states.get(&caster_player_id) else {
-        return None;
-    };
-    let Some(target) = players.states.get(&target_player_id) else {
-        return None;
-    };
-
+/// Validates and resolves a player auto attack against a player, tower, or minion.
+fn accept_auto_attack_target(
+    caster_player_id: u64,
+    target: NetworkTargetId,
+    players: &mut ConnectedPlayers,
+    mut lane: Option<&mut ServerLaneState>,
+    combat_events: &mut ServerCombatNumberEvents,
+) -> Option<AutoAttackVisualEvent> {
+    let caster = *players.states.get(&caster_player_id)?;
     if caster.health <= 0.0
         || caster.stun_timer > 0.0
         || caster.auto_attack_cooldown > AUTO_ATTACK_INPUT_BUFFER_SECONDS
-        || target.health <= 0.0
-        || caster.team == target.team
         || caster.team == DevelopmentTeam::Neutral
-        || target.team == DevelopmentTeam::Neutral
     {
         return None;
     }
 
-    let distance = horizontal_distance(caster.position, target.position);
-    if distance > AUTO_ATTACK_RANGE + DEVELOPMENT_PLAYER_HIT_RADIUS {
+    let caster_team = TeamSpec::from(caster.team);
+    let (target_position, target_radius) = match target {
+        NetworkTargetId::Player(target_player_id) => {
+            if caster_player_id == target_player_id {
+                return None;
+            }
+            let target_state = *players.states.get(&target_player_id)?;
+            if target_state.health <= 0.0
+                || target_state.team == caster.team
+                || target_state.team == DevelopmentTeam::Neutral
+            {
+                return None;
+            }
+            (target_state.position, DEVELOPMENT_PLAYER_HIT_RADIUS)
+        }
+        NetworkTargetId::LaneUnit(target_unit_id) => lane
+            .as_deref()
+            .and_then(|lane| lane.target_for_player_auto_attack(caster_team, target_unit_id))?,
+    };
+
+    let distance = horizontal_distance(caster.position, target_position);
+    if distance > AUTO_ATTACK_RANGE + target_radius {
         return None;
     }
-    let start = caster.position + Vec3::Y * AUTO_ATTACK_PROJECTILE_HEIGHT;
-    let end = target.position + Vec3::Y * AUTO_ATTACK_PROJECTILE_HEIGHT;
-    let travel_seconds = auto_attack_travel_seconds(distance);
 
     let combo = auto_attack_combo(caster.champion);
-    let combo_stage = if caster.auto_attack_combo_target == Some(target_player_id) {
+    let combo_stage = if caster.auto_attack_combo_target == Some(target) {
         caster
             .auto_attack_combo_stage
             .min(combo.combo_length.saturating_sub(1))
@@ -1525,30 +1576,95 @@ fn accept_auto_attack(
     let damage = combo.damage_for_stage(combo_stage);
     let next_combo_stage = (combo_stage + 1) % combo.combo_length.max(1);
 
-    if let Some(caster) = players.states.get_mut(&caster_player_id) {
-        caster.auto_attack_cooldown = combo.cooldown_seconds();
-        caster.auto_attack_combo_stage = next_combo_stage;
-        caster.auto_attack_combo_target = Some(target_player_id);
-        caster.auto_attack_combo_reset_timer =
-            AUTO_ATTACK_COMBO_RESET_SECONDS + combo.cooldown_seconds();
+    match target {
+        NetworkTargetId::Player(target_player_id) => {
+            if let Some(lane) = lane.as_deref_mut() {
+                lane.record_hostile_player_action(caster_player_id, target_player_id, players);
+            }
+            let target_state = players.states.get_mut(&target_player_id)?;
+            apply_damage(
+                combat_events,
+                target_player_id,
+                target_state,
+                damage,
+                NetworkCombatNumberKind::AutoAttack,
+            );
+        }
+        NetworkTargetId::LaneUnit(target_unit_id) => {
+            lane.as_deref_mut()?.apply_player_auto_attack(
+                caster.position,
+                caster_team,
+                target_unit_id,
+                damage,
+            )?;
+        }
     }
-    if let Some(target) = players.states.get_mut(&target_player_id) {
-        apply_damage(
-            combat_events,
-            target_player_id,
-            target,
-            damage,
-            NetworkCombatNumberKind::AutoAttack,
-        );
-    }
+
+    let caster = players.states.get_mut(&caster_player_id)?;
+    caster.auto_attack_cooldown = combo.cooldown_seconds();
+    caster.auto_attack_combo_stage = next_combo_stage;
+    caster.auto_attack_combo_target = Some(target);
+    caster.auto_attack_combo_reset_timer =
+        AUTO_ATTACK_COMBO_RESET_SECONDS + combo.cooldown_seconds();
 
     Some(AutoAttackVisualEvent {
         caster_player_id,
-        target_player_id,
-        start: start.into(),
-        end: end.into(),
-        travel_seconds,
+        target,
+        start: (caster.position + Vec3::Y * AUTO_ATTACK_PROJECTILE_HEIGHT).into(),
+        end: (target_position + Vec3::Y * AUTO_ATTACK_PROJECTILE_HEIGHT).into(),
+        travel_seconds: auto_attack_travel_seconds(distance),
     })
+}
+
+/// Applies one server-authoritative spell hit to enemy lane minions at an accepted cast impact.
+fn apply_lane_spell_damage_from_visual(
+    lane: &mut ServerLaneState,
+    players: &ConnectedPlayers,
+    catalog: &ServerChampionCatalog,
+    event: &AbilityVisualEvent,
+) {
+    let Some(caster) = players.states.get(&event.caster_player_id) else {
+        return;
+    };
+    let ability = champion_ability(catalog, event.champion, event.slot);
+    let damage = ability
+        .damage
+        .direct_hit
+        .max(ability.damage.area)
+        .max(ability.damage.missile)
+        .max(ability.damage_per_second);
+    if damage <= 0.0 {
+        return;
+    }
+
+    let radius = ability
+        .explosion_radius
+        .max(ability.projectile_radius)
+        .max(ability.target_radius)
+        .max(ability.width * 0.5)
+        .max(ability.missile_search_radius)
+        .max(0.75);
+    let center = event
+        .end
+        .map(Vec3::from)
+        .unwrap_or_else(|| event.start.into());
+    let caster_team = TeamSpec::from(caster.team);
+    let affected_player_ids = players
+        .states
+        .iter()
+        .filter(|(player_id, player)| {
+            **player_id != event.caster_player_id
+                && TeamSpec::from(player.team) != caster_team
+                && player.health > 0.0
+                && horizontal_distance(player.position, center)
+                    <= radius + DEVELOPMENT_PLAYER_HIT_RADIUS
+        })
+        .map(|(player_id, _)| *player_id)
+        .collect::<Vec<_>>();
+    for victim_id in affected_player_ids {
+        lane.record_hostile_player_action(event.caster_player_id, victim_id, players);
+    }
+    lane.apply_spell_damage(caster_team, center, radius, damage);
 }
 
 /// Description:

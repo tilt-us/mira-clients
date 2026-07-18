@@ -672,8 +672,8 @@ fn champion_portrait<'a>(images: &'a HudImages, champion_name: &str) -> &'a Hand
 fn top_bar_shape_image(accent: Color) -> Image {
     let width = TOP_BAR_WIDTH;
     let height = TOP_BAR_HEIGHT;
-    let fill = rgba_bytes(hud_bg());
-    let border = rgba_bytes(accent);
+    let fill = hud_bg().to_srgba().to_u8_array();
+    let border = accent.to_srgba().to_u8_array();
     let mut data = vec![0; (width * height * 4) as usize];
 
     for y in 0..height {
@@ -706,20 +706,6 @@ fn top_bar_shape_image(accent: Color) -> Image {
         TextureFormat::Rgba8UnormSrgb,
         RenderAssetUsages::default(),
     )
-}
-
-fn rgba_bytes(color: Color) -> [u8; 4] {
-    let color = color.to_srgba();
-    [
-        channel_to_byte(color.red),
-        channel_to_byte(color.green),
-        channel_to_byte(color.blue),
-        channel_to_byte(color.alpha),
-    ]
-}
-
-fn channel_to_byte(value: f32) -> u8 {
-    (value.clamp(0.0, 1.0) * 255.0).round() as u8
 }
 
 fn label_text(value: &'static str, size: f32) -> impl Bundle {

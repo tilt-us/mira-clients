@@ -207,3 +207,56 @@ impl PlayerBundle {
         }
     }
 }
+
+/// Returns the first non-empty public name segment after removing an email domain.
+pub fn public_display_name(value: &str) -> Option<String> {
+    let without_email_domain = value.trim().split('@').next().unwrap_or("").trim();
+    let public_name = without_email_domain
+        .split(|character: char| character.is_whitespace() || matches!(character, '.' | '_' | '-'))
+        .find(|part| !part.trim().is_empty())?
+        .trim();
+
+    non_empty_string(public_name)
+}
+
+/// Returns a trimmed owned string when the input contains non-whitespace characters.
+pub fn non_empty_string(value: &str) -> Option<String> {
+    let value = value.trim();
+
+    if value.is_empty() {
+        None
+    } else {
+        Some(value.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extracts_public_display_names() {
+        assert_eq!(
+            public_display_name("Exepta Mustermann").as_deref(),
+            Some("Exepta")
+        );
+        assert_eq!(
+            public_display_name("exepta.profile").as_deref(),
+            Some("exepta")
+        );
+        assert_eq!(
+            public_display_name("exepta@example.com").as_deref(),
+            Some("exepta")
+        );
+        assert_eq!(public_display_name("   ").as_deref(), None);
+    }
+
+    #[test]
+    fn trims_non_empty_strings() {
+        assert_eq!(
+            non_empty_string("  avatar.png  ").as_deref(),
+            Some("avatar.png")
+        );
+        assert_eq!(non_empty_string("\t \n").as_deref(), None);
+    }
+}

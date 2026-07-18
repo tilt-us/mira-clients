@@ -1,11 +1,13 @@
 use super::ServerNetworkSettings;
 use super::combat::{ServerCombatNumberEvents, broadcast_combat_number_events};
+use super::lane::{ServerLaneState, broadcast_lane_snapshots, update_server_lane};
 use super::lobby::{
     ActiveServerAbilities, ConnectedPlayers, LeavingPlayers, LoadingScreenReadyPlayers,
-    MatchSnapshotBroadcastTimer, SentChampionCatalogClients, broadcast_loading_screen_status,
-    broadcast_match_snapshots, rebroadcast_ability_visuals, receive_client_leave,
-    receive_display_ready, receive_player_commands, receive_player_state_updates,
-    send_champion_catalogs, update_player_death_and_respawn, update_server_abilities,
+    LoadingScreenStatusBroadcastTimer, MatchSnapshotBroadcastTimer, SentChampionCatalogClients,
+    broadcast_loading_screen_status, broadcast_match_snapshots, rebroadcast_ability_visuals,
+    receive_client_leave, receive_display_ready, receive_player_commands,
+    receive_player_state_updates, send_champion_catalogs, update_player_death_and_respawn,
+    update_server_abilities,
 };
 use bevy::prelude::*;
 use core::time::Duration;
@@ -38,8 +40,10 @@ impl Plugin for ServerNetworkPlugin {
         .init_resource::<ConnectedPlayers>()
         .init_resource::<ServerCombatNumberEvents>()
         .init_resource::<ActiveServerAbilities>()
+        .init_resource::<ServerLaneState>()
         .init_resource::<LoadingScreenReadyPlayers>()
         .init_resource::<LeavingPlayers>()
+        .init_resource::<LoadingScreenStatusBroadcastTimer>()
         .init_resource::<MatchSnapshotBroadcastTimer>()
         .init_resource::<SentChampionCatalogClients>()
         .init_resource::<EmptyServerShutdown>()
@@ -55,9 +59,11 @@ impl Plugin for ServerNetworkPlugin {
                 receive_player_commands,
                 update_server_abilities,
                 update_player_death_and_respawn,
+                update_server_lane,
                 broadcast_combat_number_events,
                 rebroadcast_ability_visuals,
                 broadcast_match_snapshots,
+                broadcast_lane_snapshots,
             )
                 .chain(),
         )

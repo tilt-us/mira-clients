@@ -219,6 +219,52 @@ pub(in crate::systems) fn spawn_remote_ally_player_health_bar(
     )
 }
 
+/// Spawns an overhead health bar for a replicated lane unit.
+///
+/// Params:
+/// - `commands`: ECS command buffer used to spawn health bar entities.
+/// - `asset_server`: Asset server used to load the health bar font.
+/// - `meshes`: Mesh assets used by health bar geometry.
+/// - `materials`: Material assets used by health bar visuals.
+/// - `target`: Lane-unit entity followed by the health bar.
+/// - `max_health`: Maximum health value used to scale the fill.
+/// - `is_enemy`: Whether the lane unit belongs to the opposing team.
+/// - `y_offset`: Vertical world-space offset above the lane unit.
+/// - `accent_color`: Configured HUD accent color.
+///
+/// Return:
+/// - Spawned health bar entity.
+pub(in crate::systems) fn spawn_remote_lane_unit_health_bar(
+    commands: &mut Commands,
+    asset_server: &AssetServer,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    target: Entity,
+    max_health: f32,
+    is_enemy: bool,
+    y_offset: f32,
+    accent_color: Color,
+) -> Entity {
+    let (source, health_color) = if is_enemy {
+        (HealthBarSource::TrainingDummy, ENEMY_HEALTH_COLOR)
+    } else {
+        (HealthBarSource::Player, ALLY_HEALTH_COLOR)
+    };
+
+    spawn_health_bar(
+        commands,
+        asset_server,
+        meshes,
+        materials,
+        target,
+        y_offset,
+        max_health,
+        source,
+        health_color,
+        accent_color,
+    )
+}
+
 /// Description:
 /// Spawns an overhead health bar for the local player.
 ///

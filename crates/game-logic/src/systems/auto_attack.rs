@@ -12,7 +12,7 @@ use game_shared::game::{
     player::{Health, MoveTarget, Player, PlayerControlled},
 };
 use game_shared::network::{
-    AutoAttackVisualEvent, ChampionId, PlayerCommand, ReliableCommandChannel,
+    AutoAttackVisualEvent, ChampionId, NetworkTargetId, PlayerCommand, ReliableCommandChannel,
 };
 use lightyear::prelude::*;
 
@@ -92,7 +92,13 @@ pub(super) fn handle_auto_attack_input(
         ),
         With<PlayerControlled>,
     >,
-    target_query: Query<(Entity, &TrainingDummy, &Transform, Option<&Player>)>,
+    target_query: Query<(
+        Entity,
+        &TrainingDummy,
+        &Transform,
+        Option<&Player>,
+        Option<&NetworkTargetId>,
+    )>,
     mut input_state: ResMut<AutoAttackInputState>,
     mut attack_target: ResMut<AutoAttackTarget>,
     mut commands: Commands,
@@ -147,7 +153,13 @@ pub(super) fn update_auto_attack_target(
         ),
         With<PlayerControlled>,
     >,
-    target_query: Query<(Entity, &TrainingDummy, &Transform, Option<&Player>)>,
+    target_query: Query<(
+        Entity,
+        &TrainingDummy,
+        &Transform,
+        Option<&Player>,
+        Option<&NetworkTargetId>,
+    )>,
     mut command_senders: Query<&mut MessageSender<PlayerCommand>, With<Client>>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -160,7 +172,9 @@ pub(super) fn update_auto_attack_target(
         return;
     };
 
-    let Ok((_, target, target_transform, target_player)) = target_query.get(target_entity) else {
+    let Ok((_, target, target_transform, target_player, target_network_id)) =
+        target_query.get(target_entity)
+    else {
         attack_target.target = None;
         return;
     };
@@ -201,8 +215,10 @@ pub(super) fn update_auto_attack_target(
         .champion
         .unwrap_or(ChampionId(super::LOCAL_CHAMPION_ID));
     let combo = auto_attack_combo(champion);
-    let target_player_id = target_player.map(|player| player.id.0);
-    let apply_local_damage = target_player_id.is_none();
+    let target_id = target_player
+        .map(|player| NetworkTargetId::Player(player.id.0))
+        .or(target_network_id.copied());
+    let apply_local_damage = target_id.is_none();
     let combo_stage = next_combo_stage(
         &mut attack_state,
         target_entity,
@@ -230,8 +246,8 @@ pub(super) fn update_auto_attack_target(
         damage,
         apply_local_damage,
     );
-    if let Some(target_player_id) = target_player_id {
-        send_auto_attack_command(&mut command_senders, target_player_id);
+    if let Some(target_id) = target_id {
+        send_auto_attack_command(&mut command_senders, target_id);
     }
     attack_state
         .cooldown
@@ -244,7 +260,7 @@ pub(super) fn update_auto_attack_target(
 pub(super) fn receive_remote_auto_attack_visuals(
     mut commands: Commands,
     mut receivers: Query<&mut MessageReceiver<AutoAttackVisualEvent>, With<Client>>,
-    player_query: Query<(Entity, &Player)>,
+    target_query: Query<(Entity, Option<&Player>, Option<&NetworkTargetId>)>,
     local_player_query: Query<&Player, With<PlayerControlled>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -257,9 +273,17 @@ pub(super) fn receive_remote_auto_attack_visuals(
                 continue;
             }
 
-            let Some((target_entity, _)) = player_query
-                .iter()
-                .find(|(_, player)| player.id.0 == event.target_player_id)
+            let Some((target_entity, _, _)) = target_query.iter().find(|(_, player, target_id)| {
+                matches!(
+                    event.target,
+                    NetworkTargetId::Player(player_id)
+                        if player.is_some_and(|player| player.id.0 == player_id)
+                ) || matches!(
+                    event.target,
+                    NetworkTargetId::LaneUnit(lane_unit_id)
+                        if target_id.is_some_and(|target_id| *target_id == NetworkTargetId::LaneUnit(lane_unit_id))
+                )
+            })
             else {
                 continue;
             };
@@ -351,28 +375,38 @@ fn cursor_world_position(
 /// Runs the clicked enemy target step for the client auto-attack system.
 fn clicked_enemy_target(
     cursor_hit: Vec3,
-    target_query: &Query<(Entity, &TrainingDummy, &Transform, Option<&Player>)>,
-) -> Option<(Entity, Transform, f32, Option<u64>)> {
+    target_query: &Query<(
+        Entity,
+        &TrainingDummy,
+        &Transform,
+        Option<&Player>,
+        Option<&NetworkTargetId>,
+    )>,
+) -> Option<(Entity, Transform, f32, Option<NetworkTargetId>)> {
     target_query
         .iter()
-        .filter(|(_, target, _, _)| target.health > 0.0)
-        .filter(|(_, target, transform, _)| {
+        .filter(|(_, target, _, _, _)| target.health > 0.0)
+        .filter(|(_, target, transform, _, _)| {
             horizontal_distance(cursor_hit, transform.translation) <= target.hit_radius
         })
-        .min_by(|(_, _, left_transform, _), (_, _, right_transform, _)| {
-            horizontal_distance(cursor_hit, left_transform.translation)
-                .partial_cmp(&horizontal_distance(
-                    cursor_hit,
-                    right_transform.translation,
-                ))
-                .unwrap_or(std::cmp::Ordering::Equal)
-        })
-        .map(|(entity, target, transform, player)| {
+        .min_by(
+            |(_, _, left_transform, _, _), (_, _, right_transform, _, _)| {
+                horizontal_distance(cursor_hit, left_transform.translation)
+                    .partial_cmp(&horizontal_distance(
+                        cursor_hit,
+                        right_transform.translation,
+                    ))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            },
+        )
+        .map(|(entity, target, transform, player, network_target_id)| {
             (
                 entity,
                 *transform,
                 target.hit_radius,
-                player.map(|player| player.id.0),
+                player
+                    .map(|player| NetworkTargetId::Player(player.id.0))
+                    .or(network_target_id.copied()),
             )
         })
 }
@@ -485,9 +519,9 @@ fn auto_attack_projectile_material() -> StandardMaterial {
 /// Runs the send auto attack command step for the client auto-attack system.
 fn send_auto_attack_command(
     senders: &mut Query<&mut MessageSender<PlayerCommand>, With<Client>>,
-    target_player_id: u64,
+    target: NetworkTargetId,
 ) {
     for mut sender in senders {
-        sender.send::<ReliableCommandChannel>(PlayerCommand::AutoAttack { target_player_id });
+        sender.send::<ReliableCommandChannel>(PlayerCommand::AutoAttack { target });
     }
 }

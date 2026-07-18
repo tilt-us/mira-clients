@@ -28,7 +28,8 @@ use bevy::math::primitives::{Capsule3d, Cuboid, Cylinder};
 use bevy::prelude::*;
 use bevy_transform_interpolation::prelude::{RotationInterpolation, TranslationInterpolation};
 use game_shared::game::{
-    camera::TopDownCameraBundle,
+    camera::{CameraZoom, TopDownCameraBundle},
+    lane::{LANE_SPAWN_Z, LANE_TOWER_Z},
     player::{Health, PlayerBundle, PlayerId, PlayerProfile},
     team::{Team, TeamSpec},
 };
@@ -43,6 +44,8 @@ use std::{collections::HashMap, path::PathBuf};
 const DEV_DUMMY_HEALTH: f32 = 120.0;
 const DEV_DUMMY_HIT_RADIUS: f32 = 0.9;
 const DEV_DUMMY_POSITION: Vec3 = Vec3::new(3.5, 0.0, -2.5);
+const LANE_INITIAL_CAMERA_ZOOM: f32 = LANE_SPAWN_Z - LANE_TOWER_Z + 2.0;
+const LANE_MAX_CAMERA_ZOOM: f32 = LANE_SPAWN_Z - LANE_TOWER_Z + 14.0;
 
 /// Description:
 /// Represents the champion data loaded from the local champion JSON file.
@@ -237,7 +240,14 @@ pub(super) fn spawn_local_player_and_camera(
 
     commands.spawn((
         Name::new("TopDownCamera"),
-        TopDownCameraBundle::default(),
+        TopDownCameraBundle {
+            zoom: CameraZoom {
+                current: LANE_INITIAL_CAMERA_ZOOM,
+                max: LANE_MAX_CAMERA_ZOOM,
+                ..default()
+            },
+            ..default()
+        },
         Camera3d::default(),
         Transform::from_xyz(4.8, 6.4, 4.8).looking_at(Vec3::ZERO, Vec3::Y),
     ));

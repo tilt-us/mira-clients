@@ -8,6 +8,7 @@ mod camera;
 mod characters;
 mod damage_numbers;
 mod healthbar;
+mod lane;
 mod movement;
 mod networked_players;
 mod setup;
@@ -49,6 +50,9 @@ struct LocalSpawnSystemsPlugin;
 
 /// Registers remote player snapshot and interpolation systems.
 struct NetworkedPlayersSystemsPlugin;
+
+/// Registers replicated lane-unit presentation systems.
+struct LaneSystemsPlugin;
 
 /// Registers local champion animation systems.
 struct AnimationSystemsPlugin;
@@ -297,6 +301,7 @@ impl Plugin for MiraClientSystemsPlugin {
         app.add_plugins((
             LocalSpawnSystemsPlugin,
             NetworkedPlayersSystemsPlugin,
+            LaneSystemsPlugin,
             AnimationSystemsPlugin,
             AutoAttackSystemsPlugin,
             MovementSystemsPlugin,
@@ -384,6 +389,22 @@ impl Plugin for NetworkedPlayersSystemsPlugin {
         .add_systems(
             Update,
             networked_players::sync_remote_player_animations.run_if(resource_exists::<AssetServer>),
+        );
+    }
+}
+
+impl Plugin for LaneSystemsPlugin {
+    /// Registers Bevy resources, plugins, or systems for the gameplay systems plugin registry.
+    fn build(&self, app: &mut App) {
+        app.add_systems(
+            Update,
+            (
+                lane::sync_lane_units_from_snapshot,
+                lane::interpolate_lane_unit_positions,
+                lane::update_tower_attack_lines,
+            )
+                .chain()
+                .run_if(resource_exists::<AssetServer>),
         );
     }
 }
