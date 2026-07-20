@@ -25,44 +25,52 @@ use crate::app::loading_screen::LoadingScreenPlugin;
 use crate::app::main_hud::MainHudPlugin;
 use crate::network::ClientNetworkPlugin;
 
-/// Description:
+const BLOCKED_LAUNCH_WINDOW_WIDTH: u32 = 960;
+const BLOCKED_LAUNCH_WINDOW_HEIGHT: u32 = 540;
+const PLAYABLE_WINDOW_WIDTH: u32 = 1_920;
+const PLAYABLE_WINDOW_HEIGHT: u32 = 1_080;
+const UI_CAMERA_RENDER_ORDER: isize = 100;
+const BLOCKED_LAUNCH_SCREEN_Z_INDEX: i32 = 20_000;
+
 /// Registers the playable client plugin stack.
 pub struct ClientAppPlugins;
 
 impl Plugin for ClientAppPlugins {
     fn build(&self, app: &mut App) {
-        let settings = ClientAppSettings::default();
-        let asset_root = settings.asset_root.clone();
-        let asset_root_text = asset_root.to_string_lossy().into_owned();
-        let ui_enabled = settings.ui_enabled;
-        let screen_mode = app
+        let app_settings = ClientAppSettings::default();
+        let asset_root_path = app_settings.asset_root.to_string_lossy().into_owned();
+        let ui_enabled = app_settings.ui_enabled;
+        let (screen_mode, health_bar_style, gameplay_settings) = app
             .world()
             .get_resource::<ClientLaunchSettings>()
-            .map(|settings| settings.screen_mode)
-            .unwrap_or_default();
-        let health_bar_style = app
-            .world()
-            .get_resource::<ClientLaunchSettings>()
-            .map(|settings| OverheadHealthBarStyle {
-                accent_color: settings.accent_color_bevy(),
+            .map(|launch_settings| {
+                (
+                    launch_settings.screen_mode,
+                    OverheadHealthBarStyle {
+                        accent_color: launch_settings.accent_color_bevy(),
+                    },
+                    MiraClientGameplaySettings {
+                        allow_dev_dummy_toggle: launch_settings.dev_preview,
+                        ..default()
+                    },
+                )
             })
-            .unwrap_or_default();
-        let gameplay_settings = app
-            .world()
-            .get_resource::<ClientLaunchSettings>()
-            .map(|settings| MiraClientGameplaySettings {
-                spawn_dev_dummy: settings.dev_preview,
-            })
-            .unwrap_or_default();
+            .unwrap_or_else(|| {
+                (
+                    ClientScreenMode::default(),
+                    OverheadHealthBarStyle::default(),
+                    MiraClientGameplaySettings::default(),
+                )
+            });
         let launch_blocked = app
             .world()
             .get_resource::<ClientLaunchGate>()
             .and_then(ClientLaunchGate::blocked_message)
             .is_some();
         let window_resolution = if launch_blocked {
-            WindowResolution::new(960, 540)
+            WindowResolution::new(BLOCKED_LAUNCH_WINDOW_WIDTH, BLOCKED_LAUNCH_WINDOW_HEIGHT)
         } else {
-            WindowResolution::new(1920, 1080)
+            WindowResolution::new(PLAYABLE_WINDOW_WIDTH, PLAYABLE_WINDOW_HEIGHT)
         };
         let window_mode = if launch_blocked {
             WindowMode::Windowed
@@ -73,7 +81,7 @@ impl Plugin for ClientAppPlugins {
         app.insert_resource(Time::<Fixed>::from_hz(FIXED_TIMESTEP_HZ))
             .insert_resource(health_bar_style)
             .insert_resource(gameplay_settings)
-            .insert_resource(settings)
+            .insert_resource(app_settings)
             .add_plugins(
                 DefaultPlugins
                     .set(WindowPlugin {
@@ -87,7 +95,7 @@ impl Plugin for ClientAppPlugins {
                         ..default()
                     })
                     .set(AssetPlugin {
-                        file_path: asset_root_text.clone(),
+                        file_path: asset_root_path,
                         meta_check: AssetMetaCheck::Never,
                         ..default()
                     }),
@@ -136,7 +144,7 @@ fn setup_ui_camera(mut commands: Commands) {
     commands.spawn((
         Camera2d,
         Camera {
-            order: 100,
+            order: UI_CAMERA_RENDER_ORDER,
             clear_color: ClearColorConfig::None,
             ..default()
         },
@@ -185,7 +193,7 @@ fn spawn_blocked_launch_screen(mut commands: Commands, launch_gate: Res<ClientLa
             ..default()
         },
         BackgroundColor(Color::srgb_u8(0x0B, 0x10, 0x18)),
-        ZIndex(20_000),
+        ZIndex(BLOCKED_LAUNCH_SCREEN_Z_INDEX),
         children![
             (
                 Text::new("MIRA"),

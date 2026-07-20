@@ -3,7 +3,7 @@ use bevy::ecs::query::QueryFilter;
 use bevy::math::primitives::{Cuboid, Cylinder, Sphere};
 use bevy::prelude::*;
 use game_shared::game::{
-    lane::{LaneUnitKind, TOWER_ATTACK_RANGE},
+    lane::{LaneUnitKind, TOWER_ATTACK_RANGE, lane_unit_stats},
     player::{Health, Player, PlayerControlled, PlayerProfile},
     team::{Team, TeamSpec},
 };
@@ -23,7 +23,6 @@ const NEUTRAL_TEAM_COLOR: Color = Color::srgb_u8(0x82, 0x88, 0x94);
 
 /// Tracks one client-side presentation entity for a replicated lane unit.
 ///
-/// Fields:
 /// - `id`: Stable server-provided lane-unit id.
 /// - `kind`: Server-provided lane-unit visual role.
 /// - `team`: Team that owns the lane unit.
@@ -42,6 +41,33 @@ pub(super) struct RemoteLaneUnit {
     target_position: Vec3,
     target_rotation: Quat,
     attack_target: Option<NetworkTargetId>,
+}
+
+impl RemoteLaneUnit {
+    /// Returns whether this replicated unit is a lane tower.
+    pub(super) fn is_tower(&self) -> bool {
+        self.kind == LaneUnitKind::Tower
+    }
+
+    /// Returns the latest authoritative collision center received for this lane unit.
+    pub(super) fn collision_center(&self) -> Vec3 {
+        self.target_position
+    }
+
+    /// Returns the authoritative collision radius for this lane unit.
+    pub(super) fn collision_radius(&self) -> f32 {
+        lane_unit_stats(self.kind).hit_radius
+    }
+
+    /// Returns whether this lane entity is a minion that player spells can target.
+    pub(super) fn is_spell_target(&self) -> bool {
+        self.kind != LaneUnitKind::Tower
+    }
+
+    /// Returns the authoritative collision radius used by spell target visuals.
+    pub(super) fn spell_target_radius(&self) -> f32 {
+        lane_unit_stats(self.kind).hit_radius
+    }
 }
 
 /// Marks the translucent 6 metre attack radius displayed below each tower.
@@ -65,18 +91,14 @@ struct TowerAttackLineGeometry {
 
 /// Reconciles replicated towers and minions from the latest server lane snapshot.
 ///
-/// Params:
 /// - `commands`: ECS command buffer used to spawn and remove lane presentation entities.
-/// - `asset_server`: Asset server used for overhead health bar text.
 /// - `receivers`: Lane snapshot receivers attached to the local client link.
 /// - `local_player`: Controlled player's current team used to color ally and enemy health bars.
 /// - `lane_units`: Existing lane-unit presentation entities to update or remove.
 /// - `meshes`: Mesh asset collection used for lane geometry and health bars.
 /// - `materials`: Material asset collection used for lane geometry and health bars.
-/// - `health_bar_style`: Configured HUD accent color.
 pub(super) fn sync_lane_units_from_snapshot(
     mut commands: Commands,
-    asset_server: Res<AssetServer>,
     mut receivers: Query<&mut MessageReceiver<LaneSnapshot>, With<Client>>,
     local_player: Query<&Team, With<PlayerControlled>>,
     mut lane_units: Query<
@@ -93,7 +115,6 @@ pub(super) fn sync_lane_units_from_snapshot(
     >,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    health_bar_style: Res<healthbar::OverheadHealthBarStyle>,
 ) {
     let mut latest_snapshot = None;
     for mut receiver in &mut receivers {
@@ -154,19 +175,16 @@ pub(super) fn sync_lane_units_from_snapshot(
 
         spawn_lane_unit(
             &mut commands,
-            &asset_server,
             &mut meshes,
             &mut materials,
             snapshot_unit,
             local_team,
-            health_bar_style.accent_color,
         );
     }
 }
 
 /// Smoothly moves lane units toward the latest server-provided position and facing direction.
 ///
-/// Params:
 /// - `time`: Bevy time resource used to calculate frame-rate independent smoothing.
 /// - `lane_units`: Replicated lane-unit transforms and latest targets.
 pub(super) fn interpolate_lane_unit_positions(
@@ -188,7 +206,6 @@ pub(super) fn interpolate_lane_unit_positions(
 
 /// Shows or updates a line from each active tower to its current attack target.
 ///
-/// Params:
 /// - `commands`: ECS command buffer used to create and remove attack line entities.
 /// - `tower_query`: Replicated lane-unit attack targets and source transforms.
 /// - `target_query`: Player and lane-unit transforms used to resolve attack targets.
@@ -260,15 +277,12 @@ pub(super) fn update_tower_attack_lines(
 }
 
 /// Spawns one visual stand-in for a tower or minion from a server lane snapshot entry.
-#[allow(clippy::too_many_arguments)]
 fn spawn_lane_unit(
     commands: &mut Commands,
-    asset_server: &AssetServer,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
     snapshot_unit: &NetworkLaneUnit,
     local_team: TeamSpec,
-    accent_color: Color,
 ) {
     let is_enemy = snapshot_unit.team.is_playable() && snapshot_unit.team != local_team;
     let layout = lane_unit_layout(snapshot_unit.kind);
@@ -312,14 +326,12 @@ fn spawn_lane_unit(
 
     let health_bar = healthbar::spawn_remote_lane_unit_health_bar(
         commands,
-        asset_server,
         meshes,
         materials,
         entity,
         snapshot_unit.max_health,
         is_enemy,
         layout.health_bar_offset,
-        accent_color,
     );
     commands.entity(entity).insert(RemoteLaneUnit {
         id: snapshot_unit.id,
@@ -528,7 +540,7 @@ fn tower_range_material(team: TeamSpec) -> StandardMaterial {
 }
 
 /// Returns the display color used by a team-owned lane object.
-fn team_color(team: TeamSpec) -> Color {
+pub(super) fn team_color(team: TeamSpec) -> Color {
     match team {
         TeamSpec::Light => LIGHT_TEAM_COLOR,
         TeamSpec::Dark => DARK_TEAM_COLOR,

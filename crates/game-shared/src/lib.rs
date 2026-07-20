@@ -8,14 +8,9 @@ pub mod network;
 /// Used by match setup, champion select, spawning, and future lobby validation.
 pub const PLAYERS_PER_TEAM: usize = 5;
 
-/// Registers shared type setup for both client and server apps.
-///
-/// Description:
-/// Used as the first domain plugin before systems that read shared components,
-/// protocol messages, or gameplay data.
+/// Registers the shared domain plugin for client and server apps.
 pub struct MiraSharedPlugin;
 
 impl Plugin for MiraSharedPlugin {
-    /// Registers Bevy resources, plugins, or systems for the shared game crate plugin.
     fn build(&self, _app: &mut App) {}
 }

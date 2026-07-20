@@ -1,8 +1,11 @@
-use crate::systems::{
-    CurrentChampionVisual, TrainingDummy,
-    targeting::{clamp_world_point_to_map_top, ray_hit_map_top},
+use super::common::{
+    clamp_cast_target, cursor_hit_on_map, find_clicked_enemy_target, horizontal_distance,
+    indicator_material, ready_timer, ready_timer_percent, remaining_timer_seconds,
+    send_ability_command, timer_progress, total_timer_seconds,
 };
-use bevy::ecs::query::QueryFilter;
+use crate::systems::{
+    CurrentChampionVisual, TrainingDummy, targeting::clamp_world_point_to_map_top,
+};
 use bevy::math::primitives::{Cylinder, Sphere};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
@@ -11,13 +14,8 @@ use game_shared::game::{
     map::MapGround,
     player::{Health, Player, PlayerControlled},
 };
-use game_shared::network::{
-    AbilitySlot, AbilityVisualEvent, CastTarget, ChampionId, PlayerCommand, ReliableCommandChannel,
-    WorldPosition,
-};
+use game_shared::network::{AbilitySlot, AbilityVisualEvent, ChampionId, PlayerCommand};
 use lightyear::prelude::*;
-
-const YUNA_CHAMPION_ID: ChampionId = ChampionId(6608);
 
 const Q_COOLDOWN_SECONDS: f32 = 8.0;
 const Q_RANGE: f32 = 8.0;
@@ -136,72 +134,51 @@ impl Default for YunaECastState {
 }
 
 impl YunaQCastState {
-    /// Runs the ready step for the Yuna ability system.
     pub(in crate::systems) fn ready(cooldown_seconds: f32) -> Self {
         Self {
             cooldown: ready_timer(cooldown_seconds),
         }
     }
-
-    /// Runs the remaining seconds step for the Yuna ability system.
     pub(in crate::systems) fn remaining_seconds(&self) -> f32 {
         remaining_timer_seconds(&self.cooldown)
     }
-
-    /// Runs the total seconds step for the Yuna ability system.
     pub(in crate::systems) fn total_seconds(&self) -> f32 {
         total_timer_seconds(&self.cooldown)
     }
-
-    /// Runs the ready percent step for the Yuna ability system.
     pub(in crate::systems) fn ready_percent(&self) -> f32 {
         ready_timer_percent(&self.cooldown)
     }
 }
 
 impl YunaWCastState {
-    /// Runs the ready step for the Yuna ability system.
     pub(in crate::systems) fn ready(cooldown_seconds: f32) -> Self {
         Self {
             cooldown: ready_timer(cooldown_seconds),
         }
     }
-
-    /// Runs the remaining seconds step for the Yuna ability system.
     pub(in crate::systems) fn remaining_seconds(&self) -> f32 {
         remaining_timer_seconds(&self.cooldown)
     }
-
-    /// Runs the total seconds step for the Yuna ability system.
     pub(in crate::systems) fn total_seconds(&self) -> f32 {
         total_timer_seconds(&self.cooldown)
     }
-
-    /// Runs the ready percent step for the Yuna ability system.
     pub(in crate::systems) fn ready_percent(&self) -> f32 {
         ready_timer_percent(&self.cooldown)
     }
 }
 
 impl YunaECastState {
-    /// Runs the ready step for the Yuna ability system.
     pub(in crate::systems) fn ready(cooldown_seconds: f32) -> Self {
         Self {
             cooldown: ready_timer(cooldown_seconds),
         }
     }
-
-    /// Runs the remaining seconds step for the Yuna ability system.
     pub(in crate::systems) fn remaining_seconds(&self) -> f32 {
         remaining_timer_seconds(&self.cooldown)
     }
-
-    /// Runs the total seconds step for the Yuna ability system.
     pub(in crate::systems) fn total_seconds(&self) -> f32 {
         total_timer_seconds(&self.cooldown)
     }
-
-    /// Runs the ready percent step for the Yuna ability system.
     pub(in crate::systems) fn ready_percent(&self) -> f32 {
         ready_timer_percent(&self.cooldown)
     }
@@ -265,8 +242,6 @@ pub(in crate::systems) struct YunaERangeIndicator;
 /// Stores Yuna ETarget Indicator data used by the Yuna ability system.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(in crate::systems) struct YunaETargetIndicator;
-
-/// Runs the spawn yuna indicators step for the Yuna ability system.
 pub(in crate::systems) fn spawn_yuna_indicators(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -334,8 +309,6 @@ pub(in crate::systems) fn spawn_yuna_indicators(
         Visibility::Hidden,
     ));
 }
-
-/// Runs the cast q gravity orb step for the Yuna ability system.
 pub(in crate::systems) fn cast_q_gravity_orb(
     time: Res<Time>,
     mouse_buttons: Res<ButtonInput<MouseButton>>,
@@ -362,7 +335,7 @@ pub(in crate::systems) fn cast_q_gravity_orb(
     let Ok((player_transform, health, visual)) = player_query.single() else {
         return;
     };
-    if health.current == 0 || visual.champion != Some(YUNA_CHAMPION_ID) {
+    if health.current == 0 || visual.champion != Some(ChampionId::YUNA) {
         return;
     }
 
@@ -391,11 +364,14 @@ pub(in crate::systems) fn cast_q_gravity_orb(
         end,
         *settings,
     );
-    send_ability_command(&mut command_senders, AbilitySlot::Q, Some(target));
+    send_ability_command(
+        &mut command_senders,
+        ChampionId::YUNA,
+        AbilitySlot::Q,
+        Some(target),
+    );
     cast_state.cooldown.reset();
 }
-
-/// Runs the cast w healing field step for the Yuna ability system.
 pub(in crate::systems) fn cast_w_healing_field(
     time: Res<Time>,
     keyboard: Res<ButtonInput<KeyCode>>,
@@ -418,7 +394,7 @@ pub(in crate::systems) fn cast_w_healing_field(
     let Ok((player, player_transform, health, visual)) = player_query.single() else {
         return;
     };
-    if health.current == 0 || visual.champion != Some(YUNA_CHAMPION_ID) {
+    if health.current == 0 || visual.champion != Some(ChampionId::YUNA) {
         return;
     }
 
@@ -435,11 +411,14 @@ pub(in crate::systems) fn cast_w_healing_field(
         *settings,
         Some(player.id.0),
     );
-    send_ability_command(&mut command_senders, AbilitySlot::W, Some(center));
+    send_ability_command(
+        &mut command_senders,
+        ChampionId::YUNA,
+        AbilitySlot::W,
+        Some(center),
+    );
     cast_state.cooldown.reset();
 }
-
-/// Runs the cast e stun bolt step for the Yuna ability system.
 pub(in crate::systems) fn cast_e_stun_bolt(
     time: Res<Time>,
     mouse_buttons: Res<ButtonInput<MouseButton>>,
@@ -467,7 +446,7 @@ pub(in crate::systems) fn cast_e_stun_bolt(
     let Ok((player_transform, health, visual)) = player_query.single() else {
         return;
     };
-    if health.current == 0 || visual.champion != Some(YUNA_CHAMPION_ID) {
+    if health.current == 0 || visual.champion != Some(ChampionId::YUNA) {
         return;
     }
 
@@ -498,11 +477,14 @@ pub(in crate::systems) fn cast_e_stun_bolt(
         target + Vec3::Y * 0.85,
         *settings,
     );
-    send_ability_command(&mut command_senders, AbilitySlot::E, Some(target));
+    send_ability_command(
+        &mut command_senders,
+        ChampionId::YUNA,
+        AbilitySlot::E,
+        Some(target),
+    );
     cast_state.cooldown.reset();
 }
-
-/// Runs the update yuna indicators step for the Yuna ability system.
 pub(in crate::systems) fn update_yuna_indicators(
     keyboard: Res<ButtonInput<KeyCode>>,
     windows: Query<&Window, With<PrimaryWindow>>,
@@ -558,7 +540,7 @@ pub(in crate::systems) fn update_yuna_indicators(
     let Ok((player_transform, visual)) = player_query.single() else {
         return;
     };
-    if visual.champion != Some(YUNA_CHAMPION_ID) {
+    if visual.champion != Some(ChampionId::YUNA) {
         return;
     }
 
@@ -627,8 +609,6 @@ pub(in crate::systems) fn update_yuna_indicators(
         }
     }
 }
-
-/// Runs the update q projectiles step for the Yuna ability system.
 pub(in crate::systems) fn update_q_projectiles(
     time: Res<Time>,
     mut commands: Commands,
@@ -658,8 +638,6 @@ pub(in crate::systems) fn update_q_projectiles(
         }
     }
 }
-
-/// Runs the update q fields step for the Yuna ability system.
 pub(in crate::systems) fn update_q_fields(
     time: Res<Time>,
     mut commands: Commands,
@@ -718,8 +696,6 @@ pub(in crate::systems) fn update_q_fields(
         }
     }
 }
-
-/// Runs the update w fields step for the Yuna ability system.
 pub(in crate::systems) fn update_w_fields(
     time: Res<Time>,
     mut commands: Commands,
@@ -768,8 +744,6 @@ pub(in crate::systems) fn update_w_fields(
         }
     }
 }
-
-/// Runs the update e stun bolts step for the Yuna ability system.
 pub(in crate::systems) fn update_e_stun_bolts(
     time: Res<Time>,
     mut commands: Commands,
@@ -797,8 +771,6 @@ pub(in crate::systems) fn update_e_stun_bolts(
         }
     }
 }
-
-/// Runs the spawn remote ability visual step for the Yuna ability system.
 pub(in crate::systems) fn spawn_remote_ability_visual(
     event: AbilityVisualEvent,
     q_settings: &YunaQSettings,
@@ -809,7 +781,7 @@ pub(in crate::systems) fn spawn_remote_ability_visual(
     materials: &mut Assets<StandardMaterial>,
     commands: &mut Commands,
 ) {
-    if event.champion != YUNA_CHAMPION_ID {
+    if event.champion != ChampionId::YUNA {
         return;
     }
 
@@ -858,8 +830,6 @@ pub(in crate::systems) fn spawn_remote_ability_visual(
         AbilitySlot::R => {}
     }
 }
-
-/// Runs the spawn q projectile step for the Yuna ability system.
 fn spawn_q_projectile(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -888,8 +858,6 @@ fn spawn_q_projectile(
         Transform::from_translation(start),
     ));
 }
-
-/// Runs the spawn q field and orb step for the Yuna ability system.
 fn spawn_q_field_and_orb(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -937,8 +905,6 @@ fn spawn_q_field_and_orb(
             .with_scale(Vec3::splat(settings.orb_radius)),
     ));
 }
-
-/// Runs the spawn w field step for the Yuna ability system.
 fn spawn_w_field(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -970,8 +936,6 @@ fn spawn_w_field(
         )),
     ));
 }
-
-/// Runs the spawn e stun bolt step for the Yuna ability system.
 fn spawn_e_stun_bolt(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -999,19 +963,6 @@ fn spawn_e_stun_bolt(
         Transform::from_translation(start),
     ));
 }
-
-/// Runs the indicator material step for the Yuna ability system.
-fn indicator_material(base_color: Color, emissive: Color) -> StandardMaterial {
-    StandardMaterial {
-        base_color,
-        emissive: emissive.into(),
-        alpha_mode: AlphaMode::Blend,
-        unlit: true,
-        ..default()
-    }
-}
-
-/// Runs the yuna w follow position step for the Yuna ability system.
 fn yuna_w_follow_position(
     caster_player_id: Option<u64>,
     player_query: &Query<(&Player, &Transform), Without<YunaWField>>,
@@ -1021,107 +972,4 @@ fn yuna_w_follow_position(
         .iter()
         .find(|(player, _)| player.id.0 == caster_player_id)
         .map(|(_, transform)| transform.translation)
-}
-
-/// Runs the ready timer step for the Yuna ability system.
-fn ready_timer(cooldown_seconds: f32) -> Timer {
-    let mut timer = Timer::from_seconds(cooldown_seconds.max(f32::EPSILON), TimerMode::Once);
-    timer.set_elapsed(timer.duration());
-    timer
-}
-
-/// Runs the total timer seconds step for the Yuna ability system.
-fn total_timer_seconds(timer: &Timer) -> f32 {
-    timer.duration().as_secs_f32().max(f32::EPSILON)
-}
-
-/// Runs the remaining timer seconds step for the Yuna ability system.
-fn remaining_timer_seconds(timer: &Timer) -> f32 {
-    (total_timer_seconds(timer) - timer.elapsed().as_secs_f32()).max(0.0)
-}
-
-/// Runs the ready timer percent step for the Yuna ability system.
-fn ready_timer_percent(timer: &Timer) -> f32 {
-    let total = total_timer_seconds(timer);
-    ((total - remaining_timer_seconds(timer)) / total * 100.0).clamp(0.0, 100.0)
-}
-
-/// Runs the timer progress step for the Yuna ability system.
-fn timer_progress(timer: &Timer) -> f32 {
-    (timer.elapsed_secs() / timer.duration().as_secs_f32().max(f32::EPSILON)).clamp(0.0, 1.0)
-}
-
-/// Runs the send ability command step for the Yuna ability system.
-fn send_ability_command(
-    senders: &mut Query<&mut MessageSender<PlayerCommand>, With<Client>>,
-    slot: AbilitySlot,
-    target_position: Option<Vec3>,
-) {
-    for mut sender in senders {
-        sender.send::<ReliableCommandChannel>(PlayerCommand::CastAbility {
-            champion: YUNA_CHAMPION_ID,
-            slot,
-            target: CastTarget {
-                position: target_position.map(WorldPosition::from),
-            },
-        });
-    }
-}
-
-/// Runs the cursor hit on map step for the Yuna ability system.
-fn cursor_hit_on_map(
-    windows: &Query<&Window, With<PrimaryWindow>>,
-    camera_query: &Query<(&Camera, &GlobalTransform), With<TopDownCamera>>,
-    map_transform: &GlobalTransform,
-    map_ground: MapGround,
-) -> Option<Vec3> {
-    windows
-        .single()
-        .ok()
-        .and_then(|window| window.cursor_position())
-        .and_then(|cursor| {
-            camera_query
-                .single()
-                .ok()
-                .and_then(|(camera, camera_transform)| {
-                    camera.viewport_to_world(camera_transform, cursor).ok()
-                })
-        })
-        .and_then(|ray| ray_hit_map_top(ray, map_transform, map_ground))
-}
-
-/// Runs the clamp cast target step for the Yuna ability system.
-fn clamp_cast_target(origin: Vec3, target: Vec3, range: f32) -> Vec3 {
-    let delta = Vec3::new(target.x - origin.x, 0.0, target.z - origin.z);
-    if delta.length_squared() <= range * range {
-        return Vec3::new(target.x, origin.y, target.z);
-    }
-
-    origin + delta.normalize_or_zero() * range
-}
-
-/// Runs the find clicked enemy target step for the Yuna ability system.
-fn find_clicked_enemy_target<'a, F>(
-    cursor_hit: Vec3,
-    enemy_query: &'a Query<(&TrainingDummy, &Transform), F>,
-    radius: f32,
-) -> Option<(&'a TrainingDummy, &'a Transform)>
-where
-    F: QueryFilter,
-{
-    enemy_query
-        .iter()
-        .filter(|(dummy, transform)| {
-            dummy.health > 0.0 && horizontal_distance(cursor_hit, transform.translation) <= radius
-        })
-        .min_by(|(_, left), (_, right)| {
-            horizontal_distance(cursor_hit, left.translation)
-                .partial_cmp(&horizontal_distance(cursor_hit, right.translation))
-                .unwrap_or(std::cmp::Ordering::Equal)
-        })
-}
-
-/// Runs the horizontal distance step for the Yuna ability system.
-fn horizontal_distance(a: Vec3, b: Vec3) -> f32 {
-    Vec2::new(a.x - b.x, a.z - b.z).length()
 }

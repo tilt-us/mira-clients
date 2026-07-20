@@ -1,10 +1,7 @@
 use core::net::SocketAddr;
 use game_shared::network::{DEFAULT_CLIENT_ADDR, DEFAULT_SERVER_ADDR};
-
-/// Description:
 /// Stores local client networking settings for the Lightyear connector.
 ///
-/// Fields:
 /// - `client_id`: Netcode client id used for development authentication.
 /// - `local_addr`: UDP socket address bound by the client.
 /// - `server_addr`: UDP socket address of the dedicated server.
@@ -27,11 +24,8 @@ impl Default for ClientNetworkSettings {
         }
     }
 }
-
-/// Description:
 /// Builds a unique default Netcode id for local development clients.
 ///
-/// Return:
 /// - Process-derived client id suitable for running multiple local test clients.
 fn default_development_client_id() -> u64 {
     u64::from(std::process::id())

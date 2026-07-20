@@ -1,14 +1,11 @@
-use super::{LocalChampionAnimationState, LocalChampionAnimations};
+use super::{LocalChampionAnimationState, LocalChampionAnimations, hierarchy_root};
 use bevy::prelude::*;
 use game_shared::game::player::{MoveTarget, PlayerControlled};
 use std::time::Duration;
 
 const LOCAL_STOP_ANIMATION_GRACE_SECONDS: f32 = 0.12;
-
-/// Description:
 /// Initializes newly loaded animation players with Lira's graph and idle clip.
 ///
-/// Params:
 /// - `commands`: ECS command buffer used to attach animation components.
 /// - `animations`: Local champion animation graph and node indices.
 /// - `players`: Newly added animation players waiting for graph setup.
@@ -29,11 +26,8 @@ pub(super) fn setup_animation_player_once_loaded(
             .insert(transitions);
     }
 }
-
-/// Description:
 /// Switches the controlled champion between idle and walk animations.
 ///
-/// Params:
 /// - `animation_state`: Cached movement animation state for change detection.
 /// - `animations`: Optional local champion animation data loaded during setup.
 /// - `moving_query`: Query that reports whether the controlled player has a move target.
@@ -83,20 +77,4 @@ pub(super) fn sync_controlled_player_animation(
             .play(&mut player, next_animation, Duration::from_millis(140))
             .repeat();
     }
-}
-
-/// Description:
-/// Finds the top-most hierarchy root for a scene child entity.
-///
-/// Params:
-/// - `entity`: Entity to walk upward from.
-/// - `parents`: Parent relationship query.
-///
-/// Return:
-/// - Top-most hierarchy entity.
-fn hierarchy_root(mut entity: Entity, parents: &Query<&ChildOf>) -> Entity {
-    while let Ok(parent) = parents.get(entity) {
-        entity = parent.0;
-    }
-    entity
 }

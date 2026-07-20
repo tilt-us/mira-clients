@@ -30,7 +30,7 @@ use bevy_transform_interpolation::prelude::{RotationInterpolation, TranslationIn
 use game_shared::game::{
     camera::{CameraZoom, TopDownCameraBundle},
     lane::{LANE_SPAWN_Z, LANE_TOWER_Z},
-    player::{Health, PlayerBundle, PlayerId, PlayerProfile},
+    player::{Health, PlayerBundle, PlayerControlled, PlayerId, PlayerProfile},
     team::{Team, TeamSpec},
 };
 use game_shared::network::{
@@ -43,14 +43,25 @@ use std::{collections::HashMap, path::PathBuf};
 
 const DEV_DUMMY_HEALTH: f32 = 120.0;
 const DEV_DUMMY_HIT_RADIUS: f32 = 0.9;
-const DEV_DUMMY_POSITION: Vec3 = Vec3::new(3.5, 0.0, -2.5);
 const LANE_INITIAL_CAMERA_ZOOM: f32 = LANE_SPAWN_Z - LANE_TOWER_Z + 2.0;
 const LANE_MAX_CAMERA_ZOOM: f32 = LANE_SPAWN_Z - LANE_TOWER_Z + 14.0;
 
-/// Description:
+/// Marks the local development-only attack dummy spawned for preview sessions.
+#[derive(Component, Debug, Clone, Copy)]
+pub(super) struct DevPreviewAttackDummy;
+
+/// Marks the health bar associated with the local development preview dummy.
+#[derive(Component, Debug, Clone, Copy)]
+pub(super) struct DevPreviewDummyHealthBar;
+
+/// Describes the development dummy change requested by the F9 shortcut.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DevPreviewDummyToggleAction {
+    Spawn,
+    Despawn,
+}
 /// Represents the champion data loaded from the local champion JSON file.
 ///
-/// Fields:
 /// - `localized_name`: Directory slug used for local champion assets.
 /// - `model_name`: GLB model filename loaded from the champion model directory.
 /// - `animations`: Animation key-to-index mappings used to build the graph.
@@ -60,11 +71,8 @@ struct ChampionDataFile {
     model_name: String,
     animations: Vec<ChampionAnimationEntry>,
 }
-
-/// Description:
 /// Represents one animation clip entry from a champion data file.
 ///
-/// Fields:
 /// - `key`: Logical animation name such as idle or walk.
 /// - `index`: GLTF animation index for the animation clip.
 #[derive(Debug, Deserialize)]
@@ -72,11 +80,8 @@ struct ChampionAnimationEntry {
     key: String,
     index: usize,
 }
-
-/// Description:
 /// Stores champion tuning received from the match server.
 ///
-/// Fields:
 /// - `champions`: Champion definitions keyed by their stable content id.
 #[derive(Resource, Debug, Default, Clone)]
 pub(super) struct ClientChampionCatalog {
@@ -111,11 +116,8 @@ pub(super) struct ClientChampionTuningParams<'w> {
     sophia_w_cast_state: ResMut<'w, SophiaWCastState>,
     sophia_e_cast_state: ResMut<'w, SophiaECastState>,
 }
-
-/// Description:
 /// Spawns the local player, camera, ability indicators, movement marker, and test dummies.
 ///
-/// Params:
 /// - `commands`: ECS command buffer used to spawn entities and insert resources.
 /// - `asset_server`: Asset server used to load champion scene and animation assets.
 /// - `q_settings`: Lira Q settings used for preview and predicted visuals.
@@ -139,7 +141,7 @@ pub(super) fn spawn_local_player_and_camera(
     let champion_data = load_champion_data(LOCAL_CHAMPION_ID).unwrap_or_else(|| {
         warn!(
             "Failed to load champion data for id {}. Falling back to defaults.",
-            LOCAL_CHAMPION_ID
+            LOCAL_CHAMPION_ID.0
         );
         ChampionDataFile {
             localized_name: "lira".to_string(),
@@ -199,7 +201,7 @@ pub(super) fn spawn_local_player_and_camera(
     commands.insert_resource(LiraWCastState::ready(w_settings.cooldown_seconds));
     commands.insert_resource(LiraECastState::ready(e_settings.cooldown_seconds));
 
-    let local_champion = ChampionId(LOCAL_CHAMPION_ID);
+    let local_champion = LOCAL_CHAMPION_ID;
     let local_model_root = commands
         .spawn((
             Name::new("LocalPlayerLiraModel"),
@@ -211,6 +213,7 @@ pub(super) fn spawn_local_player_and_camera(
         ))
         .id();
 
+    let player_spawn_position = Vec3::ZERO;
     let player_entity = commands
         .spawn((
             Name::new("LocalPlayerLira"),
@@ -224,7 +227,7 @@ pub(super) fn spawn_local_player_and_camera(
             },
             TranslationInterpolation,
             RotationInterpolation,
-            Transform::from_xyz(0.0, 0.0, 0.0),
+            Transform::from_translation(player_spawn_position),
         ))
         .id();
     commands.entity(player_entity).add_child(local_model_root);
@@ -337,17 +340,17 @@ pub(super) fn spawn_local_player_and_camera(
             &mut meshes,
             &mut materials,
             health_bar_style.accent_color,
+            player_spawn_position,
         );
     }
 }
-
-/// Runs the spawn dev preview dummy step for the client setup and champion tuning system.
 fn spawn_dev_preview_dummy(
     commands: &mut Commands,
     asset_server: &AssetServer,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
     accent_color: Color,
+    player_position: Vec3,
 ) {
     let dummy_material = materials.add(StandardMaterial {
         base_color: Color::srgb_u8(0xbd, 0x2d, 0x36),
@@ -358,6 +361,7 @@ fn spawn_dev_preview_dummy(
     let dummy_entity = commands
         .spawn((
             Name::new("DevPreviewAttackDummy"),
+            DevPreviewAttackDummy,
             TrainingDummy::new(DEV_DUMMY_HEALTH, DEV_DUMMY_HIT_RADIUS),
             Health {
                 current: DEV_DUMMY_HEALTH as u32,
@@ -369,11 +373,11 @@ fn spawn_dev_preview_dummy(
             },
             Mesh3d(meshes.add(Mesh::from(Capsule3d::new(0.45, 1.35)))),
             MeshMaterial3d(dummy_material),
-            Transform::from_translation(DEV_DUMMY_POSITION + Vec3::Y * 0.9),
+            Transform::from_translation(dev_preview_dummy_position(player_position)),
         ))
         .id();
 
-    healthbar::spawn_remote_enemy_player_health_bar(
+    let health_bar = healthbar::spawn_remote_enemy_player_health_bar(
         commands,
         asset_server,
         meshes,
@@ -382,12 +386,84 @@ fn spawn_dev_preview_dummy(
         DEV_DUMMY_HEALTH,
         accent_color,
     );
+    commands.entity(health_bar).insert(DevPreviewDummyHealthBar);
 }
 
-/// Description:
+/// Toggles the local development preview dummy with F9.
+///
+/// The dummy and its health bar are local preview entities, so this shortcut is only active in
+/// development preview sessions and does not send a gameplay command to the match server.
+pub(super) fn toggle_dev_preview_dummy(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    gameplay_settings: Res<MiraClientGameplaySettings>,
+    player_query: Query<&Transform, With<PlayerControlled>>,
+    dummy_query: Query<Entity, With<DevPreviewAttackDummy>>,
+    health_bar_query: Query<Entity, With<DevPreviewDummyHealthBar>>,
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    health_bar_style: Res<super::healthbar::OverheadHealthBarStyle>,
+) {
+    let Some(action) = dev_preview_dummy_toggle_action(
+        keyboard.just_pressed(KeyCode::F9),
+        gameplay_settings.allow_dev_dummy_toggle,
+        !dummy_query.is_empty(),
+    ) else {
+        return;
+    };
+
+    match action {
+        DevPreviewDummyToggleAction::Spawn => {
+            let Some(player_position) = player_query
+                .iter()
+                .next()
+                .map(|transform| transform.translation)
+            else {
+                return;
+            };
+
+            spawn_dev_preview_dummy(
+                &mut commands,
+                &asset_server,
+                &mut meshes,
+                &mut materials,
+                health_bar_style.accent_color,
+                player_position,
+            );
+        }
+        DevPreviewDummyToggleAction::Despawn => {
+            for entity in &dummy_query {
+                commands.entity(entity).despawn();
+            }
+            for entity in &health_bar_query {
+                commands.entity(entity).despawn();
+            }
+        }
+    }
+}
+
+fn dev_preview_dummy_position(player_position: Vec3) -> Vec3 {
+    player_position + Vec3::Y * 0.9
+}
+
+fn dev_preview_dummy_toggle_action(
+    f9_pressed: bool,
+    preview_enabled: bool,
+    dummy_present: bool,
+) -> Option<DevPreviewDummyToggleAction> {
+    if !f9_pressed || !preview_enabled {
+        return None;
+    }
+
+    Some(if dummy_present {
+        DevPreviewDummyToggleAction::Despawn
+    } else {
+        DevPreviewDummyToggleAction::Spawn
+    })
+}
 /// Receives server-authoritative champion tuning from the match server.
 ///
-/// Params:
 /// - `receivers`: Lightyear message receivers containing champion catalog updates.
 /// - `catalog`: Local copy of the latest received champion catalog.
 /// - `q_settings`: Mutable Lira Q settings used by local prediction and previews.
@@ -409,7 +485,7 @@ pub(super) fn receive_champion_catalog_updates(
                 .map(|champion| (champion.id, champion))
                 .collect();
 
-            let Some(lira) = catalog.champions.get(&ChampionId(6606)) else {
+            let Some(lira) = catalog.champions.get(&ChampionId::LIRA) else {
                 continue;
             };
             apply_lira_prediction_tuning(
@@ -422,7 +498,7 @@ pub(super) fn receive_champion_catalog_updates(
             *tuning.w_cast_state = LiraWCastState::ready(tuning.w_settings.cooldown_seconds);
             *tuning.e_cast_state = LiraECastState::ready(tuning.e_settings.cooldown_seconds);
 
-            if let Some(ignara) = catalog.champions.get(&ChampionId(6607)) {
+            if let Some(ignara) = catalog.champions.get(&ChampionId::IGNARA) {
                 apply_ignara_prediction_tuning(
                     &ignara.stats.abilities,
                     &mut tuning.ignara_q_settings,
@@ -437,7 +513,7 @@ pub(super) fn receive_champion_catalog_updates(
                     IgnaraECastState::ready(ignara.stats.abilities.e.cooldown_seconds);
             }
 
-            if let Some(yuna) = catalog.champions.get(&ChampionId(6608)) {
+            if let Some(yuna) = catalog.champions.get(&ChampionId::YUNA) {
                 apply_yuna_prediction_tuning(
                     &yuna.stats.abilities,
                     &mut tuning.yuna_q_settings,
@@ -452,7 +528,7 @@ pub(super) fn receive_champion_catalog_updates(
                     YunaECastState::ready(yuna.stats.abilities.e.cooldown_seconds);
             }
 
-            if let Some(sophia) = catalog.champions.get(&ChampionId(6609)) {
+            if let Some(sophia) = catalog.champions.get(&ChampionId::SOPHIA) {
                 apply_sophia_prediction_tuning(
                     &sophia.stats.abilities,
                     &mut tuning.sophia_q_settings,
@@ -475,18 +551,11 @@ pub(super) fn receive_champion_catalog_updates(
     }
 }
 
-/// Description:
-/// Loads champion metadata from the local assets directory.
-///
-/// Params:
-/// - `champion_id`: Numeric champion id used as the JSON filename.
-///
-/// Return:
-/// - Parsed champion metadata, or `None` if reading or parsing fails.
-fn load_champion_data(champion_id: u32) -> Option<ChampionDataFile> {
+/// Loads champion metadata from the local asset directory.
+fn load_champion_data(champion: ChampionId) -> Option<ChampionDataFile> {
     let file_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../assets/game/champions")
-        .join(champion_slug(champion_id)?)
+        .join(champion.asset_slug()?)
         .join("champion.json");
 
     let raw = match std::fs::read_to_string(&file_path) {
@@ -513,29 +582,8 @@ fn load_champion_data(champion_id: u32) -> Option<ChampionDataFile> {
         }
     }
 }
-
-/// Description:
-/// Maps a champion content id to its asset directory slug.
-///
-/// Params:
-/// - `champion_id`: Stable champion content id.
-///
-/// Return:
-/// - Asset directory slug when the champion is known locally.
-fn champion_slug(champion_id: u32) -> Option<&'static str> {
-    match champion_id {
-        6606 => Some("lira"),
-        6607 => Some("ignara"),
-        6608 => Some("yuna"),
-        6609 => Some("sophia"),
-        _ => None,
-    }
-}
-
-/// Description:
 /// Applies server-authored champion tuning to local prediction and preview resources.
 ///
-/// Params:
 /// - `abilities`: Server-authored ability tuning received from the match server.
 /// - `q_settings`: Mutable Q settings used by local prediction and previews.
 /// - `w_settings`: Mutable W settings used by local prediction and previews.
@@ -582,8 +630,6 @@ fn apply_lira_prediction_tuning(
     e_settings.missile_radius = positive_or(e.missile_radius, e_settings.missile_radius);
     e_settings.damage = positive_or(e.damage.missile, e_settings.damage);
 }
-
-/// Runs the apply ignara prediction tuning step for the client setup and champion tuning system.
 fn apply_ignara_prediction_tuning(
     abilities: &NetworkChampionAbilities,
     q_settings: &mut IgnaraQSettings,
@@ -605,8 +651,6 @@ fn apply_ignara_prediction_tuning(
     e_settings.range = positive_or(e.range, e_settings.range);
     e_settings.travel_seconds = positive_or(e.travel_seconds, e_settings.travel_seconds);
 }
-
-/// Runs the apply yuna prediction tuning step for the client setup and champion tuning system.
 fn apply_yuna_prediction_tuning(
     abilities: &NetworkChampionAbilities,
     q_settings: &mut YunaQSettings,
@@ -629,8 +673,6 @@ fn apply_yuna_prediction_tuning(
     e_settings.travel_seconds = positive_or(e.travel_seconds, e_settings.travel_seconds);
     e_settings.projectile_radius = positive_or(e.projectile_radius, e_settings.projectile_radius);
 }
-
-/// Runs the apply sophia prediction tuning step for the client setup and champion tuning system.
 fn apply_sophia_prediction_tuning(
     abilities: &NetworkChampionAbilities,
     q_settings: &mut SophiaQSettings,
@@ -646,7 +688,7 @@ fn apply_sophia_prediction_tuning(
 
     let w = &abilities.w;
     if w.missile_count > 0 {
-        w_settings.minion_count = usize::from(w.missile_count);
+        w_settings.minion_count = w.missile_count;
     }
     w_settings.lifetime_seconds =
         positive_or(w.missile_lifetime_seconds, w_settings.lifetime_seconds);
@@ -659,20 +701,49 @@ fn apply_sophia_prediction_tuning(
     e_settings.speed_seconds = positive_or(e.speed_seconds, e_settings.speed_seconds);
     e_settings.damage_multiplier = positive_or(e.damage_multiplier, e_settings.damage_multiplier);
 }
-
-/// Description:
 /// Returns a positive candidate value or a fallback value.
 ///
-/// Params:
 /// - `candidate`: Candidate numeric value read from champion content.
 /// - `fallback`: Fallback value used when the candidate is not positive.
 ///
-/// Returns:
 /// - Candidate when finite and positive, otherwise fallback.
 fn positive_or(candidate: f32, fallback: f32) -> f32 {
     if candidate.is_finite() && candidate > 0.0 {
         candidate
     } else {
         fallback
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn f9_despawns_existing_development_dummy() {
+        assert_eq!(
+            dev_preview_dummy_toggle_action(true, true, true),
+            Some(DevPreviewDummyToggleAction::Despawn)
+        );
+    }
+    #[test]
+    fn f9_spawns_missing_development_dummy() {
+        assert_eq!(
+            dev_preview_dummy_toggle_action(true, true, false),
+            Some(DevPreviewDummyToggleAction::Spawn)
+        );
+    }
+    #[test]
+    fn f9_is_ignored_outside_development_preview() {
+        assert_eq!(dev_preview_dummy_toggle_action(true, false, false), None);
+        assert_eq!(dev_preview_dummy_toggle_action(false, true, false), None);
+    }
+    #[test]
+    fn development_dummy_spawns_at_the_current_player_position() {
+        let player_position = Vec3::new(4.5, 0.0, -3.25);
+        let dummy_position = dev_preview_dummy_position(player_position);
+
+        assert_eq!(dummy_position.x, player_position.x);
+        assert_eq!(dummy_position.z, player_position.z);
+        assert_eq!(dummy_position.y, 0.9);
     }
 }

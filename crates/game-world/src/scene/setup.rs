@@ -12,11 +12,8 @@ const WALL_THICKNESS: f32 = 0.35;
 const WALL_HEIGHT: f32 = 0.8;
 const SPAWN_MARKER_RADIUS: f32 = 2.4;
 const SPAWN_MARKER_HEIGHT: f32 = 0.04;
-
-/// Description:
 /// Spawns the flat playable map plane and directional scene light.
 ///
-/// Params:
 /// - `commands`: ECS command buffer used to spawn map and light entities.
 /// - `meshes`: Mesh assets used to create the map plane.
 /// - `materials`: Material assets used to create the map material.

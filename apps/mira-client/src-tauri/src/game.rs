@@ -1,13 +1,18 @@
 use std::{
+    io::{Read, Write},
+    net::{TcpStream, ToSocketAddrs},
     path::PathBuf,
     process::{Child, Command},
     sync::Mutex,
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tauri::Manager;
 
 const FORCE_RESTART_RECONNECT_DELAY: Duration = Duration::from_millis(8_500);
+const GAME_SERVER_READY_TIMEOUT: Duration = Duration::from_secs(12);
+const GAME_SERVER_READY_POLL_INTERVAL: Duration = Duration::from_millis(100);
+const GAME_SERVER_READY_REQUEST_TIMEOUT: Duration = Duration::from_millis(500);
 
 /// Stores Game Process State data used by the desktop game-launcher process system.
 #[derive(Default)]
@@ -65,6 +70,7 @@ pub(crate) fn launch_game(
         .parent()
         .ok_or_else(|| "Game-Client-Verzeichnis konnte nicht bestimmt werden.".to_string())?;
     let asset_root = resolve_game_asset_root(&app, game_dir)?;
+    wait_for_game_server_ready(&request.server_control_base_url)?;
 
     let mut command = Command::new(&game_binary);
     let launch_stage = launch_stage_for_base_url(&request.matchmaking_api_base_url);
@@ -346,6 +352,109 @@ fn empty_as_default<'a>(value: &'a str, default_value: &'a str) -> &'a str {
     }
 }
 
+/// Waits until the dedicated server confirms that its UDP listener is ready.
+fn wait_for_game_server_ready(control_base_url: &str) -> Result<(), String> {
+    let endpoint = game_server_ready_endpoint(control_base_url)?;
+    let deadline = Instant::now() + GAME_SERVER_READY_TIMEOUT;
+
+    let last_error = loop {
+        let error = match request_game_server_readiness(&endpoint) {
+            Ok(true) => return Ok(()),
+            Ok(false) => "the server is still starting".to_string(),
+            Err(error) => error,
+        };
+
+        if Instant::now() >= deadline {
+            break error;
+        }
+
+        thread::sleep(GAME_SERVER_READY_POLL_INTERVAL);
+    };
+
+    Err(format!(
+        "Game-Server wurde unter {control_base_url} nicht rechtzeitig bereit: {last_error}",
+    ))
+}
+
+/// Builds the control API readiness endpoint from the match server base URL.
+fn game_server_ready_endpoint(control_base_url: &str) -> Result<tauri::Url, String> {
+    let mut endpoint = tauri::Url::parse(control_base_url)
+        .map_err(|error| format!("Ungültige Game-Server-Control-Adresse: {error}"))?;
+    if endpoint.scheme() != "http" {
+        return Err("Game-Server-Control-Adresse muss HTTP verwenden.".to_string());
+    }
+    if endpoint.host_str().is_none() {
+        return Err("Game-Server-Control-Adresse enthält keinen Host.".to_string());
+    }
+
+    endpoint.set_path("/ready");
+    endpoint.set_query(None);
+    endpoint.set_fragment(None);
+    Ok(endpoint)
+}
+
+/// Requests the dedicated server readiness endpoint once.
+fn request_game_server_readiness(endpoint: &tauri::Url) -> Result<bool, String> {
+    let host = endpoint
+        .host_str()
+        .ok_or_else(|| "Game-Server-Control-Adresse enthält keinen Host.".to_string())?;
+    let port = endpoint
+        .port_or_known_default()
+        .ok_or_else(|| "Game-Server-Control-Adresse enthält keinen Port.".to_string())?;
+    let addresses = (host, port)
+        .to_socket_addrs()
+        .map_err(|error| format!("Game-Server-Control-Host konnte nicht aufgelöst werden: {error}"))?;
+    let mut connection_errors = Vec::new();
+    let mut stream = None;
+
+    for address in addresses {
+        match TcpStream::connect_timeout(&address, GAME_SERVER_READY_REQUEST_TIMEOUT) {
+            Ok(connection) => {
+                stream = Some(connection);
+                break;
+            }
+            Err(error) => connection_errors.push(error),
+        }
+    }
+
+    let mut stream = stream.ok_or_else(|| {
+        let detail = connection_errors
+            .last()
+            .map(|error| error.to_string())
+            .unwrap_or_else(|| "no socket address was returned".to_string());
+        format!("Game-Server-Control-Verbindung fehlgeschlagen: {detail}")
+    })?;
+    stream
+        .set_read_timeout(Some(GAME_SERVER_READY_REQUEST_TIMEOUT))
+        .map_err(|error| format!("Game-Server-Control-Lesezeitlimit fehlgeschlagen: {error}"))?;
+    stream
+        .set_write_timeout(Some(GAME_SERVER_READY_REQUEST_TIMEOUT))
+        .map_err(|error| format!("Game-Server-Control-Schreibzeitlimit fehlgeschlagen: {error}"))?;
+
+    write!(
+        stream,
+        "GET {} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
+        endpoint.path(),
+        host,
+    )
+    .map_err(|error| format!("Game-Server-Readiness-Anfrage fehlgeschlagen: {error}"))?;
+
+    let mut response = String::new();
+    stream
+        .read_to_string(&mut response)
+        .map_err(|error| format!("Game-Server-Readiness-Antwort fehlgeschlagen: {error}"))?;
+
+    Ok(is_game_server_ready_response(&response))
+}
+
+/// Returns whether a control API response confirms server readiness.
+fn is_game_server_ready_response(response: &str) -> bool {
+    response
+        .lines()
+        .next()
+        .is_some_and(|status| status.contains(" 200 "))
+}
+
 /// Runs the resolve game asset root step for the desktop game-launcher process system.
 fn resolve_game_asset_root(
     app: &tauri::AppHandle,
@@ -426,5 +535,25 @@ fn localhost_matches_stage(host: &str) -> &'static str {
         "Local"
     } else {
         "Dev"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn uses_a_root_readiness_endpoint() {
+        let endpoint = game_server_ready_endpoint("http://127.0.0.1:6000/api").unwrap();
+
+        assert_eq!(endpoint.as_str(), "http://127.0.0.1:6000/ready");
+    }
+
+    #[test]
+    fn accepts_only_successful_readiness_responses() {
+        assert!(is_game_server_ready_response("HTTP/1.1 200 OK\r\n\r\n{\"ready\":true}"));
+        assert!(!is_game_server_ready_response(
+            "HTTP/1.1 503 Service Unavailable\r\n\r\n{\"ready\":false}"
+        ));
     }
 }

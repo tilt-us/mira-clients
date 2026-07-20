@@ -20,15 +20,11 @@ const HEAL_NUMBER_COLOR: Color = Color::srgb_u8(0x68, 0xff, 0x8d);
 const DAMAGE_NUMBER_SHADOW_COLOR: Color = Color::srgba(0.0, 0.0, 0.0, 0.88);
 const DUMMY_IDLE_HEAL_SECONDS: f32 = 2.0;
 const DUMMY_TOTAL_DAMAGE_IDLE_SECONDS: f32 = 10.0;
-
-/// Description:
 /// Tracks the previously observed health for one target.
 #[derive(Component, Debug, Clone)]
 pub(super) struct DamageNumberHealthTracker {
     previous_health: f32,
 }
-
-/// Description:
 /// Stores animation state for one floating damage number.
 #[derive(Component, Debug, Clone)]
 pub(super) struct DamageNumber {
@@ -40,8 +36,6 @@ pub(super) struct DamageNumber {
     color: Color,
     shadow: bool,
 }
-
-/// Description:
 /// Initializes health trackers for new dummy targets without spawning damage text.
 pub(super) fn initialize_damage_number_health_trackers(
     mut commands: Commands,
@@ -53,8 +47,6 @@ pub(super) fn initialize_damage_number_health_trackers(
         });
     }
 }
-
-/// Description:
 /// Restores idle dummy targets to full health after they have not been hit for a short time.
 pub(super) fn heal_idle_training_dummies(
     time: Res<Time>,
@@ -88,8 +80,6 @@ pub(super) fn heal_idle_training_dummies(
         }
     }
 }
-
-/// Description:
 /// Queues server-authoritative combat numbers on remote player stand-ins.
 pub(super) fn receive_server_combat_number_events(
     mut commands: Commands,
@@ -128,8 +118,6 @@ pub(super) fn receive_server_combat_number_events(
         );
     }
 }
-
-/// Description:
 /// Detects target health changes and spawns floating combat numbers.
 pub(super) fn spawn_damage_numbers_from_dummy_health(
     mut commands: Commands,
@@ -172,8 +160,6 @@ pub(super) fn spawn_damage_numbers_from_dummy_health(
         }
     }
 }
-
-/// Description:
 /// Updates floating damage number hold, fall, fade, and billboard facing.
 pub(super) fn update_damage_numbers(
     time: Res<Time>,
@@ -218,8 +204,6 @@ pub(super) fn update_damage_numbers(
         }
     }
 }
-
-/// Runs the spawn or accumulate combat number step for the floating combat text system.
 fn spawn_or_accumulate_combat_number(
     commands: &mut Commands,
     asset_server: &AssetServer,
@@ -247,8 +231,6 @@ fn spawn_or_accumulate_combat_number(
         kind,
     );
 }
-
-/// Runs the combat number layer offset step for the floating combat text system.
 fn combat_number_layer_offset(kind: TrainingDummyHealthChangeKind) -> Vec3 {
     match kind {
         TrainingDummyHealthChangeKind::AutoAttack => Vec3::ZERO,
@@ -256,8 +238,6 @@ fn combat_number_layer_offset(kind: TrainingDummyHealthChangeKind) -> Vec3 {
         TrainingDummyHealthChangeKind::Heal => Vec3::Y * HEAL_DAMAGE_NUMBER_LAYER_OFFSET,
     }
 }
-
-/// Runs the accumulate combat number step for the floating combat text system.
 fn accumulate_combat_number(
     number_query: &mut Query<(&mut DamageNumber, &mut TextMesh, &mut Transform)>,
     target: Entity,
@@ -285,8 +265,6 @@ fn accumulate_combat_number(
 
     accumulated
 }
-
-/// Runs the spawn combat number step for the floating combat text system.
 fn spawn_combat_number(
     commands: &mut Commands,
     asset_server: &AssetServer,
@@ -344,8 +322,6 @@ fn spawn_combat_number(
         Transform::from_translation(position).with_scale(Vec3::splat(DAMAGE_NUMBER_SCALE)),
     ));
 }
-
-/// Runs the combat number text step for the floating combat text system.
 fn combat_number_text(amount: f32, kind: TrainingDummyHealthChangeKind) -> String {
     match kind {
         TrainingDummyHealthChangeKind::Heal => format!("+{:.0}", amount.ceil()),
@@ -354,8 +330,6 @@ fn combat_number_text(amount: f32, kind: TrainingDummyHealthChangeKind) -> Strin
         }
     }
 }
-
-/// Runs the combat number color step for the floating combat text system.
 fn combat_number_color(kind: TrainingDummyHealthChangeKind) -> Color {
     match kind {
         TrainingDummyHealthChangeKind::AutoAttack => AUTO_ATTACK_DAMAGE_NUMBER_COLOR,
@@ -363,8 +337,6 @@ fn combat_number_color(kind: TrainingDummyHealthChangeKind) -> Color {
         TrainingDummyHealthChangeKind::Heal => HEAL_NUMBER_COLOR,
     }
 }
-
-/// Runs the health change kind step for the floating combat text system.
 fn health_change_kind(kind: NetworkCombatNumberKind) -> TrainingDummyHealthChangeKind {
     match kind {
         NetworkCombatNumberKind::AutoAttack => TrainingDummyHealthChangeKind::AutoAttack,
@@ -372,8 +344,6 @@ fn health_change_kind(kind: NetworkCombatNumberKind) -> TrainingDummyHealthChang
         NetworkCombatNumberKind::Heal => TrainingDummyHealthChangeKind::Heal,
     }
 }
-
-/// Runs the damage number text style step for the floating combat text system.
 fn damage_number_text_style() -> TextMeshStyle {
     TextMeshStyle {
         depth: 0.012,
@@ -382,8 +352,6 @@ fn damage_number_text_style() -> TextMeshStyle {
         justify: JustifyText::Center,
     }
 }
-
-/// Runs the damage number material step for the floating combat text system.
 fn damage_number_material(color: Color) -> StandardMaterial {
     StandardMaterial {
         base_color: color,

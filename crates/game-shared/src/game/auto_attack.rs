@@ -2,20 +2,21 @@ use crate::network::ChampionId;
 
 const MIN_COMBO_LENGTH: usize = 3;
 const DEFAULT_ATTACKS_PER_SECOND: f32 = 1.0;
-const FIRST_COMBO_HIT_DAMAGE: f32 = 6.0;
-const LAST_COMBO_HIT_DAMAGE: f32 = 18.0;
+const CHARACTER_AUTO_ATTACK_DAMAGE_MULTIPLIER: f32 = 1.8;
+const FIRST_COMBO_HIT_BASE_DAMAGE: f32 = 6.0;
+const LAST_COMBO_HIT_BASE_DAMAGE: f32 = 18.0;
+const FIRST_COMBO_HIT_DAMAGE: f32 =
+    FIRST_COMBO_HIT_BASE_DAMAGE * CHARACTER_AUTO_ATTACK_DAMAGE_MULTIPLIER;
+const LAST_COMBO_HIT_DAMAGE: f32 =
+    LAST_COMBO_HIT_BASE_DAMAGE * CHARACTER_AUTO_ATTACK_DAMAGE_MULTIPLIER;
 
 /// Seconds after the last accepted auto attack before the combo starts over.
 pub const AUTO_ATTACK_COMBO_RESET_SECONDS: f32 = 2.0;
 
-/// Description:
+/// Maximum basic-attack distance before accounting for a target's hit radius.
+pub const AUTO_ATTACK_RANGE: f32 = 5.0;
+
 /// Defines champion-specific auto-attack combo tuning shared by client prediction and the server.
-///
-/// Fields:
-/// - `combo_length`: Number of attacks in the champion's repeating combo.
-/// - `attacks_per_second`: Attack speed used to compute the authoritative attack cooldown.
-/// - `first_hit_damage`: Damage dealt by the first combo hit.
-/// - `last_hit_damage`: Damage dealt by the final combo hit.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AutoAttackCombo {
     pub combo_length: usize,
@@ -25,13 +26,11 @@ pub struct AutoAttackCombo {
 }
 
 impl AutoAttackCombo {
-    /// Description:
-    /// Returns the cooldown in seconds between accepted attacks.
+    /// Returns the cooldown between accepted attacks in seconds.
     pub fn cooldown_seconds(self) -> f32 {
         1.0 / self.attacks_per_second.max(f32::EPSILON)
     }
 
-    /// Description:
     /// Returns the damage for one zero-based combo stage.
     pub fn damage_for_stage(self, stage: usize) -> f32 {
         let combo_length = self.combo_length.max(MIN_COMBO_LENGTH);
@@ -45,20 +44,13 @@ impl AutoAttackCombo {
     }
 }
 
-/// Description:
 /// Returns champion-specific auto-attack combo tuning.
-///
-/// Params:
-/// - `champion`: Champion whose combo tuning should be resolved.
-///
-/// Returns:
-/// - Shared auto-attack combo tuning with a minimum combo length of three.
 pub fn auto_attack_combo(champion: ChampionId) -> AutoAttackCombo {
-    let combo_length = match champion.0 {
-        6607 => 3, // Ignara
-        6606 => 4, // Lira
-        6608 => 5, // Yuna
-        6609 => 3, // Sophia
+    let combo_length = match champion {
+        ChampionId::IGNARA => 3,
+        ChampionId::LIRA => 4,
+        ChampionId::YUNA => 5,
+        ChampionId::SOPHIA => 3,
         _ => MIN_COMBO_LENGTH,
     }
     .max(MIN_COMBO_LENGTH);
@@ -75,16 +67,14 @@ pub fn auto_attack_combo(champion: ChampionId) -> AutoAttackCombo {
 mod tests {
     use super::*;
 
-    /// Runs the champion combo lengths match ticket step for the shared auto-attack tuning system.
     #[test]
     fn champion_combo_lengths_match_ticket() {
-        assert_eq!(auto_attack_combo(ChampionId(6607)).combo_length, 3);
-        assert_eq!(auto_attack_combo(ChampionId(6606)).combo_length, 4);
-        assert_eq!(auto_attack_combo(ChampionId(6608)).combo_length, 5);
-        assert_eq!(auto_attack_combo(ChampionId(6609)).combo_length, 3);
+        assert_eq!(auto_attack_combo(ChampionId::IGNARA).combo_length, 3);
+        assert_eq!(auto_attack_combo(ChampionId::LIRA).combo_length, 4);
+        assert_eq!(auto_attack_combo(ChampionId::YUNA).combo_length, 5);
+        assert_eq!(auto_attack_combo(ChampionId::SOPHIA).combo_length, 3);
     }
 
-    /// Runs the unknown champion gets minimum combo length step for the shared auto-attack tuning system.
     #[test]
     fn unknown_champion_gets_minimum_combo_length() {
         assert_eq!(
@@ -93,10 +83,9 @@ mod tests {
         );
     }
 
-    /// Runs the combo damage increases until final hit step for the shared auto-attack tuning system.
     #[test]
     fn combo_damage_increases_until_final_hit() {
-        let combo = auto_attack_combo(ChampionId(6608));
+        let combo = auto_attack_combo(ChampionId::YUNA);
         let damages = (0..combo.combo_length)
             .map(|stage| combo.damage_for_stage(stage))
             .collect::<Vec<_>>();
@@ -106,10 +95,23 @@ mod tests {
         assert_eq!(damages.last().copied(), Some(LAST_COMBO_HIT_DAMAGE));
     }
 
-    /// Runs the attack speed maps to cooldown step for the shared auto-attack tuning system.
+    #[test]
+    fn character_auto_attack_damage_has_eighty_percent_bonus() {
+        let combo = auto_attack_combo(ChampionId::IGNARA);
+
+        assert_eq!(
+            combo.first_hit_damage,
+            FIRST_COMBO_HIT_BASE_DAMAGE * CHARACTER_AUTO_ATTACK_DAMAGE_MULTIPLIER
+        );
+        assert_eq!(
+            combo.last_hit_damage,
+            LAST_COMBO_HIT_BASE_DAMAGE * CHARACTER_AUTO_ATTACK_DAMAGE_MULTIPLIER
+        );
+    }
+
     #[test]
     fn attack_speed_maps_to_cooldown() {
-        let combo = auto_attack_combo(ChampionId(6606));
+        let combo = auto_attack_combo(ChampionId::LIRA);
         assert_eq!(combo.cooldown_seconds(), 1.0);
     }
 }

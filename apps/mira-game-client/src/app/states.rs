@@ -1,9 +1,6 @@
 use bevy::prelude::*;
-
-/// Description:
 /// Defines the high-level lifecycle state of the playable client app.
 ///
-/// Fields:
 /// - `Boot`: Initial state before loading begins.
 /// - `Loading`: State used while assets and content are being prepared.
 /// - `MainMenu`: State used by the future menu flow.

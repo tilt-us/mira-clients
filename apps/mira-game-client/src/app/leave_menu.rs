@@ -5,12 +5,17 @@ use bevy::prelude::*;
 use bevy::window::WindowCloseRequested;
 use game_shared::network::{ClientLeave, ReliableCommandChannel};
 use lightyear::prelude::*;
+use std::time::Duration;
 
+const LEAVE_NOTIFICATION_GRACE_PERIOD: Duration = Duration::from_millis(120);
+const LEAVE_MENU_Z_INDEX: i32 = 9_500;
+
+/// Registers the in-game leave confirmation menu.
 pub struct LeaveMenuPlugin;
 
 #[derive(Resource, Debug, Default)]
 struct LeaveMenuState {
-    exit_timer: Option<Timer>,
+    exit_grace_timer: Option<Timer>,
     open: bool,
 }
 
@@ -56,7 +61,7 @@ fn spawn_leave_menu(mut commands: Commands) {
                 ..default()
             },
             BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.58)),
-            ZIndex(9500),
+            ZIndex(LEAVE_MENU_Z_INDEX),
         ))
         .with_children(|root| {
             root.spawn((
@@ -184,7 +189,8 @@ fn handle_leave_menu_buttons(
             LeaveMenuAction::Leave => {
                 send_client_leave(&mut senders);
                 state.open = false;
-                state.exit_timer = Some(Timer::from_seconds(0.12, TimerMode::Once));
+                state.exit_grace_timer =
+                    Some(Timer::new(LEAVE_NOTIFICATION_GRACE_PERIOD, TimerMode::Once));
             }
             LeaveMenuAction::Stay => {
                 state.open = false;
@@ -198,12 +204,12 @@ fn finish_leave_after_grace(
     mut state: ResMut<LeaveMenuState>,
     mut app_exit: MessageWriter<AppExit>,
 ) {
-    let Some(timer) = state.exit_timer.as_mut() else {
+    let Some(timer) = state.exit_grace_timer.as_mut() else {
         return;
     };
 
     if timer.tick(time.delta()).just_finished() {
-        state.exit_timer = None;
+        state.exit_grace_timer = None;
         app_exit.write(AppExit::Success);
     }
 }

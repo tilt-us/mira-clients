@@ -1,6 +1,12 @@
+use super::common::{
+    cursor_hit_on_map, horizontal_distance, indicator_material, positive_or, ready_timer,
+    ready_timer_percent, remaining_timer_seconds, send_ability_command, timer_progress,
+    total_timer_seconds,
+};
+use crate::systems::lane::RemoteLaneUnit;
 use crate::systems::{
     CurrentChampionVisual, TrainingDummy, TrainingDummyHealthChangeKind,
-    targeting::{clamp_world_point_to_map_top, ray_hit_map_top},
+    targeting::clamp_world_point_to_map_top,
 };
 use bevy::ecs::query::QueryFilter;
 use bevy::math::primitives::{Cone, Cylinder, Sphere};
@@ -13,12 +19,9 @@ use game_shared::game::{
     team::Team,
 };
 use game_shared::network::{
-    AbilitySlot, AbilityVisualEvent, AbilityVisualTuning, CastTarget, ChampionId, PlayerCommand,
-    ReliableCommandChannel, WorldPosition,
+    AbilitySlot, AbilityVisualEvent, AbilityVisualTuning, ChampionId, PlayerCommand,
 };
 use lightyear::prelude::*;
-
-const SOPHIA_CHAMPION_ID: ChampionId = ChampionId(6609);
 
 const Q_COOLDOWN_SECONDS: f32 = 6.0;
 const Q_RANGE: f32 = 8.0;
@@ -87,7 +90,6 @@ impl Default for SophiaWSettings {
 }
 
 impl SophiaWSettings {
-    /// Runs the from visual step for the Sophia ability system.
     fn from_visual(visual: AbilityVisualTuning, fallback: Self) -> Self {
         Self {
             minion_count: if visual.missile_count > 0 {
@@ -167,79 +169,56 @@ impl Default for SophiaECastState {
 }
 
 impl SophiaQCastState {
-    /// Runs the ready step for the Sophia ability system.
     pub(in crate::systems) fn ready(cooldown_seconds: f32) -> Self {
         Self {
             cooldown: ready_timer(cooldown_seconds),
         }
     }
-
-    /// Runs the remaining seconds step for the Sophia ability system.
     pub(in crate::systems) fn remaining_seconds(&self) -> f32 {
         remaining_timer_seconds(&self.cooldown)
     }
-
-    /// Runs the total seconds step for the Sophia ability system.
     pub(in crate::systems) fn total_seconds(&self) -> f32 {
         total_timer_seconds(&self.cooldown)
     }
-
-    /// Runs the ready percent step for the Sophia ability system.
     pub(in crate::systems) fn ready_percent(&self) -> f32 {
         ready_timer_percent(&self.cooldown)
     }
 }
 
 impl SophiaWCastState {
-    /// Runs the ready step for the Sophia ability system.
     pub(in crate::systems) fn ready(cooldown_seconds: f32) -> Self {
         Self {
             cooldown: ready_timer(cooldown_seconds),
         }
     }
-
-    /// Runs the remaining seconds step for the Sophia ability system.
     pub(in crate::systems) fn remaining_seconds(&self) -> f32 {
         remaining_timer_seconds(&self.cooldown)
     }
-
-    /// Runs the total seconds step for the Sophia ability system.
     pub(in crate::systems) fn total_seconds(&self) -> f32 {
         total_timer_seconds(&self.cooldown)
     }
-
-    /// Runs the ready percent step for the Sophia ability system.
     pub(in crate::systems) fn ready_percent(&self) -> f32 {
         ready_timer_percent(&self.cooldown)
     }
 }
 
 impl SophiaECastState {
-    /// Runs the ready step for the Sophia ability system.
     pub(in crate::systems) fn ready(cooldown_seconds: f32) -> Self {
         Self {
             cooldown: ready_timer(cooldown_seconds),
-            buff: expired_timer(E_BUFF_SECONDS),
-            speed: expired_timer(E_SPEED_SECONDS),
+            buff: ready_timer(E_BUFF_SECONDS),
+            speed: ready_timer(E_SPEED_SECONDS),
         }
     }
-
-    /// Runs the remaining seconds step for the Sophia ability system.
     pub(in crate::systems) fn remaining_seconds(&self) -> f32 {
         remaining_timer_seconds(&self.cooldown)
     }
-
-    /// Runs the total seconds step for the Sophia ability system.
     pub(in crate::systems) fn total_seconds(&self) -> f32 {
         total_timer_seconds(&self.cooldown)
     }
-
-    /// Runs the ready percent step for the Sophia ability system.
     pub(in crate::systems) fn ready_percent(&self) -> f32 {
         ready_timer_percent(&self.cooldown)
     }
-
-    /// Runs the consume damage amp step for the Sophia ability system.
     fn consume_damage_amp(&mut self, multiplier: f32) -> f32 {
         if !self.buff.is_finished() {
             self.buff.set_elapsed(self.buff.duration());
@@ -293,8 +272,6 @@ pub(in crate::systems) struct SophiaWIndicator;
 /// Stores Sophia EIndicator data used by the Sophia ability system.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(in crate::systems) struct SophiaEIndicator;
-
-/// Runs the spawn sophia indicators step for the Sophia ability system.
 pub(in crate::systems) fn spawn_sophia_indicators(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -351,8 +328,6 @@ pub(in crate::systems) fn spawn_sophia_indicators(
         Visibility::Hidden,
     ));
 }
-
-/// Runs the cast q orb on left click step for the Sophia ability system.
 pub(in crate::systems) fn cast_q_orb_on_left_click(
     time: Res<Time>,
     mouse_buttons: Res<ButtonInput<MouseButton>>,
@@ -382,7 +357,7 @@ pub(in crate::systems) fn cast_q_orb_on_left_click(
     let Ok((player_transform, health, visual)) = player_query.single() else {
         return;
     };
-    if health.current == 0 || visual.champion != Some(SOPHIA_CHAMPION_ID) {
+    if health.current == 0 || visual.champion != Some(ChampionId::SOPHIA) {
         return;
     }
 
@@ -417,13 +392,12 @@ pub(in crate::systems) fn cast_q_orb_on_left_click(
     );
     send_ability_command(
         &mut command_senders,
+        ChampionId::SOPHIA,
         AbilitySlot::Q,
         Some(target_transform.translation),
     );
     q_state.cooldown.reset();
 }
-
-/// Runs the cast w minions step for the Sophia ability system.
 pub(in crate::systems) fn cast_w_minions(
     time: Res<Time>,
     keyboard: Res<ButtonInput<KeyCode>>,
@@ -448,7 +422,7 @@ pub(in crate::systems) fn cast_w_minions(
     let Ok((player_entity, player, transform, health, visual)) = player_query.single() else {
         return;
     };
-    if health.current == 0 || visual.champion != Some(SOPHIA_CHAMPION_ID) {
+    if health.current == 0 || visual.champion != Some(ChampionId::SOPHIA) {
         return;
     }
 
@@ -462,11 +436,14 @@ pub(in crate::systems) fn cast_w_minions(
         Some(player.id.0),
         *settings,
     );
-    send_ability_command(&mut command_senders, AbilitySlot::W, None);
+    send_ability_command(
+        &mut command_senders,
+        ChampionId::SOPHIA,
+        AbilitySlot::W,
+        None,
+    );
     w_state.cooldown.reset();
 }
-
-/// Runs the cast e self buff step for the Sophia ability system.
 pub(in crate::systems) fn cast_e_self_buff(
     time: Res<Time>,
     keyboard: Res<ButtonInput<KeyCode>>,
@@ -488,7 +465,7 @@ pub(in crate::systems) fn cast_e_self_buff(
     let Ok((transform, health, visual)) = player_query.single() else {
         return;
     };
-    if health.current == 0 || visual.champion != Some(SOPHIA_CHAMPION_ID) {
+    if health.current == 0 || visual.champion != Some(ChampionId::SOPHIA) {
         return;
     }
 
@@ -503,10 +480,13 @@ pub(in crate::systems) fn cast_e_self_buff(
         transform.translation,
         settings.buff_seconds,
     );
-    send_ability_command(&mut command_senders, AbilitySlot::E, None);
+    send_ability_command(
+        &mut command_senders,
+        ChampionId::SOPHIA,
+        AbilitySlot::E,
+        None,
+    );
 }
-
-/// Runs the update sophia indicators step for the Sophia ability system.
 pub(in crate::systems) fn update_sophia_indicators(
     keyboard: Res<ButtonInput<KeyCode>>,
     windows: Query<&Window, With<PrimaryWindow>>,
@@ -557,7 +537,7 @@ pub(in crate::systems) fn update_sophia_indicators(
     let Ok((player_transform, visual)) = player_query.single() else {
         return;
     };
-    if visual.champion != Some(SOPHIA_CHAMPION_ID) {
+    if visual.champion != Some(ChampionId::SOPHIA) {
         return;
     }
 
@@ -616,8 +596,6 @@ pub(in crate::systems) fn update_sophia_indicators(
         }
     }
 }
-
-/// Runs the update q orbs step for the Sophia ability system.
 pub(in crate::systems) fn update_q_orbs(
     time: Res<Time>,
     mut commands: Commands,
@@ -676,12 +654,20 @@ pub(in crate::systems) fn update_q_orbs(
         }
     }
 }
-
-/// Runs the update minions step for the Sophia ability system.
 pub(in crate::systems) fn update_minions(
     time: Res<Time>,
     mut commands: Commands,
-    player_query: Query<(Entity, &Player, &Team, &Health, &Transform), Without<SophiaMinion>>,
+    target_query: Query<
+        (
+            Entity,
+            Option<&Player>,
+            &Team,
+            &Health,
+            &Transform,
+            Option<&RemoteLaneUnit>,
+        ),
+        Without<SophiaMinion>,
+    >,
     mut query: Query<(Entity, &mut SophiaMinion, &mut Transform)>,
 ) {
     for (entity, mut minion, mut transform) in &mut query {
@@ -693,7 +679,7 @@ pub(in crate::systems) fn update_minions(
 
         if minion.target.is_none() {
             let desired =
-                minion_follow_position(&minion, &player_query).unwrap_or(transform.translation);
+                minion_follow_position(&minion, &target_query).unwrap_or(transform.translation);
             let to_desired = desired - transform.translation;
             let distance = to_desired.length();
             if distance > 0.02 {
@@ -704,26 +690,44 @@ pub(in crate::systems) fn update_minions(
                 transform.translation,
                 minion.settings.search_radius,
                 minion.caster_player_id,
-                &player_query,
+                &target_query,
             );
         }
 
         if let Some(target) = minion.target {
-            let Ok((_, _, _, health, target_transform)) = player_query.get(target) else {
+            let Ok((_, target_player, _, health, target_transform, lane_unit)) =
+                target_query.get(target)
+            else {
                 minion.target = None;
                 continue;
             };
-            if health.current == 0 {
+            if health.current == 0 || !is_sophia_spell_target(target_player, lane_unit) {
                 minion.target = None;
                 continue;
             }
 
-            let target_back = target_transform.translation
-                - (target_transform.rotation * Vec3::Z) * 0.75
-                + Vec3::Y * 0.35;
-            let to_target = target_back - transform.translation;
+            let (target_position, target_radius) = match (target_player, lane_unit) {
+                (Some(_), _) => (
+                    target_transform.translation - (target_transform.rotation * Vec3::Z) * 0.75
+                        + Vec3::Y * 0.35,
+                    0.9,
+                ),
+                (None, Some(lane_unit)) => (
+                    Vec3::new(
+                        target_transform.translation.x,
+                        transform.translation.y,
+                        target_transform.translation.z,
+                    ),
+                    lane_unit.spell_target_radius(),
+                ),
+                (None, None) => {
+                    minion.target = None;
+                    continue;
+                }
+            };
+            let to_target = target_position - transform.translation;
             let distance = to_target.length();
-            if distance <= minion.settings.minion_radius + 0.9 {
+            if distance <= minion.settings.minion_radius + target_radius {
                 commands.entity(entity).despawn();
                 continue;
             }
@@ -734,8 +738,6 @@ pub(in crate::systems) fn update_minions(
         }
     }
 }
-
-/// Runs the update buff arrows step for the Sophia ability system.
 pub(in crate::systems) fn update_buff_arrows(
     time: Res<Time>,
     mut commands: Commands,
@@ -769,73 +771,76 @@ pub(in crate::systems) fn update_buff_arrows(
         }
     }
 }
-
-/// Runs the spawn remote ability visual step for the Sophia ability system.
 pub(in crate::systems) fn spawn_remote_ability_visual(
     event: AbilityVisualEvent,
     q_settings: &SophiaQSettings,
     w_settings: &SophiaWSettings,
     e_settings: &SophiaESettings,
-    remote_players: &Query<(Entity, &Player, &Transform), Without<PlayerControlled>>,
+    target_query: &Query<(
+        Entity,
+        Option<&Player>,
+        &Team,
+        &Health,
+        &Transform,
+        Option<&RemoteLaneUnit>,
+    )>,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
     commands: &mut Commands,
 ) {
-    if event.champion != SOPHIA_CHAMPION_ID {
+    if event.champion != ChampionId::SOPHIA {
         return;
     }
 
-    let owner = remote_players
-        .iter()
-        .find(|(_, player, _)| player.id.0 == event.caster_player_id);
+    let owner = target_query.iter().find(|(_, player, _, _, _, _)| {
+        player.is_some_and(|player| player.id.0 == event.caster_player_id)
+    });
 
     match event.slot {
         AbilitySlot::Q => {
             let Some(end) = event.end else {
                 return;
             };
-            let target_player_id = remote_players
-                .iter()
-                .find(|(_, _, transform)| {
-                    horizontal_distance(transform.translation, Vec3::from(end)) <= 1.5
-                })
-                .map(|(_, player, _)| player.id.0);
+            let target = find_remote_spell_target(
+                Vec3::from(end),
+                event.caster_player_id,
+                q_settings.target_radius,
+                target_query,
+            );
             spawn_q_orb(
                 commands,
                 meshes,
                 materials,
                 Vec3::from(end),
+                target,
                 None,
-                target_player_id,
                 *q_settings,
                 1.0,
             );
         }
         AbilitySlot::W => {
             let origin = owner
-                .map(|(_, _, transform)| transform.translation)
+                .map(|(_, _, _, _, transform, _)| transform.translation)
                 .unwrap_or_else(|| Vec3::from(event.start));
             spawn_minions(
                 commands,
                 meshes,
                 materials,
                 origin,
-                owner.map(|(entity, _, _)| entity),
+                owner.map(|(entity, _, _, _, _, _)| entity),
                 Some(event.caster_player_id),
                 SophiaWSettings::from_visual(event.visual, *w_settings),
             );
         }
         AbilitySlot::E => {
             let origin = owner
-                .map(|(_, _, transform)| transform.translation)
+                .map(|(_, _, _, _, transform, _)| transform.translation)
                 .unwrap_or_else(|| Vec3::from(event.start));
             spawn_buff_arrow(commands, meshes, materials, origin, e_settings.buff_seconds);
         }
         AbilitySlot::R => {}
     }
 }
-
-/// Runs the spawn q orb step for the Sophia ability system.
 fn spawn_q_orb(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -869,8 +874,6 @@ fn spawn_q_orb(
             .with_scale(Vec3::splat(settings.orb_radius)),
     ));
 }
-
-/// Runs the spawn minions step for the Sophia ability system.
 fn spawn_minions(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -910,8 +913,6 @@ fn spawn_minions(
         ));
     }
 }
-
-/// Runs the spawn buff arrow step for the Sophia ability system.
 fn spawn_buff_arrow(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -937,37 +938,36 @@ fn spawn_buff_arrow(
             .with_rotation(Quat::from_rotation_x(std::f32::consts::PI)),
     ));
 }
-
-/// Runs the indicator material step for the Sophia ability system.
-fn indicator_material(base_color: Color, emissive: Color) -> StandardMaterial {
-    StandardMaterial {
-        base_color,
-        emissive: emissive.into(),
-        alpha_mode: AlphaMode::Blend,
-        unlit: true,
-        ..default()
-    }
-}
-
-/// Runs the minion follow position step for the Sophia ability system.
 fn minion_follow_position(
     minion: &SophiaMinion,
-    player_query: &Query<(Entity, &Player, &Team, &Health, &Transform), Without<SophiaMinion>>,
+    target_query: &Query<
+        (
+            Entity,
+            Option<&Player>,
+            &Team,
+            &Health,
+            &Transform,
+            Option<&RemoteLaneUnit>,
+        ),
+        Without<SophiaMinion>,
+    >,
 ) -> Option<Vec3> {
     let owner_transform = minion
         .owner
         .and_then(|owner| {
-            player_query
+            target_query
                 .get(owner)
                 .ok()
-                .map(|(_, _, _, _, transform)| transform)
+                .and_then(|(_, player, _, _, transform, _)| player.map(|_| transform))
         })
         .or_else(|| {
             minion.caster_player_id.and_then(|caster_player_id| {
-                player_query
+                target_query
                     .iter()
-                    .find(|(_, player, _, _, _)| player.id.0 == caster_player_id)
-                    .map(|(_, _, _, _, transform)| transform)
+                    .find(|(_, player, _, _, _, _)| {
+                        player.is_some_and(|player| player.id.0 == caster_player_id)
+                    })
+                    .map(|(_, _, _, _, transform, _)| transform)
             })
         })?;
 
@@ -981,111 +981,89 @@ fn minion_follow_position(
 
     Some(owner_transform.translation - forward * 1.05 + right * side_offset + Vec3::Y * 0.35)
 }
-
-/// Runs the find minion target step for the Sophia ability system.
 fn find_minion_target(
     position: Vec3,
     radius: f32,
     caster_player_id: Option<u64>,
-    player_query: &Query<(Entity, &Player, &Team, &Health, &Transform), Without<SophiaMinion>>,
+    target_query: &Query<
+        (
+            Entity,
+            Option<&Player>,
+            &Team,
+            &Health,
+            &Transform,
+            Option<&RemoteLaneUnit>,
+        ),
+        Without<SophiaMinion>,
+    >,
 ) -> Option<Entity> {
     let caster_player_id = caster_player_id?;
-    let caster_team = player_query
+    let caster_team = target_query
         .iter()
-        .find(|(_, player, _, _, _)| player.id.0 == caster_player_id)
-        .map(|(_, _, team, _, _)| team.0)?;
+        .find(|(_, player, _, _, _, _)| {
+            player.is_some_and(|player| player.id.0 == caster_player_id)
+        })
+        .map(|(_, _, team, _, _, _)| team.0)?;
 
-    player_query
+    target_query
         .iter()
-        .filter(|(_, player, team, health, transform)| {
-            player.id.0 != caster_player_id
+        .filter(|(_, player, team, health, transform, lane_unit)| {
+            player.is_none_or(|player| player.id.0 != caster_player_id)
                 && team.0 != caster_team
                 && health.current > 0
+                && is_sophia_spell_target(*player, *lane_unit)
                 && horizontal_distance(position, transform.translation) <= radius
         })
-        .min_by(|(_, _, _, _, left), (_, _, _, _, right)| {
+        .min_by(|(_, _, _, _, left, _), (_, _, _, _, right, _)| {
             horizontal_distance(position, left.translation)
                 .partial_cmp(&horizontal_distance(position, right.translation))
                 .unwrap_or(std::cmp::Ordering::Equal)
         })
-        .map(|(entity, _, _, _, _)| entity)
+        .map(|(entity, _, _, _, _, _)| entity)
 }
 
-/// Runs the ready timer step for the Sophia ability system.
-fn ready_timer(cooldown_seconds: f32) -> Timer {
-    let mut timer = Timer::from_seconds(cooldown_seconds.max(f32::EPSILON), TimerMode::Once);
-    timer.set_elapsed(timer.duration());
-    timer
-}
-
-/// Runs the expired timer step for the Sophia ability system.
-fn expired_timer(seconds: f32) -> Timer {
-    let mut timer = Timer::from_seconds(seconds.max(f32::EPSILON), TimerMode::Once);
-    timer.set_elapsed(timer.duration());
-    timer
-}
-
-/// Runs the total timer seconds step for the Sophia ability system.
-fn total_timer_seconds(timer: &Timer) -> f32 {
-    timer.duration().as_secs_f32().max(f32::EPSILON)
-}
-
-/// Runs the remaining timer seconds step for the Sophia ability system.
-fn remaining_timer_seconds(timer: &Timer) -> f32 {
-    (total_timer_seconds(timer) - timer.elapsed().as_secs_f32()).max(0.0)
-}
-
-/// Runs the ready timer percent step for the Sophia ability system.
-fn ready_timer_percent(timer: &Timer) -> f32 {
-    let total = total_timer_seconds(timer);
-    ((total - remaining_timer_seconds(timer)) / total * 100.0).clamp(0.0, 100.0)
-}
-
-/// Runs the timer progress step for the Sophia ability system.
-fn timer_progress(timer: &Timer) -> f32 {
-    (timer.elapsed_secs() / timer.duration().as_secs_f32().max(f32::EPSILON)).clamp(0.0, 1.0)
-}
-
-/// Runs the send ability command step for the Sophia ability system.
-fn send_ability_command(
-    senders: &mut Query<&mut MessageSender<PlayerCommand>, With<Client>>,
-    slot: AbilitySlot,
-    target_position: Option<Vec3>,
-) {
-    for mut sender in senders {
-        sender.send::<ReliableCommandChannel>(PlayerCommand::CastAbility {
-            champion: SOPHIA_CHAMPION_ID,
-            slot,
-            target: CastTarget {
-                position: target_position.map(WorldPosition::from),
-            },
-        });
-    }
-}
-
-/// Runs the cursor hit on map step for the Sophia ability system.
-fn cursor_hit_on_map(
-    windows: &Query<&Window, With<PrimaryWindow>>,
-    camera_query: &Query<(&Camera, &GlobalTransform), With<TopDownCamera>>,
-    map_transform: &GlobalTransform,
-    map_ground: MapGround,
-) -> Option<Vec3> {
-    windows
-        .single()
-        .ok()
-        .and_then(|window| window.cursor_position())
-        .and_then(|cursor| {
-            camera_query
-                .single()
-                .ok()
-                .and_then(|(camera, camera_transform)| {
-                    camera.viewport_to_world(camera_transform, cursor).ok()
-                })
+/// Finds a visible enemy player or lane minion at a remote Sophia Q impact point.
+fn find_remote_spell_target(
+    position: Vec3,
+    caster_player_id: u64,
+    radius: f32,
+    target_query: &Query<(
+        Entity,
+        Option<&Player>,
+        &Team,
+        &Health,
+        &Transform,
+        Option<&RemoteLaneUnit>,
+    )>,
+) -> Option<Entity> {
+    let caster_team = target_query
+        .iter()
+        .find(|(_, player, _, _, _, _)| {
+            player.is_some_and(|player| player.id.0 == caster_player_id)
         })
-        .and_then(|ray| ray_hit_map_top(ray, map_transform, map_ground))
+        .map(|(_, _, team, _, _, _)| team.0)?;
+
+    target_query
+        .iter()
+        .filter(|(_, player, team, health, transform, lane_unit)| {
+            player.is_none_or(|player| player.id.0 != caster_player_id)
+                && team.0 != caster_team
+                && health.current > 0
+                && is_sophia_spell_target(*player, *lane_unit)
+                && horizontal_distance(position, transform.translation) <= radius
+        })
+        .min_by(|(_, _, _, _, left, _), (_, _, _, _, right, _)| {
+            horizontal_distance(position, left.translation)
+                .partial_cmp(&horizontal_distance(position, right.translation))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .map(|(entity, _, _, _, _, _)| entity)
 }
 
-/// Runs the find clicked enemy target step for the Sophia ability system.
+/// Returns whether a visual entity can receive Sophia's spell effects.
+fn is_sophia_spell_target(player: Option<&Player>, lane_unit: Option<&RemoteLaneUnit>) -> bool {
+    player.is_some() || lane_unit.is_some_and(RemoteLaneUnit::is_spell_target)
+}
 fn find_clicked_enemy_target<'a, F>(
     cursor_hit: Vec3,
     enemy_query: &'a Query<(Entity, &TrainingDummy, &Transform), F>,
@@ -1104,18 +1082,4 @@ where
                 .partial_cmp(&horizontal_distance(cursor_hit, right.translation))
                 .unwrap_or(std::cmp::Ordering::Equal)
         })
-}
-
-/// Runs the horizontal distance step for the Sophia ability system.
-fn horizontal_distance(a: Vec3, b: Vec3) -> f32 {
-    Vec2::new(a.x - b.x, a.z - b.z).length()
-}
-
-/// Runs the positive or step for the Sophia ability system.
-fn positive_or(candidate: f32, fallback: f32) -> f32 {
-    if candidate.is_finite() && candidate > 0.0 {
-        candidate
-    } else {
-        fallback
-    }
 }

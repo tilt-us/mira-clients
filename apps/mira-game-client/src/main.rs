@@ -1,7 +1,5 @@
 use std::env;
 use std::process::ExitCode;
-
-/// Description:
 /// Starts the playable client app.
 fn main() -> ExitCode {
     let (launch_settings, network_settings) =

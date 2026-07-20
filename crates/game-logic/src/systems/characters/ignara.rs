@@ -1,8 +1,11 @@
-use crate::systems::{
-    CurrentChampionVisual, TrainingDummy,
-    targeting::{clamp_world_point_to_map_top, ray_hit_map_top},
+use super::common::{
+    clamp_cast_target, cursor_hit_on_map, find_clicked_enemy_target, horizontal_distance,
+    ready_timer, ready_timer_percent, remaining_timer_seconds, send_ability_command,
+    total_timer_seconds,
 };
-use bevy::ecs::query::QueryFilter;
+use crate::systems::{
+    CurrentChampionVisual, TrainingDummy, targeting::clamp_world_point_to_map_top,
+};
 use bevy::math::primitives::{Cuboid, Cylinder, Sphere};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
@@ -11,13 +14,8 @@ use game_shared::game::{
     map::MapGround,
     player::{Health, Player, PlayerControlled},
 };
-use game_shared::network::{
-    AbilitySlot, AbilityVisualEvent, CastTarget, ChampionId, PlayerCommand, ReliableCommandChannel,
-    WorldPosition,
-};
+use game_shared::network::{AbilitySlot, AbilityVisualEvent, ChampionId, PlayerCommand};
 use lightyear::prelude::*;
-
-const IGNARA_CHAMPION_ID: ChampionId = ChampionId(6607);
 
 const Q_COOLDOWN_SECONDS: f32 = 7.0;
 const Q_WIDTH: f32 = 3.0;
@@ -44,8 +42,6 @@ const E_MEDIUM_DAMAGE_MIN: f32 = 100.0;
 const E_MEDIUM_DAMAGE_MAX: f32 = 135.0;
 const E_LARGE_DAMAGE_MIN: f32 = 140.0;
 const E_LARGE_DAMAGE_MAX: f32 = 220.0;
-
-/// Description:
 /// Stores local visual and cast tuning for Ignara's Q burning ground.
 #[derive(Resource, Debug, Clone, Copy)]
 pub(in crate::systems) struct IgnaraQSettings {
@@ -64,8 +60,6 @@ impl Default for IgnaraQSettings {
         }
     }
 }
-
-/// Description:
 /// Stores local visual and cast tuning for Ignara's W fireball.
 #[derive(Resource, Debug, Clone, Copy)]
 pub(in crate::systems) struct IgnaraWSettings {
@@ -84,8 +78,6 @@ impl Default for IgnaraWSettings {
         }
     }
 }
-
-/// Description:
 /// Stores local visual and cast tuning for Ignara's E growing snowball.
 #[derive(Resource, Debug, Clone, Copy)]
 pub(in crate::systems) struct IgnaraESettings {
@@ -104,22 +96,16 @@ impl Default for IgnaraESettings {
         }
     }
 }
-
-/// Description:
 /// Stores cooldown state for Ignara's Q ability.
 #[derive(Resource, Debug, Clone)]
 pub(in crate::systems) struct IgnaraQCastState {
     cooldown: Timer,
 }
-
-/// Description:
 /// Stores cooldown state for Ignara's W ability.
 #[derive(Resource, Debug, Clone)]
 pub(in crate::systems) struct IgnaraWCastState {
     cooldown: Timer,
 }
-
-/// Description:
 /// Stores cooldown state for Ignara's E ability.
 #[derive(Resource, Debug, Clone)]
 pub(in crate::systems) struct IgnaraECastState {
@@ -148,26 +134,19 @@ impl Default for IgnaraECastState {
 }
 
 impl IgnaraQCastState {
-    /// Runs the ready step for the Ignara ability system.
     pub(in crate::systems) fn ready(cooldown_seconds: f32) -> Self {
         Self {
             cooldown: ready_timer(cooldown_seconds),
         }
     }
-
-    /// Description:
     /// Returns the remaining Q cooldown duration.
     pub(in crate::systems) fn remaining_seconds(&self) -> f32 {
         remaining_timer_seconds(&self.cooldown)
     }
-
-    /// Description:
     /// Returns the total Q cooldown duration.
     pub(in crate::systems) fn total_seconds(&self) -> f32 {
         total_timer_seconds(&self.cooldown)
     }
-
-    /// Description:
     /// Returns how ready Q is as a percentage.
     pub(in crate::systems) fn ready_percent(&self) -> f32 {
         ready_timer_percent(&self.cooldown)
@@ -175,26 +154,19 @@ impl IgnaraQCastState {
 }
 
 impl IgnaraWCastState {
-    /// Runs the ready step for the Ignara ability system.
     pub(in crate::systems) fn ready(cooldown_seconds: f32) -> Self {
         Self {
             cooldown: ready_timer(cooldown_seconds),
         }
     }
-
-    /// Description:
     /// Returns the remaining W cooldown duration.
     pub(in crate::systems) fn remaining_seconds(&self) -> f32 {
         remaining_timer_seconds(&self.cooldown)
     }
-
-    /// Description:
     /// Returns the total W cooldown duration.
     pub(in crate::systems) fn total_seconds(&self) -> f32 {
         total_timer_seconds(&self.cooldown)
     }
-
-    /// Description:
     /// Returns how ready W is as a percentage.
     pub(in crate::systems) fn ready_percent(&self) -> f32 {
         ready_timer_percent(&self.cooldown)
@@ -202,33 +174,24 @@ impl IgnaraWCastState {
 }
 
 impl IgnaraECastState {
-    /// Runs the ready step for the Ignara ability system.
     pub(in crate::systems) fn ready(cooldown_seconds: f32) -> Self {
         Self {
             cooldown: ready_timer(cooldown_seconds),
         }
     }
-
-    /// Description:
     /// Returns the remaining E cooldown duration.
     pub(in crate::systems) fn remaining_seconds(&self) -> f32 {
         remaining_timer_seconds(&self.cooldown)
     }
-
-    /// Description:
     /// Returns the total E cooldown duration.
     pub(in crate::systems) fn total_seconds(&self) -> f32 {
         total_timer_seconds(&self.cooldown)
     }
-
-    /// Description:
     /// Returns how ready E is as a percentage.
     pub(in crate::systems) fn ready_percent(&self) -> f32 {
         ready_timer_percent(&self.cooldown)
     }
 }
-
-/// Description:
 /// Stores runtime visual state for Ignara's pulsing Q burning ground.
 #[derive(Component, Debug, Clone)]
 pub(in crate::systems) struct IgnaraQBurningGround {
@@ -236,8 +199,6 @@ pub(in crate::systems) struct IgnaraQBurningGround {
     width: f32,
     length: f32,
 }
-
-/// Description:
 /// Stores runtime visual state for Ignara's W fireball projectile.
 #[derive(Component, Debug, Clone)]
 pub(in crate::systems) struct IgnaraWFireball {
@@ -245,8 +206,6 @@ pub(in crate::systems) struct IgnaraWFireball {
     end: Vec3,
     timer: Timer,
 }
-
-/// Description:
 /// Stores runtime visual state for Ignara's E growing snowball projectile.
 #[derive(Component, Debug, Clone)]
 pub(in crate::systems) struct IgnaraESnowball {
@@ -255,28 +214,18 @@ pub(in crate::systems) struct IgnaraESnowball {
     timer: Timer,
     width: f32,
 }
-
-/// Description:
 /// Marks Ignara's rectangular Q cast preview.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(in crate::systems) struct IgnaraQIndicator;
-
-/// Description:
 /// Marks Ignara's W cast range preview.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(in crate::systems) struct IgnaraWRangeIndicator;
-
-/// Description:
 /// Marks Ignara's W target hover preview.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(in crate::systems) struct IgnaraWTargetIndicator;
-
-/// Description:
 /// Marks Ignara's rectangular E cast preview.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(in crate::systems) struct IgnaraEIndicator;
-
-/// Description:
 /// Spawns Ignara-only prediction indicators.
 pub(in crate::systems) fn spawn_ignara_indicators(
     mut commands: Commands,
@@ -348,8 +297,6 @@ pub(in crate::systems) fn spawn_ignara_indicators(
         Visibility::Hidden,
     ));
 }
-
-/// Description:
 /// Casts Ignara Q as a rectangular burning ground in the aimed direction.
 pub(in crate::systems) fn cast_q_burning_ground(
     time: Res<Time>,
@@ -378,7 +325,7 @@ pub(in crate::systems) fn cast_q_burning_ground(
     let Ok((player_transform, health, visual)) = player_query.single() else {
         return;
     };
-    if health.current == 0 || visual.champion != Some(IGNARA_CHAMPION_ID) {
+    if health.current == 0 || visual.champion != Some(ChampionId::IGNARA) {
         return;
     }
 
@@ -403,11 +350,14 @@ pub(in crate::systems) fn cast_q_burning_ground(
         end_ground,
         *settings,
     );
-    send_ability_command(&mut command_senders, AbilitySlot::Q, Some(end_ground));
+    send_ability_command(
+        &mut command_senders,
+        ChampionId::IGNARA,
+        AbilitySlot::Q,
+        Some(end_ground),
+    );
     cast_state.cooldown.reset();
 }
-
-/// Description:
 /// Casts Ignara W as a point-click fireball toward the clicked position.
 pub(in crate::systems) fn cast_w_fireball(
     time: Res<Time>,
@@ -437,7 +387,7 @@ pub(in crate::systems) fn cast_w_fireball(
     let Ok((player_transform, health, visual)) = player_query.single() else {
         return;
     };
-    if health.current == 0 || visual.champion != Some(IGNARA_CHAMPION_ID) {
+    if health.current == 0 || visual.champion != Some(ChampionId::IGNARA) {
         return;
     }
     let Ok((map_transform, map_ground)) = map_query.single() else {
@@ -471,11 +421,14 @@ pub(in crate::systems) fn cast_w_fireball(
         end,
         *settings,
     );
-    send_ability_command(&mut command_senders, AbilitySlot::W, Some(target_ground));
+    send_ability_command(
+        &mut command_senders,
+        ChampionId::IGNARA,
+        AbilitySlot::W,
+        Some(target_ground),
+    );
     cast_state.cooldown.reset();
 }
-
-/// Description:
 /// Casts Ignara E as a rolling projectile that grows while travelling.
 pub(in crate::systems) fn cast_e_snowball(
     time: Res<Time>,
@@ -504,7 +457,7 @@ pub(in crate::systems) fn cast_e_snowball(
     let Ok((player_transform, health, visual)) = player_query.single() else {
         return;
     };
-    if health.current == 0 || visual.champion != Some(IGNARA_CHAMPION_ID) {
+    if health.current == 0 || visual.champion != Some(ChampionId::IGNARA) {
         return;
     }
     let Ok((map_transform, map_ground)) = map_query.single() else {
@@ -529,11 +482,14 @@ pub(in crate::systems) fn cast_e_snowball(
         end_ground + Vec3::Y * 0.45,
         *settings,
     );
-    send_ability_command(&mut command_senders, AbilitySlot::E, Some(end_ground));
+    send_ability_command(
+        &mut command_senders,
+        ChampionId::IGNARA,
+        AbilitySlot::E,
+        Some(end_ground),
+    );
     cast_state.cooldown.reset();
 }
-
-/// Description:
 /// Updates Ignara ability prediction indicators while Q/W/E aim keys are held.
 pub(in crate::systems) fn update_ignara_indicators(
     keyboard: Res<ButtonInput<KeyCode>>,
@@ -586,7 +542,7 @@ pub(in crate::systems) fn update_ignara_indicators(
     let Ok((player_transform, visual)) = player_query.single() else {
         return;
     };
-    if visual.champion != Some(IGNARA_CHAMPION_ID) {
+    if visual.champion != Some(ChampionId::IGNARA) {
         return;
     }
 
@@ -670,8 +626,6 @@ pub(in crate::systems) fn update_ignara_indicators(
         }
     }
 }
-
-/// Description:
 /// Updates Ignara Q pulsing burning ground visuals.
 pub(in crate::systems) fn update_q_burning_grounds(
     time: Res<Time>,
@@ -706,8 +660,6 @@ pub(in crate::systems) fn update_q_burning_grounds(
         }
     }
 }
-
-/// Description:
 /// Updates Ignara W fireball visuals.
 pub(in crate::systems) fn update_w_fireballs(
     time: Res<Time>,
@@ -738,8 +690,6 @@ pub(in crate::systems) fn update_w_fireballs(
         }
     }
 }
-
-/// Description:
 /// Updates Ignara E rolling snowball visuals.
 pub(in crate::systems) fn update_e_snowballs(
     time: Res<Time>,
@@ -773,8 +723,6 @@ pub(in crate::systems) fn update_e_snowballs(
         }
     }
 }
-
-/// Description:
 /// Spawns one remote Ignara ability visual from a server event.
 pub(in crate::systems) fn spawn_remote_ability_visual(
     event: AbilityVisualEvent,
@@ -786,7 +734,7 @@ pub(in crate::systems) fn spawn_remote_ability_visual(
     materials: &mut Assets<StandardMaterial>,
     commands: &mut Commands,
 ) {
-    if event.champion != IGNARA_CHAMPION_ID {
+    if event.champion != ChampionId::IGNARA {
         return;
     }
 
@@ -838,8 +786,6 @@ pub(in crate::systems) fn spawn_remote_ability_visual(
         AbilitySlot::R => {}
     }
 }
-
-/// Runs the spawn q burning ground step for the Ignara ability system.
 fn spawn_q_burning_ground(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -877,8 +823,6 @@ fn spawn_q_burning_ground(
             .with_scale(Vec3::new(settings.width, 0.035, length)),
     ));
 }
-
-/// Runs the spawn w fireball step for the Ignara ability system.
 fn spawn_w_fireball(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -907,8 +851,6 @@ fn spawn_w_fireball(
         Transform::from_translation(start),
     ));
 }
-
-/// Runs the spawn e snowball step for the Ignara ability system.
 fn spawn_e_snowball(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -938,70 +880,6 @@ fn spawn_e_snowball(
         Transform::from_translation(start).with_scale(Vec3::splat(0.35)),
     ));
 }
-
-/// Runs the ready timer step for the Ignara ability system.
-fn ready_timer(cooldown_seconds: f32) -> Timer {
-    let mut timer = Timer::from_seconds(cooldown_seconds.max(f32::EPSILON), TimerMode::Once);
-    timer.set_elapsed(timer.duration());
-    timer
-}
-
-/// Runs the total timer seconds step for the Ignara ability system.
-fn total_timer_seconds(timer: &Timer) -> f32 {
-    timer.duration().as_secs_f32().max(f32::EPSILON)
-}
-
-/// Runs the remaining timer seconds step for the Ignara ability system.
-fn remaining_timer_seconds(timer: &Timer) -> f32 {
-    (total_timer_seconds(timer) - timer.elapsed().as_secs_f32()).max(0.0)
-}
-
-/// Runs the ready timer percent step for the Ignara ability system.
-fn ready_timer_percent(timer: &Timer) -> f32 {
-    let total = total_timer_seconds(timer);
-    ((total - remaining_timer_seconds(timer)) / total * 100.0).clamp(0.0, 100.0)
-}
-
-/// Runs the send ability command step for the Ignara ability system.
-fn send_ability_command(
-    senders: &mut Query<&mut MessageSender<PlayerCommand>, With<Client>>,
-    slot: AbilitySlot,
-    target_position: Option<Vec3>,
-) {
-    for mut sender in senders {
-        sender.send::<ReliableCommandChannel>(PlayerCommand::CastAbility {
-            champion: IGNARA_CHAMPION_ID,
-            slot,
-            target: CastTarget {
-                position: target_position.map(WorldPosition::from),
-            },
-        });
-    }
-}
-
-/// Runs the cursor hit on map step for the Ignara ability system.
-fn cursor_hit_on_map(
-    windows: &Query<&Window, With<PrimaryWindow>>,
-    camera_query: &Query<(&Camera, &GlobalTransform), With<TopDownCamera>>,
-    map_transform: &GlobalTransform,
-    map_ground: MapGround,
-) -> Option<Vec3> {
-    windows
-        .single()
-        .ok()
-        .and_then(|window| window.cursor_position())
-        .and_then(|cursor| {
-            camera_query
-                .single()
-                .ok()
-                .and_then(|(camera, camera_transform)| {
-                    camera.viewport_to_world(camera_transform, cursor).ok()
-                })
-        })
-        .and_then(|ray| ray_hit_map_top(ray, map_transform, map_ground))
-}
-
-/// Runs the aim direction step for the Ignara ability system.
 fn aim_direction(origin: Vec3, target: Option<Vec3>) -> Vec3 {
     target
         .map(|target| Vec3::new(target.x - origin.x, 0.0, target.z - origin.z))
@@ -1009,18 +887,6 @@ fn aim_direction(origin: Vec3, target: Option<Vec3>) -> Vec3 {
         .map(|delta| delta.normalize())
         .unwrap_or(Vec3::Z)
 }
-
-/// Runs the clamp cast target step for the Ignara ability system.
-fn clamp_cast_target(origin: Vec3, target: Vec3, range: f32) -> Vec3 {
-    let delta = Vec3::new(target.x - origin.x, 0.0, target.z - origin.z);
-    if delta.length_squared() <= range * range {
-        return Vec3::new(target.x, origin.y, target.z);
-    }
-
-    origin + delta.normalize_or_zero() * range
-}
-
-/// Runs the set rect indicator step for the Ignara ability system.
 fn set_rect_indicator(
     transform: &mut Transform,
     start: Vec3,
@@ -1038,41 +904,11 @@ fn set_rect_indicator(
     transform.rotation = Quat::from_rotation_y(yaw);
     transform.scale = Vec3::new(width, thickness, length);
 }
-
-/// Runs the find clicked enemy target step for the Ignara ability system.
-fn find_clicked_enemy_target<'a, F>(
-    cursor_hit: Vec3,
-    enemy_query: &'a Query<(&TrainingDummy, &Transform), F>,
-    radius: f32,
-) -> Option<(&'a TrainingDummy, &'a Transform)>
-where
-    F: QueryFilter,
-{
-    enemy_query
-        .iter()
-        .filter(|(dummy, transform)| {
-            dummy.health > 0.0 && horizontal_distance(cursor_hit, transform.translation) <= radius
-        })
-        .min_by(|(_, left), (_, right)| {
-            horizontal_distance(cursor_hit, left.translation)
-                .partial_cmp(&horizontal_distance(cursor_hit, right.translation))
-                .unwrap_or(std::cmp::Ordering::Equal)
-        })
-}
-
-/// Runs the e visual radius step for the Ignara ability system.
 fn e_visual_radius(travelled: f32, width: f32) -> f32 {
     let base_radius = width * 0.28;
     let progress = (travelled / E_RANGE).clamp(0.0, 1.0);
     base_radius * (1.0 + progress * 1.85)
 }
-
-/// Runs the horizontal distance step for the Ignara ability system.
-fn horizontal_distance(a: Vec3, b: Vec3) -> f32 {
-    Vec2::new(a.x - b.x, a.z - b.z).length()
-}
-
-/// Runs the e damage for distance step for the Ignara ability system.
 #[allow(dead_code)]
 fn e_damage_for_distance(distance: f32) -> (f32, f32) {
     if distance < E_SMALL_DISTANCE {

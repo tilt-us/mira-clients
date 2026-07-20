@@ -5,8 +5,6 @@ use app::network::ServerNetworkSettings;
 use std::env;
 use std::net::IpAddr;
 use std::process::ExitCode;
-
-/// Description:
 /// Starts the dedicated server app.
 fn main() -> ExitCode {
     let (network_settings, control_api_settings) =
@@ -24,14 +22,10 @@ fn main() -> ExitCode {
     app::run(network_settings, control_api_settings);
     ExitCode::SUCCESS
 }
-
-/// Description:
 /// Parses dedicated server networking settings from CLI args.
 ///
-/// Params:
 /// - `args`: Command line args without the binary path.
 ///
-/// Returns:
 /// - `Ok(Some(settings))`: Parsed server settings.
 /// - `Ok(None)`: Help was printed and the server should exit.
 /// - `Err(message)`: Invalid CLI arguments.
@@ -121,36 +115,26 @@ where
 
     Ok(Some((settings, control_api_settings)))
 }
-
-/// Description:
 /// Parses one UDP/TCP port value.
 ///
-/// Params:
 /// - `value`: Port value from the command line.
 ///
-/// Returns:
 /// - Parsed port when `value` is a valid `u16`.
 fn parse_port(value: &str) -> Result<u16, String> {
     value
         .parse::<u16>()
         .map_err(|_| format!("Invalid port: {value}"))
 }
-
-/// Description:
 /// Parses one IP address used as dedicated-server bind host.
 ///
-/// Params:
 /// - `value`: IP address from the command line.
 ///
-/// Returns:
 /// - Parsed IP address when `value` is valid.
 fn parse_host(value: &str) -> Result<IpAddr, String> {
     value
         .parse::<IpAddr>()
         .map_err(|_| format!("Invalid host: {value}"))
 }
-
-/// Description:
 /// Returns CLI usage text for the dedicated server.
 fn usage() -> &'static str {
     "Usage: mira-game-server [--host <IP>] [--port <PORT>]\n\nOptions:\n      --host <IP>              IP address the UDP server binds to\n      --bind-host <IP>         Alias for --host\n  -p, --port <PORT>            UDP port the server listens on\n      --control-host <IP>      IP address the REST control API binds to\n      --control-bind-host <IP> Alias for --control-host\n      --control-port <PORT>    TCP port the REST control API listens on\n  -h, --help                   Print help"
@@ -161,8 +145,6 @@ mod tests {
     use super::*;
     use game_shared::network::DEFAULT_SERVER_ADDR;
     use std::net::SocketAddr;
-
-    /// Runs the defaults to shared server addr step for the dedicated server CLI bootstrap.
     #[test]
     fn defaults_to_shared_server_addr() {
         let (settings, control_settings) = server_settings_from_args(Vec::<String>::new())
@@ -175,8 +157,6 @@ mod tests {
             SocketAddr::new("127.0.0.1".parse::<IpAddr>().unwrap(), 6000)
         );
     }
-
-    /// Verifies parses long port arg behavior for the dedicated server CLI bootstrap.
     #[test]
     fn parses_long_port_arg() {
         let (settings, control_settings) = server_settings_from_args(["--port", "7777"])
@@ -186,8 +166,6 @@ mod tests {
         assert_eq!(settings.listen_addr.port(), 7777);
         assert_eq!(control_settings.listen_addr.port(), 7777);
     }
-
-    /// Verifies parses long port equals arg behavior for the dedicated server CLI bootstrap.
     #[test]
     fn parses_long_port_equals_arg() {
         let (settings, control_settings) =
@@ -196,8 +174,6 @@ mod tests {
         assert_eq!(settings.listen_addr.port(), 7778);
         assert_eq!(control_settings.listen_addr.port(), 7778);
     }
-
-    /// Verifies parses long host arg behavior for the dedicated server CLI bootstrap.
     #[test]
     fn parses_long_host_arg() {
         let (settings, _) = server_settings_from_args(["--host", "0.0.0.0"])
@@ -209,8 +185,6 @@ mod tests {
             "0.0.0.0".parse::<IpAddr>().unwrap()
         );
     }
-
-    /// Verifies parses long bind host equals arg behavior for the dedicated server CLI bootstrap.
     #[test]
     fn parses_long_bind_host_equals_arg() {
         let (settings, _) = server_settings_from_args(["--bind-host=0.0.0.0"])
@@ -222,8 +196,6 @@ mod tests {
             "0.0.0.0".parse::<IpAddr>().unwrap()
         );
     }
-
-    /// Verifies parses short port arg behavior for the dedicated server CLI bootstrap.
     #[test]
     fn parses_short_port_arg() {
         let (settings, control_settings) = server_settings_from_args(["-p7779"]).unwrap().unwrap();
@@ -231,8 +203,6 @@ mod tests {
         assert_eq!(settings.listen_addr.port(), 7779);
         assert_eq!(control_settings.listen_addr.port(), 7779);
     }
-
-    /// Runs the explicit control port overrides main port step for the dedicated server CLI bootstrap.
     #[test]
     fn explicit_control_port_overrides_main_port() {
         let (settings, control_settings) =
@@ -243,24 +213,18 @@ mod tests {
         assert_eq!(settings.listen_addr.port(), 7779);
         assert_eq!(control_settings.listen_addr.port(), 6001);
     }
-
-    /// Verifies rejects invalid port behavior for the dedicated server CLI bootstrap.
     #[test]
     fn rejects_invalid_port() {
         let error = server_settings_from_args(["--port", "70000"]).unwrap_err();
 
         assert_eq!(error, "Invalid port: 70000");
     }
-
-    /// Verifies rejects invalid host behavior for the dedicated server CLI bootstrap.
     #[test]
     fn rejects_invalid_host() {
         let error = server_settings_from_args(["--host", "localhost"]).unwrap_err();
 
         assert_eq!(error, "Invalid host: localhost");
     }
-
-    /// Verifies parses control api args behavior for the dedicated server CLI bootstrap.
     #[test]
     fn parses_control_api_args() {
         let (_, control_settings) =

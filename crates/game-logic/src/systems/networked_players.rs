@@ -1,12 +1,13 @@
 use super::{
     CurrentChampionVisual, ExternalMovementModifier, LocalChampionAnimations, TrainingDummy,
-    healthbar, ui_state::MiraHudState,
+    healthbar, hierarchy_root, movement::LocalNavigationRoute, ui_state::MiraHudState,
 };
 use bevy::gltf::GltfAssetLabel;
 use bevy::prelude::*;
 use game_shared::game::{
     player::{
-        Health, Mana, MoveSpeed, MoveTarget, Player, PlayerControlled, PlayerId, PlayerProfile,
+        DEFAULT_PLAYER_MANA, DEFAULT_PLAYER_MOVEMENT_SPEED, Health, Mana, MoveSpeed, MoveTarget,
+        Player, PlayerControlled, PlayerId, PlayerProfile,
     },
     team::{Team, TeamSpec},
 };
@@ -16,11 +17,6 @@ use game_shared::network::{
 use lightyear::prelude::*;
 use std::time::Duration;
 
-const LIRA_CHAMPION_ID: ChampionId = ChampionId(6606);
-const IGNARA_CHAMPION_ID: ChampionId = ChampionId(6607);
-const YUNA_CHAMPION_ID: ChampionId = ChampionId(6608);
-const SOPHIA_CHAMPION_ID: ChampionId = ChampionId(6609);
-
 const REMOTE_PLAYER_HIT_RADIUS: f32 = 0.9;
 const LIRA_MODEL_PATH: &str = "game/champions/lira/model.glb";
 const IGNARA_MODEL_PATH: &str = "game/champions/ignara/model.glb";
@@ -29,11 +25,10 @@ const SOPHIA_MODEL_PATH: &str = "game/champions/sophia/model.glb";
 const PLAYER_STATE_UPDATE_INTERVAL_SECONDS: f32 = 1.0 / 30.0;
 const REMOTE_POSITION_SMOOTHING: f32 = 24.0;
 const REMOTE_ROTATION_SMOOTHING: f32 = 18.0;
-
-/// Description:
+const LOCAL_AUTHORITATIVE_POSITION_SMOOTHING: f32 = 18.0;
+const LOCAL_AUTHORITATIVE_SNAP_DISTANCE: f32 = 12.0;
 /// Marks a remote player stand-in spawned from server match snapshots.
 ///
-/// Fields:
 /// - `player_id`: Network player id represented by this stand-in.
 /// - `champion`: Champion id whose model is currently attached.
 /// - `health_bar`: Health bar entity following the stand-in.
@@ -56,29 +51,30 @@ pub(super) struct RemotePlayerStandIn {
     respawn_generation: u32,
 }
 
-/// Description:
+/// Stores the latest normal server transform used to reconcile local movement prediction.
+#[derive(Component, Debug, Clone, Copy)]
+pub(super) struct LocalAuthoritativeTransform {
+    target_position: Vec3,
+    target_rotation: Quat,
+}
 /// Tracks whether the local player was moved to its server-assigned spawn.
 ///
-/// Fields:
 /// - `player_id`: Player id whose spawn position was already applied.
 /// - `player_count`: Roster size whose spawn layout was already applied.
 /// - `respawn_generation`: Last local respawn generation applied to the transform.
+/// - `position_correction_generation`: Last server position correction applied to the transform.
 #[derive(Resource, Debug, Default, Clone, Copy)]
 pub(super) struct AppliedLocalNetworkSpawn {
     player_id: Option<u64>,
     player_count: usize,
     respawn_generation: u32,
+    position_correction_generation: u32,
 }
-
-/// Description:
 /// Limits how often the client sends local player state updates.
 ///
-/// Fields:
 /// - `0`: Repeating timer for local player state update messages.
 #[derive(Resource, Debug)]
 pub(super) struct PlayerStateUpdateTimer(Timer);
-
-/// Description:
 /// Stores the local player's requested development champion and team.
 #[derive(Resource, Debug, Clone, Copy)]
 pub(super) struct LocalPlayerSelection {
@@ -104,10 +100,9 @@ impl Default for LocalPlayerSelection {
 }
 
 impl LocalPlayerSelection {
-    /// Description:
     /// Parses `--champion`, `--char`, and `--team` process args into a local selection.
     fn from_args(args: impl IntoIterator<Item = String>) -> Self {
-        let mut champion = LIRA_CHAMPION_ID;
+        let mut champion = ChampionId::LIRA;
         let mut team = TeamSpec::Light;
         let mut pending_key = None::<String>;
 
@@ -133,8 +128,6 @@ impl LocalPlayerSelection {
         Self { champion, team }
     }
 }
-
-/// Runs the apply selection arg step for the networked player synchronization system.
 fn apply_selection_arg(key: &str, value: &str, champion: &mut ChampionId, team: &mut TeamSpec) {
     let key = key.trim_start_matches('-');
 
@@ -157,18 +150,9 @@ fn apply_selection_arg(key: &str, value: &str, champion: &mut ChampionId, team: 
     }
 }
 
-/// Runs the parse champion step for the networked player synchronization system.
 fn parse_champion(value: &str) -> Option<ChampionId> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "6606" | "lira" => Some(LIRA_CHAMPION_ID),
-        "6607" | "ignara" => Some(IGNARA_CHAMPION_ID),
-        "6608" | "yuna" => Some(YUNA_CHAMPION_ID),
-        "6609" | "sophia" => Some(SOPHIA_CHAMPION_ID),
-        _ => None,
-    }
+    ChampionId::from_selector(value)
 }
-
-/// Runs the parse team step for the networked player synchronization system.
 fn parse_team(value: &str) -> Option<TeamSpec> {
     match value.trim().to_ascii_lowercase().as_str() {
         "0" | "neutral" | "none" => Some(TeamSpec::Neutral),
@@ -177,11 +161,8 @@ fn parse_team(value: &str) -> Option<TeamSpec> {
         _ => None,
     }
 }
-
-/// Description:
 /// Sends the controlled player's current position to the server.
 ///
-/// Params:
 /// - `timer`: Send timer used to reduce reliable position update traffic.
 /// - `time`: Bevy time resource used to advance the send timer.
 /// - `player_query`: Locally controlled player transform, health, and movement state.
@@ -211,11 +192,8 @@ pub(super) fn send_local_player_state_update(
         });
     }
 }
-
-/// Description:
 /// Applies server match snapshots by positioning the local player and spawning remote stand-ins.
 ///
-/// Params:
 /// - `commands`: ECS command buffer used to spawn and despawn remote stand-ins.
 /// - `asset_server`: Asset server used to load champion scenes.
 /// - `receivers`: Lightyear message receivers that contain server match snapshots.
@@ -303,11 +281,8 @@ pub(super) fn sync_remote_players_from_match_snapshot(
         &player_profiles,
     );
 }
-
-/// Description:
 /// Smoothly moves remote player stand-ins toward the latest server snapshot position.
 ///
-/// Params:
 /// - `time`: Bevy time resource used for frame-rate independent interpolation.
 /// - `remote_players`: Remote stand-in transforms and movement state.
 pub(super) fn interpolate_remote_player_positions(
@@ -326,11 +301,8 @@ pub(super) fn interpolate_remote_player_positions(
             .slerp(stand_in.target_rotation, rotation_smoothing);
     }
 }
-
-/// Description:
 /// Switches remote player stand-ins between idle and walk animations from server movement state.
 ///
-/// Params:
 /// - `animations`: Optional champion animation data loaded during setup.
 /// - `remote_players`: Remote stand-ins used to detect movement and hierarchy roots.
 /// - `animation_players`: Animation players and transitions to update.
@@ -367,26 +339,19 @@ pub(super) fn sync_remote_player_animations(
         }
     }
 }
-
-/// Description:
 /// Checks whether an animation player is already playing a given animation node.
 ///
-/// Params:
 /// - `player`: Animation player to inspect.
 /// - `animation`: Animation graph node to look for.
 ///
-/// Return:
 /// - `true` when the animation node is currently active.
 fn animation_is_playing(player: &AnimationPlayer, animation: AnimationNodeIndex) -> bool {
     player
         .playing_animations()
         .any(|(active_animation, _)| *active_animation == animation)
 }
-
-/// Description:
 /// Applies a received server snapshot to an existing remote stand-in.
 ///
-/// Params:
 /// - `stand_in`: Remote stand-in state to update.
 /// - `snapshot_player`: Snapshot entry for the represented player.
 fn apply_remote_snapshot(stand_in: &mut RemotePlayerStandIn, snapshot_player: &NetworkPlayer) {
@@ -394,36 +359,25 @@ fn apply_remote_snapshot(stand_in: &mut RemotePlayerStandIn, snapshot_player: &N
     stand_in.target_rotation = Quat::from_rotation_y(snapshot_player.yaw);
     stand_in.moving = snapshot_player.moving;
 }
-
-/// Description:
 /// Converts an entity rotation into the Y-axis yaw used by network state messages.
 ///
-/// Params:
 /// - `rotation`: World rotation to convert.
 ///
-/// Return:
 /// - Facing angle around the Y axis.
 fn yaw_from_rotation(rotation: Quat) -> f32 {
     let forward = rotation * Vec3::Z;
     forward.x.atan2(forward.z)
 }
-
-/// Description:
 /// Converts a network yaw into a world rotation.
 ///
-/// Params:
 /// - `yaw`: Facing angle around the Y axis.
 ///
-/// Return:
 /// - World rotation matching the facing angle.
 fn rotation_from_yaw(yaw: f32) -> Quat {
     Quat::from_rotation_y(yaw)
 }
-
-/// Description:
 /// Moves the local player once to the spawn position assigned by the server.
 ///
-/// Params:
 /// - `commands`: ECS command buffer used to clear movement while dead.
 /// - `snapshot`: Latest match snapshot received from the server.
 /// - `local_spawn`: Resource tracking whether local placement was already applied.
@@ -500,33 +454,104 @@ fn apply_local_player_snapshot(
             );
         }
 
-        if local_spawn.player_id != Some(snapshot.local_player_id)
-            || local_spawn.player_count != snapshot.players.len()
-            || local_spawn.respawn_generation != local_snapshot.respawn_generation
-        {
-            transform.translation = Vec3::from(local_snapshot.position);
-            transform.rotation = rotation_from_yaw(local_snapshot.yaw);
+        let authoritative_position = Vec3::from(local_snapshot.position);
+        let authoritative_rotation = rotation_from_yaw(local_snapshot.yaw);
+        commands.entity(entity).insert(LocalAuthoritativeTransform {
+            target_position: authoritative_position,
+            target_rotation: authoritative_rotation,
+        });
+
+        let received_position_correction = local_spawn.player_id == Some(snapshot.local_player_id)
+            && local_snapshot.position_correction_generation
+                != local_spawn.position_correction_generation;
+        let received_respawn = local_spawn.player_id == Some(snapshot.local_player_id)
+            && local_snapshot.respawn_generation != local_spawn.respawn_generation;
+        if should_apply_local_server_position(
+            *local_spawn,
+            snapshot.local_player_id,
+            snapshot.players.len(),
+            local_snapshot.respawn_generation,
+            local_snapshot.position_correction_generation,
+        ) {
+            transform.translation = authoritative_position;
+            transform.rotation = authoritative_rotation;
             local_spawn.player_id = Some(snapshot.local_player_id);
             local_spawn.player_count = snapshot.players.len();
             local_spawn.respawn_generation = local_snapshot.respawn_generation;
+            local_spawn.position_correction_generation =
+                local_snapshot.position_correction_generation;
+            if received_position_correction || received_respawn {
+                commands.entity(entity).remove::<MoveTarget>();
+                commands.entity(entity).remove::<LocalNavigationRoute>();
+            }
         }
 
         if !local_snapshot.alive || local_snapshot.stunned {
             commands.entity(entity).remove::<MoveTarget>();
+            commands.entity(entity).remove::<LocalNavigationRoute>();
         }
 
         if local_snapshot.control_locked {
-            transform.translation = Vec3::from(local_snapshot.position);
-            transform.rotation = rotation_from_yaw(local_snapshot.yaw);
+            transform.translation = authoritative_position;
+            transform.rotation = authoritative_rotation;
             commands.entity(entity).remove::<MoveTarget>();
+            commands.entity(entity).remove::<LocalNavigationRoute>();
         }
     }
 }
 
-/// Description:
+/// Smoothly reconciles the locally predicted player with normal authoritative match snapshots.
+///
+/// Respawns and control locks still snap in `apply_local_player_snapshot`; ordinary movement is
+/// blended so route prediction remains responsive while the dedicated server owns the position.
+pub(super) fn reconcile_local_player_to_authoritative_snapshot(
+    time: Res<Time>,
+    mut local_players: Query<
+        (&mut Transform, &LocalAuthoritativeTransform),
+        (With<PlayerControlled>, Without<RemotePlayerStandIn>),
+    >,
+) {
+    let blend = reconciliation_blend(time.delta_secs());
+    for (mut transform, authoritative) in &mut local_players {
+        if transform
+            .translation
+            .distance_squared(authoritative.target_position)
+            > LOCAL_AUTHORITATIVE_SNAP_DISTANCE * LOCAL_AUTHORITATIVE_SNAP_DISTANCE
+        {
+            transform.translation = authoritative.target_position;
+            transform.rotation = authoritative.target_rotation;
+            continue;
+        }
+
+        transform.translation = transform
+            .translation
+            .lerp(authoritative.target_position, blend);
+        transform.rotation = transform
+            .rotation
+            .slerp(authoritative.target_rotation, blend);
+    }
+}
+
+/// Returns the frame-rate independent interpolation amount for local reconciliation.
+fn reconciliation_blend(delta_seconds: f32) -> f32 {
+    1.0 - (-LOCAL_AUTHORITATIVE_POSITION_SMOOTHING * delta_seconds.max(0.0)).exp()
+}
+
+/// Returns whether a local player transform must be reconciled with a server snapshot.
+fn should_apply_local_server_position(
+    applied: AppliedLocalNetworkSpawn,
+    player_id: u64,
+    player_count: usize,
+    respawn_generation: u32,
+    position_correction_generation: u32,
+) -> bool {
+    applied.player_id != Some(player_id)
+        || applied.player_count != player_count
+        || applied.respawn_generation != respawn_generation
+        || applied.position_correction_generation != position_correction_generation
+}
 /// Updates, spawns, and removes remote player stand-ins from a server snapshot.
 ///
-/// Params:
 /// - `commands`: ECS command buffer used to spawn and despawn entities.
 /// - `asset_server`: Asset server used to load champion scenes.
 /// - `snapshot`: Latest match snapshot received from the server.
@@ -622,11 +647,8 @@ fn sync_remote_player_stand_ins(
         );
     }
 }
-
-/// Description:
 /// Spawns one remote player stand-in that can be targeted by current abilities.
 ///
-/// Params:
 /// - `commands`: ECS command buffer used to spawn entities.
 /// - `asset_server`: Asset server used to load the champion scene.
 /// - `meshes`: Mesh assets used by the health bar.
@@ -672,8 +694,8 @@ fn spawn_remote_player_stand_in(
             current: snapshot_player.health as u32,
             max: snapshot_player.max_health as u32,
         },
-        Mana::new(100),
-        MoveSpeed(6.0),
+        Mana::new(DEFAULT_PLAYER_MANA),
+        MoveSpeed(DEFAULT_PLAYER_MOVEMENT_SPEED),
         Transform::from_translation(Vec3::from(snapshot_player.position))
             .with_rotation(rotation_from_yaw(snapshot_player.yaw)),
     ));
@@ -739,8 +761,6 @@ fn spawn_remote_player_stand_in(
         respawn_generation: snapshot_player.respawn_generation,
     });
 }
-
-/// Description:
 /// Spawns a child entity that owns one champion scene.
 fn spawn_champion_model_root(
     commands: &mut Commands,
@@ -754,8 +774,6 @@ fn spawn_champion_model_root(
         .spawn((name, WorldAssetRoot(champion_scene), Transform::default()))
         .id()
 }
-
-/// Description:
 /// Removes a previously spawned champion model root and all scene children below it.
 fn despawn_model_root(commands: &mut Commands, model_root: Option<Entity>) {
     let Some(model_root) = model_root else {
@@ -766,45 +784,21 @@ fn despawn_model_root(commands: &mut Commands, model_root: Option<Entity>) {
     commands.entity(model_root).despawn();
 }
 
-/// Description:
-/// Resolves the champion model path used by the current prototype roster.
-///
-/// Params:
-/// - `champion`: Champion id received from the server.
-///
-/// Return:
-/// - GLB model path inside the asset root.
+/// Resolves the model path for a champion in the prototype roster.
 fn champion_model_path(champion: ChampionId) -> &'static str {
-    //TODO: Remove later when mira-client is ready for lobbies
-    match champion.0 {
-        6606 => LIRA_MODEL_PATH,
-        6607 => IGNARA_MODEL_PATH,
-        6608 => YUNA_MODEL_PATH,
-        6609 => SOPHIA_MODEL_PATH,
+    match champion {
+        ChampionId::LIRA => LIRA_MODEL_PATH,
+        ChampionId::IGNARA => IGNARA_MODEL_PATH,
+        ChampionId::YUNA => YUNA_MODEL_PATH,
+        ChampionId::SOPHIA => SOPHIA_MODEL_PATH,
         _ => LIRA_MODEL_PATH,
     }
 }
 
-/// Description:
-/// Resolves a short display name for development champion entities.
-///
-/// Params:
-/// - `champion`: Champion id received from the server.
-///
-/// Return:
-/// - Human-readable champion name.
+/// Resolves a display name for a prototype champion.
 fn champion_display_name(champion: ChampionId) -> &'static str {
-    //TODO: Remove later when mira-client is ready for lobbies
-    match champion.0 {
-        6606 => "Lira",
-        6607 => "Ignara",
-        6608 => "Yuna",
-        6609 => "Sophia",
-        _ => "Lira",
-    }
+    champion.display_name().unwrap_or("Lira")
 }
-
-/// Runs the player display name step for the networked player synchronization system.
 fn player_display_name(
     player: &NetworkPlayer,
     player_profiles: &healthbar::OverheadPlayerProfiles,
@@ -815,18 +809,31 @@ fn player_display_name(
         .unwrap_or_else(|| "Player".to_string())
 }
 
-/// Description:
-/// Finds the top-most hierarchy root for a scene child entity.
-///
-/// Params:
-/// - `entity`: Entity to walk upward from.
-/// - `parents`: Parent relationship query.
-///
-/// Return:
-/// - Top-most hierarchy entity.
-fn hierarchy_root(mut entity: Entity, parents: &Query<&ChildOf>) -> Entity {
-    while let Ok(parent) = parents.get(entity) {
-        entity = parent.0;
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn server_position_correction_reconciles_the_local_player_without_a_respawn() {
+        let applied = AppliedLocalNetworkSpawn {
+            player_id: Some(7),
+            player_count: 2,
+            respawn_generation: 3,
+            position_correction_generation: 4,
+        };
+
+        assert!(should_apply_local_server_position(applied, 7, 2, 3, 5,));
     }
-    entity
+
+    #[test]
+    fn unchanged_server_position_does_not_override_local_prediction() {
+        let applied = AppliedLocalNetworkSpawn {
+            player_id: Some(7),
+            player_count: 2,
+            respawn_generation: 3,
+            position_correction_generation: 4,
+        };
+
+        assert!(!should_apply_local_server_position(applied, 7, 2, 3, 4,));
+    }
 }

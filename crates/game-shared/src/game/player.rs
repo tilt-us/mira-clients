@@ -4,48 +4,35 @@ use crate::network::ChampionId;
 
 use super::team::{Team, TeamSpec};
 
-/// Description:
+/// Default maximum health assigned to a newly created player.
+pub const DEFAULT_PLAYER_HEALTH: u32 = 100;
+
+/// Default maximum mana assigned to a newly created player.
+pub const DEFAULT_PLAYER_MANA: u32 = 100;
+
+/// Default movement speed assigned to a newly created player.
+pub const DEFAULT_PLAYER_MOVEMENT_SPEED: f32 = 6.0;
+
+/// Default distance from a move target at which movement stops.
+pub const DEFAULT_MOVE_TARGET_STOP_DISTANCE: f32 = 0.25;
+
 /// Identifies a player entity in gameplay systems.
-///
-/// Fields:
-/// - `0`: Stable numeric player id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PlayerId(pub u64);
-
-/// Description:
 /// Stores the player id assigned to a gameplay entity.
-///
-/// Fields:
-/// - `id`: Stable player id.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Player {
     pub id: PlayerId,
 }
-
-/// Description:
 /// Stores the champion content id assigned to a gameplay entity.
-///
-/// Fields:
-/// - `0`: Stable champion id shared by client, server, and content files.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Champion(pub ChampionId);
-
-/// Description:
 /// Stores display metadata for a player entity.
-///
-/// Fields:
-/// - `display_name`: Name shown for the player.
 #[derive(Component, Debug, Clone, PartialEq, Eq, Default)]
 pub struct PlayerProfile {
     pub display_name: String,
 }
-
-/// Description:
 /// Stores current and maximum health for a gameplay entity.
-///
-/// Fields:
-/// - `current`: Current health value.
-/// - `max`: Maximum health value.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Health {
     pub current: u32,
@@ -53,37 +40,16 @@ pub struct Health {
 }
 
 impl Health {
-    /// Description:
-    /// Creates a full health component with current health equal to maximum health.
-    ///
-    /// Params:
-    /// - `max`: Maximum health value.
-    ///
-    /// Return:
-    /// - A new full `Health` component.
+    /// Creates a full health component.
     pub fn new(max: u32) -> Self {
         Self { current: max, max }
     }
-
-    /// Description:
-    /// Checks whether the entity still has positive health.
-    ///
-    /// Params:
-    /// - `self`: Health component to inspect.
-    ///
-    /// Return:
-    /// - `true` when current health is greater than zero.
+    /// Returns whether the entity has positive health.
     pub fn is_alive(self) -> bool {
         self.current > 0
     }
 }
-
-/// Description:
 /// Stores current and maximum mana for a gameplay entity.
-///
-/// Fields:
-/// - `current`: Current mana value.
-/// - `max`: Maximum mana value.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Mana {
     pub current: u32,
@@ -91,43 +57,20 @@ pub struct Mana {
 }
 
 impl Mana {
-    /// Description:
-    /// Creates a full mana component with the current mana equal to maximum mana.
-    ///
-    /// Params:
-    /// - `max`: Maximum mana value.
-    ///
-    /// Return:
-    /// - A new full `Mana` component.
+    /// Creates a full mana component.
     pub fn new(max: u32) -> Self {
         Self { current: max, max }
     }
 }
-
-/// Description:
 /// Stores ground movement speed for a gameplay entity.
-///
-/// Fields:
-/// - `0`: Movement speed in world units per second.
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub struct MoveSpeed(pub f32);
-
-/// Description:
 /// Stores the entity facing angle around the vertical axis.
-///
-/// Fields:
-/// - `radians`: Yaw angle in radians.
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub struct Facing {
     pub radians: f32,
 }
-
-/// Description:
 /// Stores the active movement destination for a gameplay entity.
-///
-/// Fields:
-/// - `position`: World-space destination position.
-/// - `stop_distance`: Distance at which the destination is considered reached.
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub struct MoveTarget {
     pub position: Vec3,
@@ -135,47 +78,23 @@ pub struct MoveTarget {
 }
 
 impl MoveTarget {
-    /// Description:
     /// Creates a movement target with the default stop distance.
-    ///
-    /// Params:
-    /// - `position`: World-space destination position.
-    ///
-    /// Return:
-    /// - A new `MoveTarget` component.
     pub fn new(position: Vec3) -> Self {
         Self {
             position,
-            stop_distance: 0.25,
+            stop_distance: DEFAULT_MOVE_TARGET_STOP_DISTANCE,
         }
     }
 }
-
-/// Description:
 /// Marks the locally controlled player entity.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct PlayerControlled;
-
-/// Description:
 /// Marks an entity as selectable and attackable by gameplay systems.
-///
-/// Fields:
-/// - `radius`: World-space targeting radius.
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub struct Targetable {
     pub radius: f32,
 }
-
-/// Description:
 /// Bundles core gameplay components for a player entity.
-///
-/// Fields:
-/// - `player`: Player id component.
-/// - `team`: Team affiliation component.
-/// - `health`: Health component.
-/// - `mana`: Mana component.
-/// - `move_speed`: Movement speed component.
-/// - `controlled`: Local control marker component.
 #[derive(Bundle, Debug, Clone)]
 pub struct PlayerBundle {
     pub player: Player,
@@ -187,30 +106,22 @@ pub struct PlayerBundle {
 }
 
 impl PlayerBundle {
-    /// Description:
     /// Creates a player bundle with default combat and movement stats.
-    ///
-    /// Params:
-    /// - `id`: Player id assigned to the bundle.
-    /// - `team`: Team assigned to the bundle.
-    ///
-    /// Return:
-    /// - A configured `PlayerBundle`.
     pub fn new(id: PlayerId, team: TeamSpec) -> Self {
         Self {
             player: Player { id },
             team: Team(team),
-            health: Health::new(100),
-            mana: Mana::new(100),
-            move_speed: MoveSpeed(6.0),
+            health: Health::new(DEFAULT_PLAYER_HEALTH),
+            mana: Mana::new(DEFAULT_PLAYER_MANA),
+            move_speed: MoveSpeed(DEFAULT_PLAYER_MOVEMENT_SPEED),
             controlled: PlayerControlled,
         }
     }
 }
 
 /// Returns the first non-empty public name segment after removing an email domain.
-pub fn public_display_name(value: &str) -> Option<String> {
-    let without_email_domain = value.trim().split('@').next().unwrap_or("").trim();
+pub fn public_display_name(input: &str) -> Option<String> {
+    let without_email_domain = input.trim().split('@').next().unwrap_or("").trim();
     let public_name = without_email_domain
         .split(|character: char| character.is_whitespace() || matches!(character, '.' | '_' | '-'))
         .find(|part| !part.trim().is_empty())?
@@ -220,13 +131,13 @@ pub fn public_display_name(value: &str) -> Option<String> {
 }
 
 /// Returns a trimmed owned string when the input contains non-whitespace characters.
-pub fn non_empty_string(value: &str) -> Option<String> {
-    let value = value.trim();
+pub fn non_empty_string(input: &str) -> Option<String> {
+    let trimmed = input.trim();
 
-    if value.is_empty() {
+    if trimmed.is_empty() {
         None
     } else {
-        Some(value.to_string())
+        Some(trimmed.to_string())
     }
 }
 
