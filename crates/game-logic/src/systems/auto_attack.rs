@@ -9,7 +9,10 @@ use bevy::math::primitives::Sphere;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use game_shared::game::{
-    auto_attack::{AUTO_ATTACK_COMBO_RESET_SECONDS, AUTO_ATTACK_RANGE, auto_attack_combo},
+    auto_attack::{
+        AUTO_ATTACK_COMBO_RESET_SECONDS, AUTO_ATTACK_PROJECTILE_MIN_TRAVEL_SECONDS,
+        AUTO_ATTACK_RANGE, auto_attack_combo, auto_attack_projectile_travel_seconds,
+    },
     camera::TopDownCamera,
     map::MapGround,
     player::{Health, MoveTarget, Player, PlayerControlled},
@@ -22,8 +25,6 @@ use lightyear::prelude::*;
 
 const AUTO_ATTACK_PROJECTILE_RADIUS: f32 = 0.12;
 const AUTO_ATTACK_PROJECTILE_HEIGHT: f32 = 0.8;
-const AUTO_ATTACK_MIN_TRAVEL_SECONDS: f32 = 0.075;
-const AUTO_ATTACK_MAX_TRAVEL_SECONDS: f32 = 0.45;
 /// Stores local auto-attack cooldown state.
 #[derive(Resource, Debug, Clone)]
 pub(super) struct AutoAttackState {
@@ -156,7 +157,7 @@ pub(super) fn update_auto_attack_target(
         Option<&Player>,
         Option<&NetworkTargetId>,
     )>,
-    tower_query: Query<(&RemoteLaneUnit, &Health), Without<PlayerControlled>>,
+    structure_query: Query<(&RemoteLaneUnit, &Health), Without<PlayerControlled>>,
     mut command_senders: Query<&mut MessageSender<PlayerCommand>, With<Client>>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -208,7 +209,7 @@ pub(super) fn update_auto_attack_target(
     let attack_distance =
         horizontal_distance(player_transform.translation, target_transform.translation);
     if attack_distance > AUTO_ATTACK_RANGE + target.hit_radius {
-        let tower_obstacles = movement::live_tower_navigation_obstacles(&tower_query);
+        let structure_obstacles = movement::live_structure_navigation_obstacles(&structure_query);
         movement::update_local_attack_navigation(
             &mut commands,
             player_entity,
@@ -217,7 +218,7 @@ pub(super) fn update_auto_attack_target(
             target_transform.translation,
             AUTO_ATTACK_RANGE + target.hit_radius,
             current_route,
-            &tower_obstacles,
+            &structure_obstacles,
         );
         return;
     }
@@ -235,7 +236,7 @@ pub(super) fn update_auto_attack_target(
     let target_id = target_player
         .map(|player| NetworkTargetId::Player(player.id.0))
         .or(target_network_id.copied());
-    let apply_local_damage = target_id.is_none();
+    let apply_local_damage = applies_local_auto_attack_damage(target_id);
     let combo_stage = next_combo_stage(
         &mut attack_state,
         target_entity,
@@ -250,7 +251,7 @@ pub(super) fn update_auto_attack_target(
 
     let start = player_transform.translation + Vec3::Y * AUTO_ATTACK_PROJECTILE_HEIGHT;
     let end = target_transform.translation + Vec3::Y * AUTO_ATTACK_PROJECTILE_HEIGHT;
-    let travel_seconds = auto_attack_travel_seconds(attack_distance);
+    let travel_seconds = auto_attack_projectile_travel_seconds(attack_distance);
 
     spawn_auto_attack_projectile(
         &mut commands,
@@ -301,7 +302,9 @@ pub(super) fn receive_remote_auto_attack_visuals(
                 Some(target_entity),
                 event.start.into(),
                 event.end.into(),
-                event.travel_seconds.max(AUTO_ATTACK_MIN_TRAVEL_SECONDS),
+                event
+                    .travel_seconds
+                    .max(AUTO_ATTACK_PROJECTILE_MIN_TRAVEL_SECONDS),
                 0.0,
                 false,
                 Color::srgba(1.0, 1.0, 1.0, 0.95),
@@ -327,7 +330,9 @@ pub(super) fn receive_remote_ranged_minion_auto_attack_visuals(
                 target_entity_for_network_id(event.target, &target_query),
                 event.start.into(),
                 event.end.into(),
-                event.travel_seconds.max(AUTO_ATTACK_MIN_TRAVEL_SECONDS),
+                event
+                    .travel_seconds
+                    .max(AUTO_ATTACK_PROJECTILE_MIN_TRAVEL_SECONDS),
                 0.0,
                 false,
                 super::lane::team_color(event.team).with_alpha(0.95),
@@ -335,7 +340,7 @@ pub(super) fn receive_remote_ranged_minion_auto_attack_visuals(
         }
     }
 }
-/// Moves active auto-attack projectiles and applies damage when they reach their target.
+/// Moves active auto-attack projectiles and applies preview-only damage at projectile impact.
 pub(super) fn update_auto_attack_projectiles(
     time: Res<Time>,
     mut commands: Commands,
@@ -514,13 +519,6 @@ fn tick_combo_reset(attack_state: &mut AutoAttackState, delta_seconds: f32) {
         attack_state.combo_target = None;
     }
 }
-fn auto_attack_travel_seconds(distance: f32) -> f32 {
-    let range_ratio = (distance / AUTO_ATTACK_RANGE).clamp(0.0, 1.0);
-    (range_ratio * AUTO_ATTACK_MAX_TRAVEL_SECONDS).clamp(
-        AUTO_ATTACK_MIN_TRAVEL_SECONDS,
-        AUTO_ATTACK_MAX_TRAVEL_SECONDS,
-    )
-}
 fn spawn_auto_attack_projectile(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -573,5 +571,29 @@ fn send_attack_move_command(
 ) {
     for mut sender in command_senders.iter_mut() {
         sender.send::<ReliableCommandChannel>(PlayerCommand::AttackMove { target });
+    }
+}
+
+/// Returns whether an auto attack may update target health locally.
+///
+/// Network-backed targets always receive damage through server snapshots. Only the offline
+/// development preview dummy has no network target id and therefore needs local damage.
+fn applies_local_auto_attack_damage(target_id: Option<NetworkTargetId>) -> bool {
+    target_id.is_none()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_offline_preview_targets_receive_local_auto_attack_damage() {
+        assert!(applies_local_auto_attack_damage(None));
+        assert!(!applies_local_auto_attack_damage(Some(
+            NetworkTargetId::Player(7)
+        )));
+        assert!(!applies_local_auto_attack_damage(Some(
+            NetworkTargetId::LaneUnit(11)
+        )));
     }
 }

@@ -15,7 +15,10 @@ use std::{
 const DEFAULT_CHAMPION_API_ADDR: &str = "localhost:8084";
 const CHAMPION_API_BASE_PATH: &str = "/api/champions";
 const CHAMPION_API_TIMEOUT: Duration = Duration::from_secs(5);
-/// Registers server-authoritative champion content loaded from the champion API.
+const DEVELOPMENT_CHAMPION_CATALOG_SOURCE_ENV: &str = "MIRA_DEVELOPMENT_CHAMPION_CATALOG";
+const EMBEDDED_DEVELOPMENT_CHAMPION_CATALOG: &str =
+    include_str!("development_champion_catalog.json");
+/// Registers server-authoritative champion content for the active catalog source.
 pub struct ServerContentPlugin;
 
 impl Plugin for ServerContentPlugin {
@@ -33,13 +36,20 @@ pub struct ServerChampionCatalog {
 }
 
 impl ServerChampionCatalog {
-    /// Loads the development champion catalog from the champion API.
+    /// Loads the development champion catalog from the selected local snapshot or champion API.
     ///
     /// - A catalog containing the current development champion definition.
     pub fn load_development_catalog() -> Self {
-        let api_champions = load_champion_api_catalog().unwrap_or_else(|error| {
-            panic!("Failed to load server champion catalog from API: {error}")
-        });
+        let api_champions = if uses_embedded_development_catalog() {
+            info!("Loaded embedded development champion catalog.");
+            load_embedded_development_champion_catalog().unwrap_or_else(|error| {
+                panic!("Failed to load embedded development champion catalog: {error}")
+            })
+        } else {
+            load_champion_api_catalog().unwrap_or_else(|error| {
+                panic!("Failed to load server champion catalog from API: {error}")
+            })
+        };
         let mut champions = HashMap::new();
         for champion_id in ChampionId::PROTOTYPE_ROSTER {
             let champion =
@@ -373,6 +383,18 @@ fn load_champion_api_catalog() -> Result<Vec<ChampionApiResponse>, String> {
     serde_json::from_str::<Vec<ChampionApiResponse>>(&raw)
         .map_err(|error| format!("Failed to parse champion catalog API response: {error}"))
 }
+
+/// Returns whether the local development catalog snapshot was explicitly selected.
+fn uses_embedded_development_catalog() -> bool {
+    std::env::var(DEVELOPMENT_CHAMPION_CATALOG_SOURCE_ENV)
+        .is_ok_and(|source| source.eq_ignore_ascii_case("embedded"))
+}
+
+/// Loads the prototype champion snapshot used by local development recipes.
+fn load_embedded_development_champion_catalog() -> Result<Vec<ChampionApiResponse>, String> {
+    serde_json::from_str(EMBEDDED_DEVELOPMENT_CHAMPION_CATALOG)
+        .map_err(|error| format!("Failed to parse embedded champion catalog: {error}"))
+}
 /// Loads one champion definition from the champion API detail endpoint.
 ///
 /// - `champion_name`: Champion name appended to `/api/champions`.
@@ -623,5 +645,15 @@ mod tests {
         let error = load_champion_definition(ChampionId(9_999), &[]).unwrap_err();
 
         assert_eq!(error, "Unsupported prototype champion id 9999");
+    }
+
+    #[test]
+    fn loads_every_prototype_champion_from_the_embedded_development_catalog() {
+        let champions = load_embedded_development_champion_catalog().unwrap();
+
+        for champion_id in ChampionId::PROTOTYPE_ROSTER {
+            let champion = load_champion_definition(champion_id, &champions).unwrap();
+            validate_development_champion(champion_id, &champion).unwrap();
+        }
     }
 }

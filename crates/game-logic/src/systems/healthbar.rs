@@ -677,7 +677,7 @@ fn spawn_health_bar(
         .id()
 }
 
-/// Spawns the minimal overhead health bar used by lane minions and towers.
+/// Spawns the minimal overhead health bar used by lane units.
 fn spawn_plain_health_bar(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,

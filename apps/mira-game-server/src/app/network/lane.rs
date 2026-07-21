@@ -3,10 +3,11 @@ use super::geometry::{distance_to_segment_xz, horizontal_distance, point_in_orie
 use super::lobby::{ConnectedPlayers, LoadingScreenReadyPlayers};
 use bevy::prelude::*;
 use game_shared::game::{
-    auto_attack::AUTO_ATTACK_RANGE,
     lane::{
         LANE_HALF_WIDTH, LANE_PLAYER_COLLISION_RADIUS, LANE_SPAWN_Z, LANE_WAVE_INTERVAL_SECONDS,
-        LaneUnitKind, lane_forward_direction, lane_forward_yaw, lane_spawn_position,
+        LaneUnitKind, TOWER_BASE_ATTACK_DAMAGE, TOWER_FOURTH_PLAYER_SHOT_MAX_HEALTH_FRACTION,
+        TOWER_SECOND_PLAYER_SHOT_MAX_HEALTH_FRACTION, TOWER_THIRD_PLAYER_SHOT_MAX_HEALTH_FRACTION,
+        lane_forward_direction, lane_forward_yaw, lane_nexus_position, lane_spawn_position,
         lane_tower_position, lane_unit_stats,
     },
     lane_navigation::{
@@ -23,6 +24,9 @@ use game_shared::network::{
 use lightyear::prelude::server::ClientOf;
 use lightyear::prelude::*;
 use std::collections::{HashMap, VecDeque};
+
+#[cfg(test)]
+use game_shared::game::lane::NEXUS_MAX_HEALTH;
 
 const LANE_SNAPSHOT_INTERVAL_SECONDS: f32 = 1.0 / 20.0;
 const LANE_WAVE_UNIT_SPAWN_INTERVAL_SECONDS: f32 = 0.4;
@@ -47,15 +51,17 @@ const MINION_WAVE_ASSIST_RADIUS: f32 = 4.5;
 // frontline has engaged, so they can fan out instead of getting stuck directly behind it.
 const RANGED_MINION_WAVE_ASSIST_RADIUS: f32 = 7.0;
 const MINION_WAVE_TARGET_CLUSTER_RADIUS: f32 = 4.5;
+// Despawn minions when they enter the far end of the opposing spawn lane.
+const MINION_OPPOSING_SPAWN_DESPAWN_DEPTH: f32 = 3.0;
 // A following minion may join the opponent's active front, but never skip to a rear row.
 const MINION_WAVE_FRONTLINE_DEPTH: f32 = 1.25;
 const NAVIGATION_GOAL_REPLAN_DISTANCE: f32 = 0.35;
 const NAVIGATION_WAYPOINT_REACHED_DISTANCE: f32 = 0.12;
 // A projected mesh start must be reached before consuming the next route corner. Using the
 // regular waypoint tolerance here can skip the short recovery leg and leave a mover stuck on a
-// tower edge.
+// structure edge.
 const NAVIGATION_RECOVERY_WAYPOINT_REACHED_DISTANCE: f32 = 0.001;
-// Begin routing before a minion reaches a tower, while keeping the initial march centered.
+// Begin routing before a minion reaches a structure, while keeping the initial march centered.
 const MINION_NAVIGATION_ACTIVATION_DISTANCE: f32 = 8.0;
 // Dynamic minions still need a short local avoidance pass after following a static mesh route.
 const MINION_BLOCKER_DETOUR_STRENGTH: f32 = 1.25;
@@ -111,6 +117,8 @@ struct ServerLaneUnit {
     attack_target: Option<NetworkTargetId>,
     engagement_target: Option<NetworkTargetId>,
     forced_player_target: Option<u64>,
+    tower_player_target: Option<u64>,
+    tower_consecutive_player_shots: u8,
     navigation_path: LaneNavigationPath,
 }
 
@@ -149,6 +157,7 @@ struct TowerProjectile {
     source_id: u64,
     target: NetworkTargetId,
     remaining_seconds: f32,
+    damage: f32,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -242,21 +251,21 @@ impl ServerLaneState {
         goal: Vec3,
         agent_radius: f32,
     ) -> (u64, Option<MeshNavigationPath>) {
-        let obstacles = self.living_tower_navigation_obstacles();
+        let obstacles = self.living_structure_navigation_obstacles();
         self.navigation
             .find_path_with_projection(agent_radius, start, goal, &obstacles)
     }
 
-    /// Returns the revision of the current living-tower navigation layout.
+    /// Returns the revision of the current living-structure navigation layout.
     pub(super) fn navigation_obstacle_revision(&mut self) -> u64 {
-        let obstacles = self.living_tower_navigation_obstacles();
+        let obstacles = self.living_structure_navigation_obstacles();
         self.navigation.obstacle_revision(&obstacles)
     }
 
-    fn living_tower_navigation_obstacles(&self) -> Vec<LaneNavigationObstacle> {
+    fn living_structure_navigation_obstacles(&self) -> Vec<LaneNavigationObstacle> {
         self.units
             .values()
-            .filter(|unit| unit.kind == LaneUnitKind::Tower && unit.health > 0.0)
+            .filter(|unit| unit.kind.is_structure() && unit.health > 0.0)
             .map(|unit| {
                 LaneNavigationObstacle::new(unit.position, lane_unit_stats(unit.kind).hit_radius)
             })
@@ -277,35 +286,37 @@ impl ServerLaneState {
         Some((target.position, lane_unit_stats(target.kind).hit_radius))
     }
 
-    /// Resolves a player movement segment against every living lane tower.
-    pub(super) fn resolve_player_tower_collision(
+    /// Resolves a circular mover's movement segment against every living lane structure.
+    pub(super) fn resolve_structure_collision(
         &self,
         start: Vec3,
         desired: Vec3,
-        player_radius: f32,
+        mover_radius: f32,
     ) -> Vec3 {
-        let tower_obstacles = self.living_tower_navigation_obstacles();
+        let structure_obstacles = self.living_structure_navigation_obstacles();
 
-        resolve_circle_obstacle_collisions(start, desired, player_radius, &tower_obstacles)
+        resolve_circle_obstacle_collisions(start, desired, mover_radius, &structure_obstacles)
     }
 
-    /// Validates and applies a player auto attack against a tower or minion.
-    pub(super) fn apply_player_auto_attack(
+    /// Applies a launched player auto attack after its projectile reaches the target.
+    ///
+    /// The attack range was validated when the projectile was launched. The impact therefore
+    /// only verifies that the target is still a living enemy lane unit before applying damage.
+    pub(super) fn apply_player_auto_attack_impact(
         &mut self,
-        caster_position: Vec3,
         caster_team: TeamSpec,
         target_id: u64,
         damage: f32,
-    ) -> Option<(Vec3, f32)> {
-        let (target_position, hit_radius) =
-            self.target_for_player_auto_attack(caster_team, target_id)?;
-        let distance = horizontal_distance(caster_position, target_position);
-        if distance > AUTO_ATTACK_RANGE + hit_radius {
-            return None;
+    ) -> bool {
+        if self
+            .target_for_player_auto_attack(caster_team, target_id)
+            .is_none()
+        {
+            return false;
         }
 
         self.apply_lane_unit_damage(target_id, damage);
-        Some((target_position, hit_radius))
+        true
     }
 
     /// Applies hostile spell damage to enemy minions near an accepted spell impact.
@@ -323,7 +334,7 @@ impl ServerLaneState {
         let target_ids = self
             .units
             .iter()
-            .filter(|(_, unit)| unit.kind != LaneUnitKind::Tower)
+            .filter(|(_, unit)| unit.kind.is_minion())
             .filter(|(_, unit)| unit.team != caster_team && unit.health > 0.0)
             .filter(|(_, unit)| {
                 horizontal_distance(unit.position, center)
@@ -354,7 +365,7 @@ impl ServerLaneState {
         let mut target_ids = self
             .units
             .iter()
-            .filter(|(_, unit)| unit.kind != LaneUnitKind::Tower)
+            .filter(|(_, unit)| unit.kind.is_minion())
             .filter(|(_, unit)| unit.team != caster_team && unit.health > 0.0)
             .filter(|(id, _)| !hit_target_ids.contains(id))
             .filter(|(_, unit)| {
@@ -387,7 +398,7 @@ impl ServerLaneState {
         let mut target_ids = self
             .units
             .iter()
-            .filter(|(_, unit)| unit.kind != LaneUnitKind::Tower)
+            .filter(|(_, unit)| unit.kind.is_minion())
             .filter(|(_, unit)| unit.team != caster_team && unit.health > 0.0)
             .filter(|(_, unit)| point_in_oriented_rect_xz(unit.position, start, end, width))
             .map(|(id, _)| *id)
@@ -407,7 +418,7 @@ impl ServerLaneState {
     ) -> Option<(Vec3, f32)> {
         let target = self.units.get(&target_id)?;
         if !caster_team.is_playable()
-            || target.kind == LaneUnitKind::Tower
+            || !target.kind.is_minion()
             || target.team == caster_team
             || target.health <= 0.0
         {
@@ -447,7 +458,7 @@ impl ServerLaneState {
 
         self.units
             .iter()
-            .filter(|(_, unit)| unit.kind != LaneUnitKind::Tower)
+            .filter(|(_, unit)| unit.kind.is_minion())
             .filter(|(_, unit)| unit.team != caster_team && unit.health > 0.0)
             .filter(|(_, unit)| horizontal_distance(range_center, unit.position) <= range)
             .map(|(id, unit)| {
@@ -486,6 +497,12 @@ impl ServerLaneState {
         self.units.get(&unit_id).map(|unit| unit.health)
     }
 
+    /// Removes a lane unit for a server test.
+    #[cfg(test)]
+    pub(super) fn despawn_test_unit(&mut self, unit_id: u64) {
+        self.units.remove(&unit_id);
+    }
+
     /// Prioritizes an enemy player who damages an allied player under a tower.
     pub(super) fn record_hostile_player_action(
         &mut self,
@@ -522,6 +539,8 @@ impl ServerLaneState {
         self.started = true;
         self.spawn_tower(TeamSpec::Light);
         self.spawn_tower(TeamSpec::Dark);
+        self.spawn_nexus(TeamSpec::Light);
+        self.spawn_nexus(TeamSpec::Dark);
         self.queue_wave();
         self.spawn_next_wave_pair();
     }
@@ -542,6 +561,10 @@ impl ServerLaneState {
 
     fn spawn_tower(&mut self, team: TeamSpec) {
         self.spawn_unit(LaneUnitKind::Tower, team, lane_tower_position(team));
+    }
+
+    fn spawn_nexus(&mut self, team: TeamSpec) {
+        self.spawn_unit(LaneUnitKind::Nexus, team, lane_nexus_position(team));
     }
 
     fn queue_wave(&mut self) {
@@ -584,6 +607,8 @@ impl ServerLaneState {
                 attack_target: None,
                 engagement_target: None,
                 forced_player_target: None,
+                tower_player_target: None,
+                tower_consecutive_player_shots: 0,
                 navigation_path: LaneNavigationPath::default(),
             },
         );
@@ -619,6 +644,7 @@ impl ServerLaneState {
 
             if kind == LaneUnitKind::Tower {
                 let target = self.select_tower_target(unit_id, players);
+                self.update_tower_player_target(unit_id, target);
                 let mut target_for_snapshot = target;
                 if attack_cooldown <= 0.0
                     && let Some(target) = target
@@ -634,6 +660,7 @@ impl ServerLaneState {
                             TOWER_PROJECTILE_MIN_TRAVEL_SECONDS,
                             TOWER_PROJECTILE_MAX_TRAVEL_SECONDS,
                         ),
+                        damage: self.tower_projectile_damage(unit_id, target, players),
                     });
                     target_for_snapshot = Some(target);
                 }
@@ -649,6 +676,10 @@ impl ServerLaneState {
                     };
                     unit.attack_target = target_for_snapshot;
                 }
+                continue;
+            }
+
+            if !kind.is_minion() {
                 continue;
             }
 
@@ -745,14 +776,14 @@ impl ServerLaneState {
                     navigation_goal,
                     Self::minion_navigation_agent_radius(stats),
                 );
-                let follows_tower_navigation = self.minion_follows_navigation_route(unit_id);
+                let follows_structure_navigation = self.minion_follows_navigation_route(unit_id);
                 moved_position = self.move_minion_toward(
                     unit_id,
                     position,
                     navigation_waypoint,
                     stats,
                     delta_seconds,
-                    follows_tower_navigation
+                    follows_structure_navigation
                         || self.can_route_around_frontline(unit_id, &minion_targets, players),
                 );
             }
@@ -769,11 +800,89 @@ impl ServerLaneState {
         for action in damage_actions {
             self.apply_damage_action(action, players, combat_events);
         }
-        self.units.retain(|_, unit| unit.health > 0.0);
+        self.units
+            .retain(|_, unit| unit.health > 0.0 && !Self::minion_reached_opposing_spawn(unit));
     }
 
     fn is_ranged_minion(kind: LaneUnitKind) -> bool {
         matches!(kind, LaneUnitKind::LargeRangedBox | LaneUnitKind::RangedOrb)
+    }
+
+    fn update_tower_player_target(&mut self, tower_id: u64, target: Option<NetworkTargetId>) {
+        let Some(tower) = self.units.get_mut(&tower_id) else {
+            return;
+        };
+
+        match target {
+            Some(NetworkTargetId::Player(player_id))
+                if tower.tower_player_target == Some(player_id) => {}
+            Some(NetworkTargetId::Player(player_id)) => {
+                tower.tower_player_target = Some(player_id);
+                tower.tower_consecutive_player_shots = 0;
+            }
+            Some(NetworkTargetId::LaneUnit(_)) | None => {
+                tower.tower_player_target = None;
+                tower.tower_consecutive_player_shots = 0;
+            }
+        }
+    }
+
+    fn tower_projectile_damage(
+        &mut self,
+        tower_id: u64,
+        target: NetworkTargetId,
+        players: &ConnectedPlayers,
+    ) -> f32 {
+        let base_damage = TOWER_BASE_ATTACK_DAMAGE;
+        let NetworkTargetId::Player(player_id) = target else {
+            return base_damage;
+        };
+        let Some(player) = players.states.get(&player_id) else {
+            return base_damage;
+        };
+        let Some(tower) = self.units.get_mut(&tower_id) else {
+            return base_damage;
+        };
+
+        let extra_damage_fraction = match tower.tower_consecutive_player_shots {
+            0 => 0.0,
+            1 => TOWER_SECOND_PLAYER_SHOT_MAX_HEALTH_FRACTION,
+            2 => TOWER_THIRD_PLAYER_SHOT_MAX_HEALTH_FRACTION,
+            _ => TOWER_FOURTH_PLAYER_SHOT_MAX_HEALTH_FRACTION,
+        };
+        tower.tower_consecutive_player_shots =
+            tower.tower_consecutive_player_shots.saturating_add(1);
+        base_damage + player.max_health * extra_damage_fraction
+    }
+
+    fn is_minion_or_structure(kind: LaneUnitKind) -> bool {
+        kind.is_minion() || kind.is_structure()
+    }
+
+    fn is_minion_movement_blocker(kind: LaneUnitKind) -> bool {
+        kind.is_minion() || kind.is_structure()
+    }
+
+    fn minion_reached_opposing_spawn(unit: &ServerLaneUnit) -> bool {
+        if !unit.kind.is_minion() {
+            return false;
+        }
+
+        let Some(opponent_team) = unit.team.opponent() else {
+            return false;
+        };
+
+        let forward_direction = lane_forward_direction(unit.team);
+        let opposing_nexus_z = lane_nexus_position(opponent_team).z;
+        let passed_opposing_nexus = (unit.position.z - opposing_nexus_z) * forward_direction.z
+            > lane_unit_stats(LaneUnitKind::Nexus).hit_radius;
+        if passed_opposing_nexus {
+            return true;
+        }
+
+        let opposing_spawn_z = lane_spawn_position(opponent_team).z;
+        (unit.position.z - opposing_spawn_z) * forward_direction.z
+            >= -MINION_OPPOSING_SPAWN_DESPAWN_DEPTH
     }
 
     fn take_ranged_minion_auto_attack_visuals(&mut self) -> Vec<RangedMinionAutoAttackVisualEvent> {
@@ -792,19 +901,15 @@ impl ServerLaneState {
             if projectile.remaining_seconds > 0.0 {
                 return true;
             }
-            impacts.push(projectile.target);
+            impacts.push(LaneDamageAction {
+                target: projectile.target,
+                amount: projectile.damage,
+            });
             false
         });
 
-        for target in impacts {
-            self.apply_damage_action(
-                LaneDamageAction {
-                    target,
-                    amount: lane_unit_stats(LaneUnitKind::Tower).attack_damage,
-                },
-                players,
-                combat_events,
-            );
+        for impact in impacts {
+            self.apply_damage_action(impact, players, combat_events);
         }
     }
 
@@ -851,7 +956,13 @@ impl ServerLaneState {
                 }
             }
             NetworkTargetId::LaneUnit(unit_id) => {
-                self.apply_lane_unit_damage(unit_id, action.amount)
+                if self
+                    .units
+                    .get(&unit_id)
+                    .is_some_and(|unit| Self::is_minion_or_structure(unit.kind))
+                {
+                    self.apply_lane_unit_damage(unit_id, action.amount);
+                }
             }
         }
     }
@@ -953,7 +1064,7 @@ impl ServerLaneState {
                 let candidate = self.units.get(candidate_id)?;
                 if candidate.health <= 0.0
                     || candidate.team != team
-                    || candidate.kind == LaneUnitKind::Tower
+                    || !candidate.kind.is_minion()
                     || !Self::shares_combat_band(kind, candidate.kind)
                 {
                     return None;
@@ -1026,7 +1137,7 @@ impl ServerLaneState {
         match kind {
             LaneUnitKind::MeleeBox => MELEE_COMBAT_SLOT_COLUMNS,
             LaneUnitKind::LargeRangedBox | LaneUnitKind::RangedOrb => RANGED_COMBAT_SLOT_COLUMNS,
-            LaneUnitKind::Tower => 1,
+            LaneUnitKind::Tower | LaneUnitKind::Nexus => 1,
         }
     }
 
@@ -1065,7 +1176,7 @@ impl ServerLaneState {
             LaneUnitKind::LargeRangedBox | LaneUnitKind::RangedOrb => {
                 &RANGED_SINGLETON_COMBAT_SLOT_ANGLES[..]
             }
-            LaneUnitKind::Tower => return 0.0,
+            LaneUnitKind::Tower | LaneUnitKind::Nexus => return 0.0,
         };
 
         angles[(pair_index % angles.len() as u64) as usize]
@@ -1077,7 +1188,7 @@ impl ServerLaneState {
             LaneUnitKind::LargeRangedBox | LaneUnitKind::RangedOrb => {
                 MINION_RANGED_TARGET_LEASH_MARGIN
             }
-            LaneUnitKind::Tower => 0.0,
+            LaneUnitKind::Tower | LaneUnitKind::Nexus => 0.0,
         }
     }
 
@@ -1087,7 +1198,7 @@ impl ServerLaneState {
             LaneUnitKind::LargeRangedBox | LaneUnitKind::RangedOrb => {
                 RANGED_MINION_WAVE_ASSIST_RADIUS
             }
-            LaneUnitKind::Tower => 0.0,
+            LaneUnitKind::Tower | LaneUnitKind::Nexus => 0.0,
         }
     }
 
@@ -1109,7 +1220,7 @@ impl ServerLaneState {
             NetworkTargetId::LaneUnit(unit_id) => self
                 .units
                 .get(&unit_id)
-                .is_some_and(|unit| unit.health > 0.0),
+                .is_some_and(|unit| unit.health > 0.0 && Self::is_minion_or_structure(unit.kind)),
         }
     }
 
@@ -1165,7 +1276,7 @@ impl ServerLaneState {
                     && **target_id != current_target_id
                     && target.health > 0.0
                     && target.team != unit.team
-                    && target.kind != LaneUnitKind::Tower
+                    && target.kind.is_minion()
             })
             .filter(|(_, target)| {
                 Self::is_within_minion_trigger_range(
@@ -1200,7 +1311,7 @@ impl ServerLaneState {
         self.units.iter().any(|(ally_id, ally)| {
             *ally_id != unit_id
                 && ally.team == unit.team
-                && ally.kind != LaneUnitKind::Tower
+                && ally.kind.is_minion()
                 && ally.health > 0.0
                 && horizontal_distance(unit.position, ally.position)
                     <= Self::minion_wave_assist_radius(unit.kind)
@@ -1214,7 +1325,7 @@ impl ServerLaneState {
         })
     }
 
-    /// Returns whether a minion is currently following a route around a living tower.
+    /// Returns whether a minion is currently following a route around a living structure.
     fn minion_follows_navigation_route(&self, unit_id: u64) -> bool {
         self.units.get(&unit_id).is_some_and(|unit| {
             unit.navigation_path.route_resolved && !unit.navigation_path.waypoints.is_empty()
@@ -1235,10 +1346,13 @@ impl ServerLaneState {
                         && TeamSpec::from(player.team) != team
                 })
             }
-            NetworkTargetId::LaneUnit(target_id) => self
-                .units
-                .get(&target_id)
-                .is_some_and(|target| target.health > 0.0 && target.team != team),
+            NetworkTargetId::LaneUnit(target_id) => {
+                self.units.get(&target_id).is_some_and(|target| {
+                    target.health > 0.0
+                        && target.team != team
+                        && Self::is_minion_or_structure(target.kind)
+                })
+            }
         }
     }
 
@@ -1249,9 +1363,9 @@ impl ServerLaneState {
         goal: Vec3,
         agent_radius: f32,
     ) -> Vec3 {
-        // The mesh is only needed close to a tower. This keeps newly spawned waves in their
+        // The mesh is only needed close to a structure. This keeps newly spawned waves in their
         // centered marching column instead of steering toward a far-away obstacle immediately.
-        if !self.minion_route_needs_tower_navigation(position, goal, agent_radius) {
+        if !self.minion_route_needs_structure_navigation(position, goal, agent_radius) {
             if let Some(unit) = self.units.get_mut(&unit_id) {
                 unit.navigation_path = LaneNavigationPath::default();
             }
@@ -1330,12 +1444,12 @@ impl ServerLaneState {
         stats: game_shared::game::lane::LaneUnitStats,
         target: NetworkTargetId,
     ) -> f32 {
-        let target_is_tower = matches!(target, NetworkTargetId::LaneUnit(target_id) if self
+        let target_is_structure = matches!(target, NetworkTargetId::LaneUnit(target_id) if self
             .units
             .get(&target_id)
-            .is_some_and(|unit| unit.kind == LaneUnitKind::Tower));
+            .is_some_and(|unit| unit.kind.is_structure()));
 
-        if target_is_tower {
+        if target_is_structure {
             // Target clearance is enforced separately by `move_minion_to_combat_slot`. Baking
             // its interpersonal separation margin into the mesh would project melee attackers
             // just outside their legal attack range.
@@ -1376,7 +1490,7 @@ impl ServerLaneState {
         )
     }
 
-    fn minion_route_needs_tower_navigation(
+    fn minion_route_needs_structure_navigation(
         &self,
         position: Vec3,
         goal: Vec3,
@@ -1388,22 +1502,22 @@ impl ServerLaneState {
             return false;
         }
 
-        self.units.values().any(|tower| {
-            if tower.kind != LaneUnitKind::Tower || tower.health <= 0.0 {
+        self.units.values().any(|structure| {
+            if !structure.kind.is_structure() || structure.health <= 0.0 {
                 return false;
             }
 
             let from_start = Vec3::new(
-                tower.position.x - position.x,
+                structure.position.x - position.x,
                 0.0,
-                tower.position.z - position.z,
+                structure.position.z - position.z,
             );
             let progress = (from_start.dot(path) / path_length_squared).clamp(0.0, 1.0);
             let nearest = position + path * progress;
-            let tower_clearance = lane_unit_stats(LaneUnitKind::Tower).hit_radius + agent_radius;
-            horizontal_distance(nearest, tower.position) <= tower_clearance
+            let structure_clearance = lane_unit_stats(structure.kind).hit_radius + agent_radius;
+            horizontal_distance(nearest, structure.position) <= structure_clearance
                 && horizontal_distance(position, nearest)
-                    <= MINION_NAVIGATION_ACTIVATION_DISTANCE + tower_clearance
+                    <= MINION_NAVIGATION_ACTIVATION_DISTANCE + structure_clearance
         })
     }
 
@@ -1421,23 +1535,23 @@ impl ServerLaneState {
         }
         let team = self.units.get(&unit_id)?.team;
 
-        let tower = self
+        let structure = self
             .units
             .values()
-            .filter(|tower| tower.kind == LaneUnitKind::Tower && tower.health > 0.0)
-            .filter_map(|tower| {
+            .filter(|structure| structure.kind.is_structure() && structure.health > 0.0)
+            .filter_map(|structure| {
                 let from_start = Vec3::new(
-                    tower.position.x - position.x,
+                    structure.position.x - position.x,
                     0.0,
-                    tower.position.z - position.z,
+                    structure.position.z - position.z,
                 );
                 let progress = (from_start.dot(path) / path_length_squared).clamp(0.0, 1.0);
                 let nearest = position + path * progress;
-                let clearance = lane_unit_stats(LaneUnitKind::Tower).hit_radius + agent_radius;
-                (horizontal_distance(nearest, tower.position) <= clearance
+                let clearance = lane_unit_stats(structure.kind).hit_radius + agent_radius;
+                (horizontal_distance(nearest, structure.position) <= clearance
                     && horizontal_distance(position, nearest)
                         <= MINION_NAVIGATION_ACTIVATION_DISTANCE + clearance)
-                    .then_some((progress, tower))
+                    .then_some((progress, structure))
             })
             .min_by(|left, right| {
                 left.0
@@ -1450,21 +1564,18 @@ impl ServerLaneState {
             .units
             .iter()
             .filter(|(candidate_id, candidate)| {
-                **candidate_id < unit_id
-                    && candidate.team == team
-                    && candidate.kind != LaneUnitKind::Tower
+                **candidate_id < unit_id && candidate.team == team && candidate.kind.is_minion()
             })
             .count();
         let side = if side_rank % 2 == 0 { 1.0 } else { -1.0 };
-        let clearance = lane_unit_stats(LaneUnitKind::Tower).hit_radius
-            + agent_radius
-            + LANE_NAVIGATION_CLEARANCE;
+        let clearance =
+            lane_unit_stats(structure.kind).hit_radius + agent_radius + LANE_NAVIGATION_CLEARANCE;
         let x_limit = (LANE_HALF_WIDTH - agent_radius - LANE_NAVIGATION_CLEARANCE).max(0.0);
 
         Some(Vec3::new(
-            (tower.position.x + side * clearance).clamp(-x_limit, x_limit),
-            tower.position.y,
-            tower.position.z,
+            (structure.position.x + side * clearance).clamp(-x_limit, x_limit),
+            structure.position.y,
+            structure.position.z,
         ))
     }
 
@@ -1598,7 +1709,7 @@ impl ServerLaneState {
         }
 
         if !allow_minion_detour
-            && !self.tower_blocks_minion_movement(
+            && !self.structure_blocks_minion_movement(
                 unit_id,
                 position,
                 desired_position,
@@ -1671,7 +1782,7 @@ impl ServerLaneState {
             }
         }
 
-        // At the exact edge of a tower's clearance circle, every movement with a forward
+        // At the exact edge of a structure's clearance circle, every movement with a forward
         // component still points into the obstacle. Take a lateral step first, then resume the
         // forward-biased candidates on the next update.
         for direction in [lateral * preferred_side, -lateral * preferred_side] {
@@ -1749,7 +1860,10 @@ impl ServerLaneState {
         self.units
             .iter()
             .filter(|(other_id, other)| {
-                **other_id != unit_id && Some(**other_id) != ignored_unit_id && other.health > 0.0
+                **other_id != unit_id
+                    && Some(**other_id) != ignored_unit_id
+                    && other.health > 0.0
+                    && Self::is_minion_movement_blocker(other.kind)
             })
             .filter_map(|(other_id, other)| {
                 let minimum_distance = hit_radius
@@ -1793,14 +1907,14 @@ impl ServerLaneState {
             .filter(|(candidate_id, candidate)| {
                 **candidate_id < unit_id
                     && candidate.team == unit.team
-                    && candidate.kind != LaneUnitKind::Tower
+                    && candidate.kind.is_minion()
             })
             .count();
 
         if team_rank % 2 == 0 { 1.0 } else { -1.0 }
     }
 
-    fn tower_blocks_minion_movement(
+    fn structure_blocks_minion_movement(
         &self,
         unit_id: u64,
         position: Vec3,
@@ -1817,25 +1931,24 @@ impl ServerLaneState {
             return false;
         }
 
-        self.units.iter().any(|(tower_id, tower)| {
-            if *tower_id == unit_id
-                || Some(*tower_id) == ignored_unit_id
-                || tower.kind != LaneUnitKind::Tower
-                || tower.health <= 0.0
+        self.units.iter().any(|(structure_id, structure)| {
+            if *structure_id == unit_id
+                || Some(*structure_id) == ignored_unit_id
+                || !structure.kind.is_structure()
+                || structure.health <= 0.0
             {
                 return false;
             }
 
             let relative_position = Vec3::new(
-                position.x - tower.position.x,
+                position.x - structure.position.x,
                 0.0,
-                position.z - tower.position.z,
+                position.z - structure.position.z,
             );
-            let minimum_distance = hit_radius
-                + lane_unit_stats(LaneUnitKind::Tower).hit_radius
-                + MINION_SEPARATION_MARGIN;
+            let minimum_distance =
+                hit_radius + lane_unit_stats(structure.kind).hit_radius + MINION_SEPARATION_MARGIN;
             relative_position.dot(movement) < 0.0
-                && distance_to_segment_xz(tower.position, position, desired_position)
+                && distance_to_segment_xz(structure.position, position, desired_position)
                     <= minimum_distance
         })
     }
@@ -1940,7 +2053,11 @@ impl ServerLaneState {
 
         let mut allowed_fraction: f32 = 1.0;
         for (other_id, other) in &self.units {
-            if *other_id == unit_id || Some(*other_id) == ignored_unit_id || other.health <= 0.0 {
+            if *other_id == unit_id
+                || Some(*other_id) == ignored_unit_id
+                || other.health <= 0.0
+                || !Self::is_minion_movement_blocker(other.kind)
+            {
                 continue;
             }
 
@@ -2004,7 +2121,11 @@ impl ServerLaneState {
         ignored_unit_id: Option<u64>,
     ) -> bool {
         self.units.iter().any(|(other_id, other)| {
-            if *other_id == unit_id || Some(*other_id) == ignored_unit_id || other.health <= 0.0 {
+            if *other_id == unit_id
+                || Some(*other_id) == ignored_unit_id
+                || other.health <= 0.0
+                || !Self::is_minion_movement_blocker(other.kind)
+            {
                 return false;
             }
 
@@ -2027,7 +2148,7 @@ impl ServerLaneState {
             let Some(unit) = self.units.get(unit_id) else {
                 continue;
             };
-            if unit.health <= 0.0 {
+            if unit.health <= 0.0 || !unit.kind.is_minion() {
                 planned_targets.insert(*unit_id, None);
                 continue;
             }
@@ -2043,7 +2164,7 @@ impl ServerLaneState {
             let Some(unit) = self.units.get(unit_id) else {
                 continue;
             };
-            if unit.health <= 0.0 {
+            if unit.health <= 0.0 || !unit.kind.is_minion() {
                 planned_targets.insert(*unit_id, None);
                 continue;
             }
@@ -2070,7 +2191,7 @@ impl ServerLaneState {
         planned_targets: &HashMap<u64, Option<NetworkTargetId>>,
     ) -> Option<NetworkTargetId> {
         let unit = self.units.get(&unit_id)?;
-        if unit.health <= 0.0 || unit.kind == LaneUnitKind::Tower {
+        if unit.health <= 0.0 || !unit.kind.is_minion() {
             return None;
         }
 
@@ -2108,7 +2229,7 @@ impl ServerLaneState {
             .iter()
             .filter(|(target_id, target)| **target_id != unit_id && target.health > 0.0)
             .filter(|(_, target)| target.team != unit.team)
-            .filter(|(_, target)| target.kind != LaneUnitKind::Tower)
+            .filter(|(_, target)| target.kind.is_minion())
             .filter(|(_, target)| {
                 Self::is_within_minion_trigger_range(
                     unit.position,
@@ -2147,7 +2268,7 @@ impl ServerLaneState {
             .iter()
             .filter(|(target_id, target)| **target_id != unit_id && target.health > 0.0)
             .filter(|(_, target)| target.team != unit.team)
-            .filter(|(_, target)| target.kind == LaneUnitKind::Tower)
+            .filter(|(_, target)| Self::is_minion_or_structure(target.kind))
             .filter(|(_, target)| {
                 Self::is_within_minion_trigger_range(
                     unit.position,
@@ -2163,6 +2284,30 @@ impl ServerLaneState {
             })
             .min_by(Self::compare_distance_then_id)
             .map(|(target_id, _)| NetworkTargetId::LaneUnit(target_id))
+            .or_else(|| {
+                self.select_nearest_enemy_structure_target(unit_id)
+                    .map(NetworkTargetId::LaneUnit)
+            })
+    }
+
+    fn select_nearest_enemy_structure_target(&self, unit_id: u64) -> Option<u64> {
+        let unit = self.units.get(&unit_id)?;
+        self.units
+            .iter()
+            .filter(|(target_id, target)| {
+                **target_id != unit_id
+                    && target.health > 0.0
+                    && target.team != unit.team
+                    && target.kind.is_structure()
+            })
+            .map(|(target_id, target)| {
+                (
+                    *target_id,
+                    horizontal_distance(unit.position, target.position),
+                )
+            })
+            .min_by(Self::compare_distance_then_id)
+            .map(|(target_id, _)| target_id)
     }
 
     fn valid_engagement_target(
@@ -2171,7 +2316,7 @@ impl ServerLaneState {
         players: &ConnectedPlayers,
     ) -> Option<NetworkTargetId> {
         let unit = self.units.get(&unit_id)?;
-        if unit.health <= 0.0 || unit.kind == LaneUnitKind::Tower {
+        if unit.health <= 0.0 || !unit.kind.is_minion() {
             return None;
         }
         let target = unit.engagement_target?;
@@ -2196,7 +2341,7 @@ impl ServerLaneState {
             .filter(|(ally_id, ally)| {
                 **ally_id != unit_id
                     && ally.team == unit.team
-                    && ally.kind != LaneUnitKind::Tower
+                    && ally.kind.is_minion()
                     && ally.health > 0.0
                     && horizontal_distance(unit.position, ally.position)
                         <= Self::minion_wave_assist_radius(unit.kind)
@@ -2212,8 +2357,8 @@ impl ServerLaneState {
                 let target = self.units.get(&target_id)?;
                 (target.health > 0.0
                     && target.team != unit.team
-                    && target.kind != LaneUnitKind::Tower)
-                    .then_some((target_id, horizontal_distance(unit.position, ally.position)))
+                    && Self::is_minion_or_structure(target.kind))
+                .then_some((target_id, horizontal_distance(unit.position, ally.position)))
             })
             .min_by(|left, right| {
                 left.1
@@ -2223,12 +2368,15 @@ impl ServerLaneState {
             })?;
         let anchor = self.units.get(&anchor_target_id)?;
         let anchor_position = anchor.position;
+        if !anchor.kind.is_minion() {
+            return Some(NetworkTargetId::LaneUnit(anchor_target_id));
+        }
         let target_forward = lane_forward_direction(anchor.team);
         self.units
             .iter()
             .filter(|(target_id, target)| **target_id != unit_id && target.health > 0.0)
             .filter(|(_, target)| target.team != unit.team)
-            .filter(|(_, target)| target.kind != LaneUnitKind::Tower)
+            .filter(|(_, target)| target.kind.is_minion())
             .filter(|(_, target)| {
                 horizontal_distance(target.position, anchor_position)
                     <= MINION_WAVE_TARGET_CLUSTER_RADIUS
@@ -2309,6 +2457,7 @@ impl ServerLaneState {
                 candidate.health > 0.0
                     && target_id != unit_id
                     && candidate.team != unit.team
+                    && Self::is_minion_or_structure(candidate.kind)
                     && Self::is_within_minion_trigger_range(
                         unit.position,
                         candidate.position,
@@ -2355,13 +2504,26 @@ impl ServerLaneState {
             .units
             .iter()
             .filter(|(id, unit)| **id != tower_id && unit.health > 0.0)
-            .filter(|(_, unit)| unit.team != tower_team && unit.kind != LaneUnitKind::Tower)
+            .filter(|(_, unit)| unit.team != tower_team && unit.kind.is_minion())
             .filter(|(_, unit)| horizontal_distance(tower_position, unit.position) <= tower_range)
             .map(|(unit_id, unit)| (*unit_id, horizontal_distance(tower_position, unit.position)))
             .min_by(Self::compare_distance_then_id)
             .map(|(unit_id, _)| NetworkTargetId::LaneUnit(unit_id));
         if minion_target.is_some() {
             return minion_target;
+        }
+
+        let structure_target = self
+            .units
+            .iter()
+            .filter(|(id, unit)| **id != tower_id && unit.health > 0.0)
+            .filter(|(_, unit)| unit.team != tower_team && Self::is_minion_or_structure(unit.kind))
+            .filter(|(_, unit)| horizontal_distance(tower_position, unit.position) <= tower_range)
+            .map(|(unit_id, unit)| (*unit_id, horizontal_distance(tower_position, unit.position)))
+            .min_by(Self::compare_distance_then_id)
+            .map(|(unit_id, _)| NetworkTargetId::LaneUnit(unit_id));
+        if structure_target.is_some() {
+            return structure_target;
         }
 
         players
@@ -2531,7 +2693,7 @@ mod tests {
     use std::time::Duration;
 
     #[test]
-    fn initial_wave_spawns_as_a_centered_marching_column() {
+    fn initial_wave_spawns_centered_and_keeps_marching_order() {
         let mut lane = ServerLaneState::default();
         let mut players = ConnectedPlayers::default();
         let mut combat_events = ServerCombatNumberEvents::default();
@@ -2546,6 +2708,13 @@ mod tests {
             minion_kinds(&lane, TeamSpec::Dark),
             vec![LaneUnitKind::MeleeBox]
         );
+        for team in [TeamSpec::Light, TeamSpec::Dark] {
+            assert!(
+                minion_positions(&lane, team)
+                    .iter()
+                    .all(|(_, position)| position.x.abs() < 0.001)
+            );
+        }
 
         lane.update_pending_wave_spawns(Duration::from_secs_f32(
             LANE_WAVE_UNIT_SPAWN_INTERVAL_SECONDS - 0.01,
@@ -2571,8 +2740,8 @@ mod tests {
 
         assert_eq!(minion_kinds(&lane, TeamSpec::Light), MINION_WAVE);
         assert_eq!(minion_kinds(&lane, TeamSpec::Dark), MINION_WAVE);
-        assert_marching_column(&lane, TeamSpec::Light);
-        assert_marching_column(&lane, TeamSpec::Dark);
+        assert_marching_order(&lane, TeamSpec::Light);
+        assert_marching_order(&lane, TeamSpec::Dark);
     }
 
     #[test]
@@ -2601,33 +2770,35 @@ mod tests {
     }
 
     #[test]
-    fn minion_mesh_routes_keep_the_tower_clearance_used_by_collision() {
-        let mut lane = ServerLaneState::default();
-        let tower_position = Vec3::ZERO;
+    fn minion_mesh_routes_keep_structure_clearance_used_by_collision() {
         let minion_position = Vec3::new(0.0, 0.0, -4.0);
         let goal = Vec3::new(0.0, 0.0, 10.0);
         let stats = lane_unit_stats(LaneUnitKind::MeleeBox);
-        lane.spawn_unit(LaneUnitKind::Tower, TeamSpec::Light, tower_position);
+        for structure_kind in [LaneUnitKind::Tower, LaneUnitKind::Nexus] {
+            let mut lane = ServerLaneState::default();
+            let structure_position = Vec3::ZERO;
+            lane.spawn_unit(structure_kind, TeamSpec::Light, structure_position);
 
-        let (_, route) = lane.minion_navigation_path_for_mover(
-            minion_position,
-            goal,
-            ServerLaneState::minion_navigation_agent_radius(stats),
-        );
-        let route = route.expect("a route around the solid tower");
-        let tower_clearance = lane_unit_stats(LaneUnitKind::Tower).hit_radius
-            + stats.hit_radius
-            + MINION_SEPARATION_MARGIN
-            + MINION_COLLISION_SKIN;
-        let mut previous = minion_position;
-        for waypoint in route {
-            assert!(
-                distance_to_segment_xz(tower_position, previous, waypoint.position) + 0.001
-                    >= tower_clearance,
-                "route segment enters the tower collision clearance: {previous:?} -> {:?}",
-                waypoint.position
+            let (_, route) = lane.minion_navigation_path_for_mover(
+                minion_position,
+                goal,
+                ServerLaneState::minion_navigation_agent_radius(stats),
             );
-            previous = waypoint.position;
+            let route = route.expect("a route around the solid structure");
+            let structure_clearance = lane_unit_stats(structure_kind).hit_radius
+                + stats.hit_radius
+                + MINION_SEPARATION_MARGIN
+                + MINION_COLLISION_SKIN;
+            let mut previous = minion_position;
+            for waypoint in route {
+                assert!(
+                    distance_to_segment_xz(structure_position, previous, waypoint.position) + 0.001
+                        >= structure_clearance,
+                    "route segment enters the {structure_kind:?} collision clearance: {previous:?} -> {:?}",
+                    waypoint.position
+                );
+                previous = waypoint.position;
+            }
         }
     }
 
@@ -2726,7 +2897,7 @@ mod tests {
         let mut units = lane
             .units
             .iter()
-            .filter(|(_, unit)| unit.team == team && unit.kind != LaneUnitKind::Tower)
+            .filter(|(_, unit)| unit.team == team && unit.kind.is_minion())
             .map(|(id, unit)| (*id, unit.kind))
             .collect::<Vec<_>>();
         units.sort_by_key(|(id, _)| *id);
@@ -2737,7 +2908,7 @@ mod tests {
         let mut units = lane
             .units
             .iter()
-            .filter(|(_, unit)| unit.team == team && unit.kind != LaneUnitKind::Tower)
+            .filter(|(_, unit)| unit.team == team && unit.kind.is_minion())
             .map(|(id, unit)| (*id, unit.kind, unit.position))
             .collect::<Vec<_>>();
         units.sort_by_key(|(id, _, _)| *id);
@@ -2751,7 +2922,7 @@ mod tests {
         let mut units = lane
             .units
             .iter()
-            .filter(|(_, unit)| unit.kind != LaneUnitKind::Tower)
+            .filter(|(_, unit)| unit.kind.is_minion())
             .map(|(id, unit)| (*id, unit.kind, unit.position))
             .collect::<Vec<_>>();
         units.sort_by_key(|(id, _, _)| *id);
@@ -2794,7 +2965,7 @@ mod tests {
         let target = &lane.units[&target_id];
         let target_radius = lane_unit_stats(target.kind).hit_radius;
         for (unit_id, unit) in &lane.units {
-            if *unit_id == target_id || unit.kind == LaneUnitKind::Tower {
+            if *unit_id == target_id || !unit.kind.is_minion() {
                 continue;
             }
             let minimum_distance =
@@ -2808,9 +2979,8 @@ mod tests {
         }
     }
 
-    fn assert_marching_column(lane: &ServerLaneState, team: TeamSpec) {
+    fn assert_marching_order(lane: &ServerLaneState, team: TeamSpec) {
         let minions = minion_positions(lane, team);
-        assert!(minions.iter().all(|(_, position)| position.x.abs() < 0.001));
 
         let direction = lane_forward_direction(team);
         for [(_, front), (_, following)] in minions.array_windows() {
@@ -2820,6 +2990,124 @@ mod tests {
             );
         }
         assert_minion_spacing(lane, team);
+    }
+
+    #[test]
+    fn start_spawns_one_nexus_per_team_in_lane_snapshots() {
+        let mut lane = ServerLaneState::default();
+        lane.start();
+
+        assert_eq!(
+            lane.units
+                .values()
+                .filter(|unit| unit.kind == LaneUnitKind::Nexus)
+                .count(),
+            2
+        );
+        for team in [TeamSpec::Light, TeamSpec::Dark] {
+            let nexus = lane
+                .units
+                .values()
+                .find(|unit| unit.kind == LaneUnitKind::Nexus && unit.team == team)
+                .expect("each playable team has a nexus");
+            assert_eq!(nexus.position, lane_nexus_position(team));
+            assert_eq!(nexus.health, NEXUS_MAX_HEALTH);
+        }
+
+        let snapshot = lane.snapshot();
+        assert_eq!(
+            snapshot
+                .units
+                .iter()
+                .filter(|unit| unit.kind == LaneUnitKind::Nexus)
+                .count(),
+            2
+        );
+        for team in [TeamSpec::Light, TeamSpec::Dark] {
+            let nexus = snapshot
+                .units
+                .iter()
+                .find(|unit| unit.kind == LaneUnitKind::Nexus && unit.team == team)
+                .expect("each playable team nexus is replicated");
+            assert_eq!(Vec3::from(nexus.position), lane_nexus_position(team));
+            assert_eq!(nexus.health, NEXUS_MAX_HEALTH);
+            assert_eq!(nexus.max_health, NEXUS_MAX_HEALTH);
+        }
+    }
+
+    #[test]
+    fn nexus_accepts_minion_and_player_auto_attacks_but_not_spells() {
+        let mut lane = ServerLaneState::default();
+        let mut players = ConnectedPlayers::default();
+        let mut combat_events = ServerCombatNumberEvents::default();
+        let nexus_id = lane.spawn_spell_test_unit(LaneUnitKind::Nexus, TeamSpec::Dark, Vec3::ZERO);
+        let minion_id = lane.spawn_spell_test_unit(
+            LaneUnitKind::MeleeBox,
+            TeamSpec::Light,
+            Vec3::new(0.0, 0.0, -1.0),
+        );
+        let tower_id = lane.spawn_spell_test_unit(
+            LaneUnitKind::Tower,
+            TeamSpec::Light,
+            Vec3::new(0.0, 0.0, -2.0),
+        );
+        let spell_damage = 50.0;
+        let mut hit_target_ids = Vec::new();
+
+        lane.apply_spell_damage(TeamSpec::Light, Vec3::ZERO, 1.0, spell_damage);
+        lane.apply_spell_damage_on_segment(
+            TeamSpec::Light,
+            Vec3::new(0.0, 0.0, -1.0),
+            Vec3::new(0.0, 0.0, 1.0),
+            1.0,
+            spell_damage,
+            &mut hit_target_ids,
+        );
+        lane.apply_spell_damage_in_oriented_rect(
+            TeamSpec::Light,
+            Vec3::new(-1.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            2.0,
+            spell_damage,
+        );
+
+        assert!(hit_target_ids.is_empty());
+        assert_eq!(lane.spell_target(TeamSpec::Light, nexus_id), None);
+        assert_eq!(
+            lane.apply_spell_damage_to_target(TeamSpec::Light, nexus_id, spell_damage),
+            None
+        );
+        assert_eq!(
+            lane.nearest_enemy_minion_for_spell(TeamSpec::Light, Vec3::ZERO, 5.0, Vec3::ZERO),
+            None
+        );
+        assert_eq!(
+            lane.select_minion_target(minion_id, &players),
+            Some(NetworkTargetId::LaneUnit(nexus_id))
+        );
+        assert_eq!(
+            lane.select_tower_target(tower_id, &players),
+            Some(NetworkTargetId::LaneUnit(nexus_id))
+        );
+
+        lane.update(&mut players, &mut combat_events, 0.1);
+        assert_eq!(
+            lane.units[&nexus_id].health,
+            NEXUS_MAX_HEALTH - lane_unit_stats(LaneUnitKind::MeleeBox).attack_damage
+        );
+
+        let player_auto_attack_damage = 50.0;
+        assert!(lane.apply_player_auto_attack_impact(
+            TeamSpec::Light,
+            nexus_id,
+            player_auto_attack_damage,
+        ));
+        assert_eq!(
+            lane.units[&nexus_id].health,
+            NEXUS_MAX_HEALTH
+                - lane_unit_stats(LaneUnitKind::MeleeBox).attack_damage
+                - player_auto_attack_damage
+        );
     }
 
     #[test]
@@ -3615,37 +3903,98 @@ mod tests {
     }
 
     #[test]
-    fn minions_bypass_their_own_solid_tower_on_opposite_sides() {
-        let mut lane = ServerLaneState::default();
-        let mut players = ConnectedPlayers::default();
-        let mut combat_events = ServerCombatNumberEvents::default();
-        let tower_position = lane_tower_position(TeamSpec::Light);
-        lane.spawn_unit(LaneUnitKind::Tower, TeamSpec::Light, tower_position);
-        lane.spawn_unit(
-            LaneUnitKind::MeleeBox,
-            TeamSpec::Light,
-            tower_position - Vec3::Z * 4.0,
-        );
-        lane.spawn_unit(
-            LaneUnitKind::MeleeBox,
-            TeamSpec::Light,
-            tower_position - Vec3::Z * 5.4,
-        );
+    fn minions_bypass_their_own_solid_structures_on_opposite_sides() {
+        for structure_kind in [LaneUnitKind::Tower, LaneUnitKind::Nexus] {
+            let mut lane = ServerLaneState::default();
+            let mut players = ConnectedPlayers::default();
+            let mut combat_events = ServerCombatNumberEvents::default();
+            let structure_position = Vec3::ZERO;
+            lane.spawn_unit(structure_kind, TeamSpec::Light, structure_position);
+            lane.spawn_unit(
+                LaneUnitKind::MeleeBox,
+                TeamSpec::Light,
+                structure_position - Vec3::Z * 4.0,
+            );
+            lane.spawn_unit(
+                LaneUnitKind::MeleeBox,
+                TeamSpec::Light,
+                structure_position - Vec3::Z * 5.4,
+            );
 
-        for _ in 0..60 {
-            lane.update(&mut players, &mut combat_events, 0.1);
-            assert_minion_clearance_from_lane_unit(&lane, 1);
-            assert_all_minion_spacing(&lane);
+            for _ in 0..60 {
+                lane.update(&mut players, &mut combat_events, 0.1);
+                assert_minion_clearance_from_lane_unit(&lane, 1);
+                assert_all_minion_spacing(&lane);
+            }
+
+            let first_minion = lane.units[&2].position;
+            let second_minion = lane.units[&3].position;
+            assert!(first_minion.z > structure_position.z + 2.0);
+            assert!(second_minion.z > structure_position.z + 2.0);
+            assert!(
+                first_minion.x * second_minion.x < -0.01,
+                "minions did not split around their {structure_kind:?}: {first_minion:?}, {second_minion:?}"
+            );
         }
+    }
 
-        let first_minion = lane.units[&2].position;
-        let second_minion = lane.units[&3].position;
-        assert!(first_minion.z > tower_position.z + 2.0);
-        assert!(second_minion.z > tower_position.z + 2.0);
-        assert!(
-            first_minion.x * second_minion.x < -0.01,
-            "minions did not split around their tower: {first_minion:?}, {second_minion:?}"
-        );
+    #[test]
+    fn minions_despawn_only_after_reaching_the_opposing_spawn() {
+        let minion_kind = LaneUnitKind::MeleeBox;
+        let update_seconds = 1.0;
+        let distance_before_opposing_spawn =
+            lane_unit_stats(minion_kind).movement_speed * update_seconds * 0.5;
+
+        for team in [TeamSpec::Light, TeamSpec::Dark] {
+            let mut lane = ServerLaneState::default();
+            let mut players = ConnectedPlayers::default();
+            let mut combat_events = ServerCombatNumberEvents::default();
+            let direction = lane_forward_direction(team);
+            let own_spawn_position = Vec3::new(0.0, 0.0, -direction.z * LANE_SPAWN_Z);
+            let opposing_spawn_position = Vec3::new(
+                0.0,
+                0.0,
+                direction.z * (LANE_SPAWN_Z - distance_before_opposing_spawn),
+            );
+            let own_spawn_minion_id =
+                lane.spawn_spell_test_unit(minion_kind, team, own_spawn_position);
+            let opposing_spawn_minion_id =
+                lane.spawn_spell_test_unit(minion_kind, team, opposing_spawn_position);
+            let opposing_nexus_minion_id = lane.spawn_spell_test_unit(
+                minion_kind,
+                team,
+                lane_nexus_position(team.opponent().unwrap())
+                    + direction * (lane_unit_stats(LaneUnitKind::Nexus).hit_radius + 0.01),
+            );
+            let side_of_opposing_spawn_minion_id = lane.spawn_spell_test_unit(
+                minion_kind,
+                team,
+                Vec3::new(
+                    LANE_HALF_WIDTH - lane_unit_stats(minion_kind).hit_radius,
+                    0.0,
+                    direction.z * (LANE_SPAWN_Z - distance_before_opposing_spawn),
+                ),
+            );
+
+            lane.update(&mut players, &mut combat_events, update_seconds);
+
+            assert!(
+                lane.units.contains_key(&own_spawn_minion_id),
+                "a {team:?} minion despawned at its own spawn"
+            );
+            assert!(
+                !lane.units.contains_key(&opposing_spawn_minion_id),
+                "a {team:?} minion remained after reaching the opposing spawn"
+            );
+            assert!(
+                !lane.units.contains_key(&opposing_nexus_minion_id),
+                "a {team:?} minion remained after passing the opposing Nexus"
+            );
+            assert!(
+                !lane.units.contains_key(&side_of_opposing_spawn_minion_id),
+                "a {team:?} minion remained at the side of the opposing spawn"
+            );
+        }
     }
 
     #[test]
@@ -3729,6 +4078,163 @@ mod tests {
     }
 
     #[test]
+    fn minion_attacks_an_enemy_nexus_when_in_trigger_range() {
+        let mut lane = ServerLaneState::default();
+        let players = ConnectedPlayers::default();
+        lane.spawn_unit(
+            LaneUnitKind::Nexus,
+            TeamSpec::Dark,
+            lane_nexus_position(TeamSpec::Dark),
+        );
+        lane.spawn_unit(
+            LaneUnitKind::MeleeBox,
+            TeamSpec::Light,
+            lane_nexus_position(TeamSpec::Dark) - Vec3::new(0.0, 0.0, 4.9),
+        );
+
+        assert_eq!(
+            lane.select_minion_target(2, &players),
+            Some(NetworkTargetId::LaneUnit(1))
+        );
+    }
+
+    #[test]
+    fn minion_targets_enemy_nexus_without_trigger_before_distant_minions() {
+        let mut lane = ServerLaneState::default();
+        let players = ConnectedPlayers::default();
+        lane.spawn_unit(
+            LaneUnitKind::Nexus,
+            TeamSpec::Dark,
+            lane_nexus_position(TeamSpec::Dark),
+        );
+        lane.spawn_unit(
+            LaneUnitKind::MeleeBox,
+            TeamSpec::Light,
+            lane_nexus_position(TeamSpec::Dark) - Vec3::new(0.0, 0.0, 20.0),
+        );
+        lane.spawn_unit(
+            LaneUnitKind::MeleeBox,
+            TeamSpec::Dark,
+            lane_nexus_position(TeamSpec::Dark) - Vec3::new(0.0, 0.0, 26.0),
+        );
+
+        assert_eq!(
+            lane.select_minion_target(2, &players),
+            Some(NetworkTargetId::LaneUnit(1))
+        );
+    }
+
+    #[test]
+    fn minions_reach_and_attack_enemy_nexus_after_tower_is_gone() {
+        let mut lane = ServerLaneState::default();
+        let mut players = ConnectedPlayers::default();
+        let mut combat_events = ServerCombatNumberEvents::default();
+        let dark_team = TeamSpec::Dark;
+        let dark_nexus = lane_nexus_position(dark_team);
+        let dark_tower = lane_tower_position(dark_team);
+        let tower_id = lane.spawn_spell_test_unit(LaneUnitKind::Tower, TeamSpec::Dark, dark_tower);
+        let minion_id = lane.spawn_spell_test_unit(
+            LaneUnitKind::MeleeBox,
+            TeamSpec::Light,
+            dark_tower - Vec3::new(0.0, 0.0, 2.5),
+        );
+        let nexus_id = lane.spawn_spell_test_unit(LaneUnitKind::Nexus, TeamSpec::Dark, dark_nexus);
+
+        lane.apply_lane_unit_damage(tower_id, lane_unit_stats(LaneUnitKind::Tower).max_health);
+        for _ in 0..200 {
+            if lane.units[&nexus_id].health < lane_unit_stats(LaneUnitKind::Nexus).max_health {
+                break;
+            }
+            lane.update(&mut players, &mut combat_events, 0.1);
+        }
+
+        assert!(
+            lane.units[&nexus_id].health < lane_unit_stats(LaneUnitKind::Nexus).max_health,
+            "minion never engaged the enemy nexus"
+        );
+        assert_eq!(
+            lane.units[&minion_id].attack_target,
+            Some(NetworkTargetId::LaneUnit(nexus_id))
+        );
+    }
+
+    #[test]
+    fn minions_attack_nexus_when_no_tower_exists() {
+        let mut lane = ServerLaneState::default();
+        let mut players = ConnectedPlayers::default();
+        let mut combat_events = ServerCombatNumberEvents::default();
+        let dark_nexus_position = lane_nexus_position(TeamSpec::Dark);
+        let minion_start = dark_nexus_position - Vec3::new(0.0, 0.0, 18.0);
+        let minion_id =
+            lane.spawn_spell_test_unit(LaneUnitKind::MeleeBox, TeamSpec::Light, minion_start);
+        let nexus_id =
+            lane.spawn_spell_test_unit(LaneUnitKind::Nexus, TeamSpec::Dark, dark_nexus_position);
+        assert_eq!(
+            lane.select_minion_target(minion_id, &players),
+            Some(NetworkTargetId::LaneUnit(nexus_id))
+        );
+
+        lane.update(&mut players, &mut combat_events, 0.2);
+
+        for _ in 0..220 {
+            lane.update(&mut players, &mut combat_events, 0.1);
+            if lane.units[&nexus_id].health < lane_unit_stats(LaneUnitKind::Nexus).max_health {
+                break;
+            }
+            if !lane.units.contains_key(&nexus_id) {
+                break;
+            }
+        }
+
+        assert!(lane.units[&nexus_id].health < lane_unit_stats(LaneUnitKind::Nexus).max_health);
+    }
+
+    #[test]
+    fn wave_assist_targets_enemy_nexus_on_same_enemy_frontline() {
+        let mut lane = ServerLaneState::default();
+        let players = ConnectedPlayers::default();
+        let dark_nexus_position = lane_nexus_position(TeamSpec::Dark);
+        let lead_minion_position = dark_nexus_position - Vec3::new(0.0, 0.0, 4.9);
+        let trailing_minion_position = dark_nexus_position - Vec3::new(0.0, 0.0, 7.0);
+        lane.spawn_unit(LaneUnitKind::Nexus, TeamSpec::Dark, dark_nexus_position);
+        lane.spawn_unit(
+            LaneUnitKind::MeleeBox,
+            TeamSpec::Light,
+            lead_minion_position,
+        );
+        lane.spawn_unit(
+            LaneUnitKind::MeleeBox,
+            TeamSpec::Light,
+            trailing_minion_position,
+        );
+
+        let planned_targets = lane.select_minion_targets(&[2, 3], &players);
+        assert_eq!(planned_targets[&2], Some(NetworkTargetId::LaneUnit(1)));
+        assert_eq!(planned_targets[&3], Some(NetworkTargetId::LaneUnit(1)));
+    }
+
+    #[test]
+    fn tower_does_not_target_an_enemy_nexus_outside_its_range() {
+        let mut lane = ServerLaneState::default();
+        let players = ConnectedPlayers::default();
+        let mut combat_events = ServerCombatNumberEvents::default();
+
+        lane.spawn_unit(LaneUnitKind::Tower, TeamSpec::Light, Vec3::ZERO);
+        let _nexus_id = lane.spawn_spell_test_unit(
+            LaneUnitKind::Nexus,
+            TeamSpec::Dark,
+            lane_nexus_position(TeamSpec::Dark),
+        );
+
+        let target = lane.select_tower_target(1, &players);
+        assert_eq!(target, None);
+
+        let mut active_players = players;
+        lane.update(&mut active_players, &mut combat_events, 0.01);
+        assert_eq!(lane.units[&1].attack_target, None);
+    }
+
+    #[test]
     fn melee_minion_reaches_an_enemy_tower_from_outside_attack_range() {
         let mut lane = ServerLaneState::default();
         let mut players = ConnectedPlayers::default();
@@ -3756,26 +4262,30 @@ mod tests {
     }
 
     #[test]
-    fn player_tower_collision_ignores_a_destroyed_tower() {
-        let mut lane = ServerLaneState::default();
-        lane.spawn_unit(LaneUnitKind::Tower, TeamSpec::Dark, Vec3::ZERO);
+    fn structure_collision_ignores_destroyed_structures() {
         let start = Vec3::new(0.0, 0.0, -5.0);
         let desired = Vec3::new(0.0, 0.0, 5.0);
 
-        let blocked = lane.resolve_player_tower_collision(
-            start,
-            desired,
-            game_shared::game::lane::LANE_PLAYER_COLLISION_RADIUS,
-        );
-        assert!(blocked.z < 0.0);
+        for structure_kind in [LaneUnitKind::Tower, LaneUnitKind::Nexus] {
+            let mut lane = ServerLaneState::default();
+            let structure_id =
+                lane.spawn_spell_test_unit(structure_kind, TeamSpec::Dark, Vec3::ZERO);
 
-        lane.apply_lane_unit_damage(1, 10_000.0);
-        let unblocked = lane.resolve_player_tower_collision(
-            start,
-            desired,
-            game_shared::game::lane::LANE_PLAYER_COLLISION_RADIUS,
-        );
-        assert_eq!(unblocked, desired);
+            let blocked = lane.resolve_structure_collision(
+                start,
+                desired,
+                game_shared::game::lane::LANE_PLAYER_COLLISION_RADIUS,
+            );
+            assert!(blocked.z < 0.0);
+
+            lane.apply_lane_unit_damage(structure_id, lane_unit_stats(structure_kind).max_health);
+            let unblocked = lane.resolve_structure_collision(
+                start,
+                desired,
+                game_shared::game::lane::LANE_PLAYER_COLLISION_RADIUS,
+            );
+            assert_eq!(unblocked, desired);
+        }
     }
 
     #[test]
@@ -3975,6 +4485,218 @@ mod tests {
         assert!(lane.units[&1].forced_player_target.is_none());
     }
 
+    #[test]
+    fn tower_player_damage_scales_with_consecutive_shots() {
+        let mut lane = ServerLaneState::default();
+        let mut players = ConnectedPlayers::default();
+        let mut combat_events = ServerCombatNumberEvents::default();
+        let tower_id = 1;
+        let player_id = 20;
+        let player_max_health = 10_000.0;
+        lane.spawn_unit(LaneUnitKind::Tower, TeamSpec::Light, Vec3::ZERO);
+        players.states.insert(
+            player_id,
+            test_player_with_max_health(
+                DevelopmentTeam::Dark,
+                Vec3::new(0.0, 0.0, 2.0),
+                player_max_health,
+            ),
+        );
+
+        let mut expected_health = player_max_health;
+        for damage in [
+            TOWER_BASE_ATTACK_DAMAGE,
+            TOWER_BASE_ATTACK_DAMAGE
+                + player_max_health * TOWER_SECOND_PLAYER_SHOT_MAX_HEALTH_FRACTION,
+            TOWER_BASE_ATTACK_DAMAGE
+                + player_max_health * TOWER_THIRD_PLAYER_SHOT_MAX_HEALTH_FRACTION,
+            TOWER_BASE_ATTACK_DAMAGE
+                + player_max_health * TOWER_FOURTH_PLAYER_SHOT_MAX_HEALTH_FRACTION,
+        ] {
+            fire_and_resolve_tower_shot(&mut lane, &mut players, &mut combat_events);
+            expected_health -= damage;
+            assert_eq!(players.states[&player_id].health, expected_health);
+        }
+        assert_eq!(lane.units[&tower_id].tower_player_target, Some(player_id));
+        assert_eq!(lane.units[&tower_id].tower_consecutive_player_shots, 4);
+    }
+
+    #[test]
+    fn tower_deals_base_damage_to_minions() {
+        let mut lane = ServerLaneState::default();
+        let mut players = ConnectedPlayers::default();
+        let mut combat_events = ServerCombatNumberEvents::default();
+        lane.spawn_unit(LaneUnitKind::Tower, TeamSpec::Light, Vec3::ZERO);
+        let minion_id = lane.spawn_spell_test_unit(
+            LaneUnitKind::MeleeBox,
+            TeamSpec::Dark,
+            Vec3::new(0.0, 0.0, 2.0),
+        );
+        let initial_health = lane.units[&minion_id].health;
+
+        fire_and_resolve_tower_shot(&mut lane, &mut players, &mut combat_events);
+        fire_and_resolve_tower_shot(&mut lane, &mut players, &mut combat_events);
+
+        assert_eq!(
+            lane.units[&minion_id].health,
+            initial_health - TOWER_BASE_ATTACK_DAMAGE * 2.0
+        );
+    }
+
+    #[test]
+    fn tower_damage_stack_resets_without_a_valid_target() {
+        let mut lane = ServerLaneState::default();
+        let mut players = ConnectedPlayers::default();
+        let mut combat_events = ServerCombatNumberEvents::default();
+        let tower_id = 1;
+        let player_id = 20;
+        let player_max_health = 10_000.0;
+        let target_position = Vec3::new(0.0, 0.0, 2.0);
+        lane.spawn_unit(LaneUnitKind::Tower, TeamSpec::Light, Vec3::ZERO);
+        players.states.insert(
+            player_id,
+            test_player_with_max_health(DevelopmentTeam::Dark, target_position, player_max_health),
+        );
+
+        fire_and_resolve_tower_shot(&mut lane, &mut players, &mut combat_events);
+        players.states.get_mut(&player_id).unwrap().position = Vec3::new(
+            0.0,
+            0.0,
+            lane_unit_stats(LaneUnitKind::Tower).attack_range + 1.0,
+        );
+        lane.update(&mut players, &mut combat_events, 0.1);
+
+        assert_eq!(lane.units[&tower_id].tower_player_target, None);
+        assert_eq!(lane.units[&tower_id].tower_consecutive_player_shots, 0);
+
+        players.states.get_mut(&player_id).unwrap().position = target_position;
+        fire_and_resolve_tower_shot(&mut lane, &mut players, &mut combat_events);
+
+        assert_eq!(
+            players.states[&player_id].health,
+            player_max_health - TOWER_BASE_ATTACK_DAMAGE * 2.0
+        );
+    }
+
+    #[test]
+    fn tower_damage_stack_resets_when_a_minion_becomes_the_target() {
+        let mut lane = ServerLaneState::default();
+        let mut players = ConnectedPlayers::default();
+        let mut combat_events = ServerCombatNumberEvents::default();
+        let tower_id = 1;
+        let player_id = 20;
+        let player_max_health = 10_000.0;
+        lane.spawn_unit(LaneUnitKind::Tower, TeamSpec::Light, Vec3::ZERO);
+        players.states.insert(
+            player_id,
+            test_player_with_max_health(
+                DevelopmentTeam::Dark,
+                Vec3::new(0.0, 0.0, 2.0),
+                player_max_health,
+            ),
+        );
+
+        fire_and_resolve_tower_shot(&mut lane, &mut players, &mut combat_events);
+        let minion_id = lane.spawn_spell_test_unit(
+            LaneUnitKind::MeleeBox,
+            TeamSpec::Dark,
+            Vec3::new(0.0, 0.0, 1.0),
+        );
+        lane.update(&mut players, &mut combat_events, 0.1);
+
+        assert_eq!(
+            lane.units[&tower_id].attack_target,
+            Some(NetworkTargetId::LaneUnit(minion_id))
+        );
+        assert_eq!(lane.units[&tower_id].tower_player_target, None);
+        assert_eq!(lane.units[&tower_id].tower_consecutive_player_shots, 0);
+
+        lane.apply_lane_unit_damage(
+            minion_id,
+            lane_unit_stats(LaneUnitKind::MeleeBox).max_health,
+        );
+        fire_and_resolve_tower_shot(&mut lane, &mut players, &mut combat_events);
+
+        assert_eq!(
+            players.states[&player_id].health,
+            player_max_health - TOWER_BASE_ATTACK_DAMAGE * 2.0
+        );
+    }
+
+    #[test]
+    fn tower_damage_stack_resets_when_the_player_target_changes() {
+        let mut lane = ServerLaneState::default();
+        let mut players = ConnectedPlayers::default();
+        let mut combat_events = ServerCombatNumberEvents::default();
+        let tower_id = 1;
+        let first_player_id = 20;
+        let second_player_id = 30;
+        let player_max_health = 10_000.0;
+        lane.spawn_unit(LaneUnitKind::Tower, TeamSpec::Light, Vec3::ZERO);
+        players.states.insert(
+            first_player_id,
+            test_player_with_max_health(
+                DevelopmentTeam::Dark,
+                Vec3::new(0.0, 0.0, 2.0),
+                player_max_health,
+            ),
+        );
+        players.states.insert(
+            second_player_id,
+            test_player_with_max_health(
+                DevelopmentTeam::Dark,
+                Vec3::new(0.0, 0.0, 3.0),
+                player_max_health,
+            ),
+        );
+
+        fire_and_resolve_tower_shot(&mut lane, &mut players, &mut combat_events);
+        players.states.get_mut(&first_player_id).unwrap().position = Vec3::new(0.0, 0.0, 3.0);
+        players.states.get_mut(&second_player_id).unwrap().position = Vec3::new(0.0, 0.0, 2.0);
+        lane.update(&mut players, &mut combat_events, 0.1);
+
+        assert_eq!(
+            lane.units[&tower_id].tower_player_target,
+            Some(second_player_id)
+        );
+        assert_eq!(lane.units[&tower_id].tower_consecutive_player_shots, 0);
+
+        fire_and_resolve_tower_shot(&mut lane, &mut players, &mut combat_events);
+
+        assert_eq!(
+            players.states[&first_player_id].health,
+            player_max_health - TOWER_BASE_ATTACK_DAMAGE
+        );
+        assert_eq!(
+            players.states[&second_player_id].health,
+            player_max_health - TOWER_BASE_ATTACK_DAMAGE
+        );
+    }
+
+    fn fire_and_resolve_tower_shot(
+        lane: &mut ServerLaneState,
+        players: &mut ConnectedPlayers,
+        combat_events: &mut ServerCombatNumberEvents,
+    ) {
+        lane.update(
+            players,
+            combat_events,
+            lane_unit_stats(LaneUnitKind::Tower).attack_interval_seconds,
+        );
+        lane.update(players, combat_events, TOWER_PROJECTILE_MAX_TRAVEL_SECONDS);
+    }
+
+    fn test_player_with_max_health(
+        team: DevelopmentTeam,
+        position: Vec3,
+        max_health: f32,
+    ) -> ConnectedPlayerState {
+        let mut player = test_player_state(team, position);
+        player.health = max_health;
+        player.max_health = max_health;
+        player
+    }
+
     fn test_player_state(team: DevelopmentTeam, position: Vec3) -> ConnectedPlayerState {
         ConnectedPlayerState {
             position,
@@ -3982,6 +4704,7 @@ mod tests {
             yaw: 0.0,
             moving: false,
             health: 100.0,
+            max_health: 100.0,
             champion: game_shared::network::ChampionId::LIRA,
             lira_q_cooldown: 0.0,
             lira_w_cooldown: 0.0,

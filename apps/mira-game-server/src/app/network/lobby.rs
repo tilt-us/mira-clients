@@ -7,11 +7,15 @@ use super::geometry::{
 use super::lane::ServerLaneState;
 use bevy::prelude::*;
 use game_shared::game::{
-    auto_attack::{AUTO_ATTACK_COMBO_RESET_SECONDS, AUTO_ATTACK_RANGE, auto_attack_combo},
+    auto_attack::{
+        AUTO_ATTACK_COMBO_RESET_SECONDS, AUTO_ATTACK_RANGE, auto_attack_combo,
+        auto_attack_projectile_travel_seconds,
+    },
     lane::{
         LANE_HALF_WIDTH, LANE_PLAYER_BASE_MOVEMENT_SPEED, LANE_PLAYER_COLLISION_RADIUS,
         LANE_SPAWN_Z, lane_forward_yaw, lane_spawn_position,
     },
+    player::DEFAULT_PLAYER_HEALTH_REGENERATION_PER_SECOND,
     team::TeamSpec,
 };
 use game_shared::network::{
@@ -35,8 +39,6 @@ pub(super) const RESPAWN_SECONDS: f32 = 5.0;
 const RESPAWN_INPUT_GRACE_SECONDS: f32 = 0.25;
 const AUTO_ATTACK_INPUT_BUFFER_SECONDS: f32 = 0.15;
 const AUTO_ATTACK_PROJECTILE_HEIGHT: f32 = 0.8;
-const AUTO_ATTACK_MIN_TRAVEL_SECONDS: f32 = 0.075;
-const AUTO_ATTACK_MAX_TRAVEL_SECONDS: f32 = 0.45;
 const SERVER_PLAYER_NAVIGATION_SPEED: f32 = LANE_PLAYER_BASE_MOVEMENT_SPEED;
 const PLAYER_NAVIGATION_WAYPOINT_REACHED_DISTANCE: f32 = 0.08;
 const PLAYER_NAVIGATION_RECOVERY_WAYPOINT_REACHED_DISTANCE: f32 = 0.001;
@@ -66,6 +68,7 @@ pub(super) enum DevelopmentTeam {
 /// - `yaw`: Latest known facing angle around the Y axis.
 /// - `moving`: Whether the player is currently moving.
 /// - `health`: Current synchronized health value.
+/// - `max_health`: Authoritative maximum health used by server combat calculations.
 /// - `lira_q_cooldown`: Remaining authoritative Lira Q cooldown in seconds.
 /// - `lira_w_cooldown`: Remaining authoritative Lira W cooldown in seconds.
 /// - `lira_e_cooldown`: Remaining authoritative Lira E cooldown in seconds.
@@ -80,6 +83,7 @@ pub(super) struct ConnectedPlayerState {
     pub(super) yaw: f32,
     pub(super) moving: bool,
     pub(super) health: f32,
+    pub(super) max_health: f32,
     pub(super) champion: ChampionId,
     pub(super) lira_q_cooldown: f32,
     pub(super) lira_w_cooldown: f32,
@@ -173,11 +177,13 @@ impl ServerPlayerNavigation {
 }
 /// Stores active server-authoritative ability simulations.
 ///
+/// - `auto_attack_projectiles`: Active player auto-attack projectiles.
 /// - `q_projectiles`: Active Lira Q projectiles.
 /// - `w_projectiles`: Active Lira W arcing projectiles.
 /// - `e_missiles`: Active Lira E contact missiles.
 #[derive(Resource, Debug, Default)]
 pub(super) struct ActiveServerAbilities {
+    auto_attack_projectiles: Vec<ServerAutoAttackProjectile>,
     q_projectiles: Vec<ServerQProjectile>,
     w_projectiles: Vec<ServerWProjectile>,
     e_missiles: Vec<ServerEMissile>,
@@ -189,6 +195,21 @@ pub(super) struct ActiveServerAbilities {
     sophia_q_orbs: Vec<ServerSophiaQOrb>,
     sophia_minions: Vec<ServerSophiaMinion>,
 }
+
+/// Stores one launched player auto attack until its projectile reaches the target.
+///
+/// - `caster_team`: Team used to validate that the target remains hostile on impact.
+/// - `target`: Player or lane unit selected when the attack was launched.
+/// - `remaining_seconds`: Server-authoritative flight time still remaining.
+/// - `damage`: Accepted combo damage applied on impact.
+#[derive(Debug, Clone, Copy)]
+struct ServerAutoAttackProjectile {
+    caster_team: TeamSpec,
+    target: NetworkTargetId,
+    remaining_seconds: f32,
+    damage: f32,
+}
+
 /// Stores one active server-authoritative Lira Q projectile.
 ///
 /// - `caster_player_id`: Player id that owns the projectile.
@@ -430,11 +451,74 @@ pub(super) fn receive_client_leave(
             continue;
         }
 
-        leaving_players.player_ids.insert(player_id);
-        ready_players.ready_player_ids.remove(&player_id);
-        players.states.remove(&player_id);
-        player_navigation.clear(player_id);
+        mark_player_departed(
+            player_id,
+            &mut players,
+            &mut player_navigation,
+            &mut ready_players,
+            &mut leaving_players,
+        );
     }
+}
+
+/// Removes a disconnected player's runtime state from the active match.
+pub(super) fn handle_client_disconnection(
+    trigger: On<Add, Disconnected>,
+    remote_ids: Query<&RemoteId, With<ClientOf>>,
+    mut players: ResMut<ConnectedPlayers>,
+    mut player_navigation: ResMut<ServerPlayerNavigation>,
+    mut ready_players: ResMut<LoadingScreenReadyPlayers>,
+    mut leaving_players: ResMut<LeavingPlayers>,
+    mut sent_catalog_clients: ResMut<SentChampionCatalogClients>,
+) {
+    let Ok(remote_id) = remote_ids.get(trigger.entity) else {
+        return;
+    };
+    let Some(player_id) = netcode_player_id(*remote_id) else {
+        return;
+    };
+
+    cleanup_disconnected_player(
+        player_id,
+        &mut players,
+        &mut player_navigation,
+        &mut ready_players,
+        &mut leaving_players,
+        &mut sent_catalog_clients,
+    );
+}
+
+/// Marks a player as departed and clears all gameplay state owned by that player.
+fn mark_player_departed(
+    player_id: u64,
+    players: &mut ConnectedPlayers,
+    player_navigation: &mut ServerPlayerNavigation,
+    ready_players: &mut LoadingScreenReadyPlayers,
+    leaving_players: &mut LeavingPlayers,
+) {
+    leaving_players.player_ids.insert(player_id);
+    ready_players.ready_player_ids.remove(&player_id);
+    players.states.remove(&player_id);
+    player_navigation.clear(player_id);
+}
+
+/// Clears state that belongs to a transport client after its link disconnects.
+fn cleanup_disconnected_player(
+    player_id: u64,
+    players: &mut ConnectedPlayers,
+    player_navigation: &mut ServerPlayerNavigation,
+    ready_players: &mut LoadingScreenReadyPlayers,
+    leaving_players: &mut LeavingPlayers,
+    sent_catalog_clients: &mut SentChampionCatalogClients,
+) {
+    mark_player_departed(
+        player_id,
+        players,
+        player_navigation,
+        ready_players,
+        leaving_players,
+    );
+    sent_catalog_clients.0.remove(&player_id);
 }
 /// Receives client display-ready signals after each client has loaded local visuals.
 pub(super) fn receive_display_ready(
@@ -599,6 +683,7 @@ pub(super) fn receive_player_state_updates(
                 .states
                 .entry(player_id)
                 .and_modify(|state| {
+                    state.max_health = max_health;
                     if state.champion != champion {
                         state.champion = champion;
                         state.health = max_health;
@@ -627,6 +712,7 @@ pub(super) fn receive_player_state_updates(
                     },
                     moving: false,
                     health: max_health,
+                    max_health,
                     champion,
                     lira_q_cooldown: 0.0,
                     lira_w_cooldown: 0.0,
@@ -681,7 +767,6 @@ pub(super) fn receive_player_commands(
     mut player_navigation: ResMut<ServerPlayerNavigation>,
     mut abilities: ResMut<ActiveServerAbilities>,
     mut lane: ResMut<ServerLaneState>,
-    mut combat_events: ResMut<ServerCombatNumberEvents>,
     catalog: Res<ServerChampionCatalog>,
     leaving_players: Res<LeavingPlayers>,
     manifest: Res<ServerMatchManifest>,
@@ -911,7 +996,7 @@ pub(super) fn receive_player_commands(
                             target,
                             &mut players,
                             Some(&mut lane),
-                            &mut combat_events,
+                            &mut abilities,
                         ) {
                             auto_attack_visual_events.push(event);
                         }
@@ -1000,8 +1085,8 @@ fn advance_server_player_navigation(
         }
 
         // Recover an invalid authoritative position before planning. This can happen when a
-        // tower appears around a player between snapshots or after an external displacement.
-        let recovered_position = lane.resolve_player_tower_collision(
+        // structure appears around a player between snapshots or after an external displacement.
+        let recovered_position = lane.resolve_structure_collision(
             player.position,
             player.position,
             DEVELOPMENT_PLAYER_HIT_RADIUS,
@@ -1167,7 +1252,7 @@ fn advance_server_player_navigation(
                 )
                 * delta_seconds.max(0.0),
         );
-        let resolved_position = lane.resolve_player_tower_collision(
+        let resolved_position = lane.resolve_structure_collision(
             player.position,
             desired_position,
             DEVELOPMENT_PLAYER_HIT_RADIUS,
@@ -1254,6 +1339,110 @@ fn step_toward_player_navigation(position: Vec3, target: Vec3, max_distance: f32
         position + offset * (max_distance / distance)
     }
 }
+
+/// Regenerates health for living players while the match has ready clients.
+pub(super) fn update_player_health_regeneration(
+    mut players: ResMut<ConnectedPlayers>,
+    ready_players: Res<LoadingScreenReadyPlayers>,
+    time: Res<Time>,
+) {
+    if !ready_players.has_ready_players() {
+        return;
+    }
+
+    regenerate_player_health(&mut players, time.delta_secs());
+}
+
+fn regenerate_player_health(players: &mut ConnectedPlayers, delta_seconds: f32) {
+    let health_regeneration =
+        DEFAULT_PLAYER_HEALTH_REGENERATION_PER_SECOND * delta_seconds.max(0.0);
+
+    for player in players.states.values_mut() {
+        if player.health <= 0.0 {
+            continue;
+        }
+
+        player.health = (player.health + health_regeneration).min(player.max_health);
+    }
+}
+
+/// Advances launched player auto-attack projectiles and applies their impact damage.
+///
+/// This system runs before player commands are received, so an attack accepted in the current
+/// update cannot consume the current frame's delta time before its projectile is visible.
+pub(super) fn update_server_auto_attack_projectiles(
+    mut abilities: ResMut<ActiveServerAbilities>,
+    mut players: ResMut<ConnectedPlayers>,
+    mut lane: ResMut<ServerLaneState>,
+    mut combat_events: ResMut<ServerCombatNumberEvents>,
+    ready_players: Res<LoadingScreenReadyPlayers>,
+    time: Res<Time>,
+) {
+    reset_active_abilities_without_ready_players(&mut abilities, &ready_players);
+    if !ready_players.has_ready_players() {
+        return;
+    }
+
+    advance_server_auto_attack_projectiles(
+        &mut abilities,
+        &mut players,
+        &mut lane,
+        &mut combat_events,
+        time.delta_secs(),
+    );
+}
+
+fn advance_server_auto_attack_projectiles(
+    abilities: &mut ActiveServerAbilities,
+    players: &mut ConnectedPlayers,
+    lane: &mut ServerLaneState,
+    combat_events: &mut ServerCombatNumberEvents,
+    delta_seconds: f32,
+) {
+    let mut impacts = Vec::new();
+    abilities.auto_attack_projectiles.retain_mut(|projectile| {
+        projectile.remaining_seconds -= delta_seconds.max(0.0);
+        if projectile.remaining_seconds > 0.0 {
+            return true;
+        }
+
+        impacts.push(*projectile);
+        false
+    });
+
+    for impact in impacts {
+        match impact.target {
+            NetworkTargetId::Player(target_player_id) => {
+                let Some(target) = players.states.get_mut(&target_player_id) else {
+                    continue;
+                };
+                let target_team = TeamSpec::from(target.team);
+                if target.health <= 0.0
+                    || !target_team.is_playable()
+                    || target_team == impact.caster_team
+                {
+                    continue;
+                }
+
+                apply_damage(
+                    combat_events,
+                    target_player_id,
+                    target,
+                    impact.damage,
+                    NetworkCombatNumberKind::AutoAttack,
+                );
+            }
+            NetworkTargetId::LaneUnit(target_unit_id) => {
+                lane.apply_player_auto_attack_impact(
+                    impact.caster_team,
+                    target_unit_id,
+                    impact.damage,
+                );
+            }
+        }
+    }
+}
+
 /// Advances active server-authoritative ability simulations and applies contact damage.
 ///
 /// - `abilities`: Active server-side ability simulations.
@@ -1388,7 +1577,8 @@ pub(super) fn update_player_death_and_respawn(
             continue;
         }
 
-        state.health = development_champion_max_health(&catalog, state.champion);
+        state.max_health = development_champion_max_health(&catalog, state.champion);
+        state.health = state.max_health;
         let team = TeamSpec::from(state.team);
         state.position = lane_spawn_position(team);
         state.yaw = lane_forward_yaw(team);
@@ -1525,6 +1715,7 @@ pub(super) fn broadcast_match_snapshots(
                     yaw: lane_forward_yaw(TeamSpec::from(fallback_team)),
                     moving: false,
                     health: fallback_max_health,
+                    max_health: fallback_max_health,
                     champion: fallback_champion,
                     lira_q_cooldown: 0.0,
                     lira_w_cooldown: 0.0,
@@ -1556,6 +1747,7 @@ pub(super) fn broadcast_match_snapshots(
             let champion = state.champion;
             let team = state.team;
             let max_health = development_champion_max_health(&catalog, champion);
+            state.max_health = max_health;
             if (state.health - max_health).abs() > f32::EPSILON && state.health > max_health {
                 state.health = max_health;
             }
@@ -1572,7 +1764,7 @@ pub(super) fn broadcast_match_snapshots(
                 yaw: state.yaw,
                 moving: state.moving,
                 health: state.health,
-                max_health,
+                max_health: state.max_health,
                 alive: state.health > 0.0,
                 stunned,
                 control_locked: stunned,
@@ -1847,30 +2039,30 @@ fn consume_sophia_damage_multiplier(
         DEFAULT_SOPHIA_DAMAGE_BUFF_MULTIPLIER,
     )
 }
-/// Accepts a basic auto attack and applies immediate server-authoritative damage.
+/// Accepts a basic auto attack and starts its server-authoritative projectile.
 #[cfg(test)]
 fn accept_auto_attack(
     caster_player_id: u64,
     target_player_id: u64,
     players: &mut ConnectedPlayers,
-    combat_events: &mut ServerCombatNumberEvents,
+    abilities: &mut ActiveServerAbilities,
 ) -> Option<AutoAttackVisualEvent> {
     accept_auto_attack_target(
         caster_player_id,
         NetworkTargetId::Player(target_player_id),
         players,
         None,
-        combat_events,
+        abilities,
     )
 }
 
-/// Validates and resolves a player auto attack against a player, tower, or minion.
+/// Validates and starts a player auto attack against an enemy player or lane unit.
 fn accept_auto_attack_target(
     caster_player_id: u64,
     target: NetworkTargetId,
     players: &mut ConnectedPlayers,
     mut lane: Option<&mut ServerLaneState>,
-    combat_events: &mut ServerCombatNumberEvents,
+    abilities: &mut ActiveServerAbilities,
 ) -> Option<AutoAttackVisualEvent> {
     let caster = *players.states.get(&caster_player_id)?;
     if caster.health <= 0.0
@@ -1916,25 +2108,25 @@ fn accept_auto_attack_target(
     };
     let damage = combo.damage_for_stage(combo_stage);
     let next_combo_stage = (combo_stage + 1) % combo.combo_length.max(1);
+    let travel_seconds = auto_attack_projectile_travel_seconds(distance);
 
     match target {
         NetworkTargetId::Player(target_player_id) => {
             if let Some(lane) = lane.as_deref_mut() {
                 lane.record_hostile_player_action(caster_player_id, target_player_id, players);
             }
-            let target_state = players.states.get_mut(&target_player_id)?;
-            apply_damage(
-                combat_events,
-                target_player_id,
-                target_state,
-                damage,
-                NetworkCombatNumberKind::AutoAttack,
-            );
         }
-        NetworkTargetId::LaneUnit(target_unit_id) => {
-            lane?.apply_player_auto_attack(caster.position, caster_team, target_unit_id, damage)?;
-        }
+        NetworkTargetId::LaneUnit(_) => {}
     }
+
+    abilities
+        .auto_attack_projectiles
+        .push(ServerAutoAttackProjectile {
+            caster_team,
+            target,
+            remaining_seconds: travel_seconds,
+            damage,
+        });
 
     let caster = players.states.get_mut(&caster_player_id)?;
     caster.auto_attack_cooldown = combo.cooldown_seconds();
@@ -1948,7 +2140,7 @@ fn accept_auto_attack_target(
         target,
         start: (caster.position + Vec3::Y * AUTO_ATTACK_PROJECTILE_HEIGHT).into(),
         end: (target_position + Vec3::Y * AUTO_ATTACK_PROJECTILE_HEIGHT).into(),
-        travel_seconds: auto_attack_travel_seconds(distance),
+        travel_seconds,
     })
 }
 
@@ -3260,7 +3452,7 @@ fn update_yuna_q_orbs(
             if pull_distance > 0.08 {
                 let step = (orb.pull_speed * delta_seconds).min(pull_distance);
                 let pulled_position = target_state.position + pull_delta.normalize() * step;
-                let resolved_position = lane.resolve_player_tower_collision(
+                let resolved_position = lane.resolve_structure_collision(
                     target_state.position,
                     pulled_position,
                     DEVELOPMENT_PLAYER_HIT_RADIUS,
@@ -3413,7 +3605,7 @@ fn update_sophia_minions(
         if minion.target.is_none() {
             let angle = minion.phase + minion.elapsed * 1.8;
             let offset = Vec3::new(angle.cos(), 0.0, angle.sin()) * 1.0 + Vec3::Y * 0.35;
-            minion.position = caster.position + offset;
+            resolve_sophia_minion_movement(lane, minion, caster.position + offset);
             minion.target = find_sophia_minion_target(
                 players,
                 lane,
@@ -3472,7 +3664,8 @@ fn update_sophia_minions(
 
         if distance > f32::EPSILON {
             let step = minion.chase_speed * delta_seconds;
-            minion.position += to_target.normalize() * step.min(distance);
+            let desired_position = minion.position + to_target.normalize() * step.min(distance);
+            resolve_sophia_minion_movement(lane, minion, desired_position);
         }
     }
 
@@ -3482,6 +3675,17 @@ fn update_sophia_minions(
         abilities.sophia_minions.swap_remove(minion_index);
     }
 }
+
+/// Resolves a Sophia W minion's requested position against living lane structures.
+fn resolve_sophia_minion_movement(
+    lane: &ServerLaneState,
+    minion: &mut ServerSophiaMinion,
+    desired_position: Vec3,
+) {
+    minion.position =
+        lane.resolve_structure_collision(minion.position, desired_position, minion.radius);
+}
+
 /// Finds the nearest valid Lira E missile target in search radius.
 ///
 /// - `players`: Server-side development player state cache.
@@ -3680,17 +3884,42 @@ fn positive_or(value: f32, fallback: f32) -> f32 {
         fallback
     }
 }
-fn auto_attack_travel_seconds(distance: f32) -> f32 {
-    let range_ratio = (distance / AUTO_ATTACK_RANGE).clamp(0.0, 1.0);
-    (range_ratio * AUTO_ATTACK_MAX_TRAVEL_SECONDS).clamp(
-        AUTO_ATTACK_MIN_TRAVEL_SECONDS,
-        AUTO_ATTACK_MAX_TRAVEL_SECONDS,
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn disconnected_player_cleanup_clears_runtime_and_catalog_state() {
+        const PLAYER_ID: u64 = 42;
+        let mut players = ConnectedPlayers::default();
+        let mut navigation = ServerPlayerNavigation::default();
+        let mut ready_players = LoadingScreenReadyPlayers::default();
+        let mut leaving_players = LeavingPlayers::default();
+        let mut sent_catalog_clients = SentChampionCatalogClients::default();
+        players.states.insert(
+            PLAYER_ID,
+            test_player_state(ChampionId::LIRA, DevelopmentTeam::Light, Vec3::ZERO),
+        );
+        navigation.request_move(PLAYER_ID, Vec3::X);
+        ready_players.ready_player_ids.insert(PLAYER_ID);
+        sent_catalog_clients.0.insert(PLAYER_ID);
+
+        cleanup_disconnected_player(
+            PLAYER_ID,
+            &mut players,
+            &mut navigation,
+            &mut ready_players,
+            &mut leaving_players,
+            &mut sent_catalog_clients,
+        );
+
+        assert!(!players.states.contains_key(&PLAYER_ID));
+        assert!(!navigation.paths.contains_key(&PLAYER_ID));
+        assert!(!ready_players.ready_player_ids.contains(&PLAYER_ID));
+        assert!(leaving_players.player_ids.contains(&PLAYER_ID));
+        assert!(!sent_catalog_clients.0.contains(&PLAYER_ID));
+    }
+
     #[test]
     fn lira_q_damages_minions_when_the_projectile_reaches_them() {
         let mut abilities = ActiveServerAbilities::default();
@@ -4001,9 +4230,80 @@ mod tests {
         );
         assert_approx_eq(lane.spell_test_unit_health(minion_id).unwrap(), 320.0);
     }
+
+    #[test]
+    fn sophia_w_minions_cannot_cross_a_nexus_or_hit_a_target_behind_it() {
+        let mut abilities = ActiveServerAbilities::default();
+        let mut lane = ServerLaneState::default();
+        let nexus_position = Vec3::ZERO;
+        lane.spawn_spell_test_unit(LaneUnitKind::Nexus, TeamSpec::Dark, nexus_position);
+        let target_id = lane.spawn_spell_test_unit(
+            LaneUnitKind::MeleeBox,
+            TeamSpec::Dark,
+            Vec3::new(0.0, 0.0, 4.0),
+        );
+        let initial_target_health = lane
+            .spell_test_unit_health(target_id)
+            .expect("the target minion is alive");
+        let mut players = ConnectedPlayers::default();
+        let mut combat_events = ServerCombatNumberEvents::default();
+        let sophia_minion_radius = 0.34;
+        players.states.insert(
+            1,
+            test_player_state(
+                ChampionId::SOPHIA,
+                DevelopmentTeam::Light,
+                Vec3::new(0.0, 0.0, -4.0),
+            ),
+        );
+        abilities.sophia_minions.push(ServerSophiaMinion {
+            caster_player_id: 1,
+            position: Vec3::new(0.0, 0.35, -4.0),
+            phase: 0.0,
+            elapsed: 0.0,
+            lifetime_seconds: 4.0,
+            search_radius: 10.0,
+            chase_speed: 10.0,
+            radius: sophia_minion_radius,
+            damage: 30.0,
+            slow_seconds: 0.0,
+            slow_multiplier: 1.0,
+            target: Some(NetworkTargetId::LaneUnit(target_id)),
+        });
+
+        update_sophia_minions(
+            &mut abilities,
+            &mut players,
+            &mut lane,
+            &mut combat_events,
+            1.0,
+        );
+
+        let sophia_minion = abilities
+            .sophia_minions
+            .first()
+            .expect("the blocked Sophia minion remains active");
+        let required_clearance =
+            lane_unit_stats(LaneUnitKind::Nexus).hit_radius + sophia_minion_radius;
+        assert!(horizontal_distance(sophia_minion.position, nexus_position) >= required_clearance);
+        assert!(sophia_minion.position.z < nexus_position.z);
+        assert_eq!(
+            lane.spell_test_unit_health(target_id),
+            Some(initial_target_health)
+        );
+    }
+
     #[test]
     fn active_abilities_are_cleared_without_ready_clients() {
         let mut abilities = ActiveServerAbilities::default();
+        abilities
+            .auto_attack_projectiles
+            .push(ServerAutoAttackProjectile {
+                caster_team: TeamSpec::Light,
+                target: NetworkTargetId::Player(2),
+                remaining_seconds: 0.2,
+                damage: 45.0,
+            });
         abilities.w_projectiles.push(ServerWProjectile {
             caster_player_id: 1,
             end: Vec3::ZERO,
@@ -4018,39 +4318,100 @@ mod tests {
             &LoadingScreenReadyPlayers::default(),
         );
 
+        assert!(abilities.auto_attack_projectiles.is_empty());
         assert!(abilities.w_projectiles.is_empty());
     }
+
     #[test]
-    fn accepted_auto_attacks_apply_champion_combo_damage() {
+    fn player_health_regeneration_restores_living_players_without_exceeding_maximum() {
         let mut players = ConnectedPlayers::default();
+        let elapsed_seconds = 2.0;
+        let initial_damaged_health = 70.0;
+        let max_health = 100.0;
+        let mut damaged_player =
+            test_player_state(ChampionId::LIRA, DevelopmentTeam::Light, Vec3::ZERO);
+        damaged_player.health = initial_damaged_health;
+        damaged_player.max_health = max_health;
+        let mut capped_player =
+            test_player_state(ChampionId::YUNA, DevelopmentTeam::Light, Vec3::ZERO);
+        capped_player.health = max_health - 1.0;
+        capped_player.max_health = max_health;
+        let mut dead_player =
+            test_player_state(DARK_TARGET_CHAMPION, DevelopmentTeam::Dark, Vec3::ZERO);
+        dead_player.health = 0.0;
+        dead_player.max_health = max_health;
+        players.states.insert(1, damaged_player);
+        players.states.insert(2, capped_player);
+        players.states.insert(3, dead_player);
+
+        regenerate_player_health(&mut players, elapsed_seconds);
+
+        assert_approx_eq(
+            players.states[&1].health,
+            initial_damaged_health
+                + DEFAULT_PLAYER_HEALTH_REGENERATION_PER_SECOND * elapsed_seconds,
+        );
+        assert_eq!(players.states[&2].health, max_health);
+        assert_eq!(players.states[&3].health, 0.0);
+    }
+
+    #[test]
+    fn accepted_auto_attacks_apply_champion_combo_damage_on_projectile_impact() {
+        let mut players = ConnectedPlayers::default();
+        let mut abilities = ActiveServerAbilities::default();
+        let mut lane = ServerLaneState::default();
         let mut combat_events = ServerCombatNumberEvents::default();
+        let combo_target_max_health = 400.0;
         players.states.insert(
             1,
             test_player_state(ChampionId::LIRA, DevelopmentTeam::Light, Vec3::ZERO),
         );
-        players.states.insert(
-            2,
-            test_player_state(
-                DARK_TARGET_CHAMPION,
-                DevelopmentTeam::Dark,
-                Vec3::new(3.0, 0.0, 0.0),
-            ),
+        let mut combo_target = test_player_state(
+            DARK_TARGET_CHAMPION,
+            DevelopmentTeam::Dark,
+            Vec3::new(3.0, 0.0, 0.0),
         );
+        combo_target.health = combo_target_max_health;
+        combo_target.max_health = combo_target_max_health;
+        players.states.insert(2, combo_target);
 
         let combo = auto_attack_combo(ChampionId::LIRA);
         let expected_damages = (0..combo.combo_length)
             .map(|stage| combo.damage_for_stage(stage))
             .collect::<Vec<_>>();
-        let mut expected_health = 100.0;
+        let mut expected_health = combo_target_max_health;
 
         for expected_damage in expected_damages {
-            accept_auto_attack(1, 2, &mut players, &mut combat_events);
+            let combat_event_count = combat_events.events.len();
+            let event = accept_auto_attack(1, 2, &mut players, &mut abilities)
+                .expect("the valid auto attack starts a projectile");
+            assert_approx_eq(players.states.get(&2).unwrap().health, expected_health);
+            assert_eq!(combat_events.events.len(), combat_event_count);
+
+            advance_server_auto_attack_projectiles(
+                &mut abilities,
+                &mut players,
+                &mut lane,
+                &mut combat_events,
+                event.travel_seconds,
+            );
             expected_health -= expected_damage;
             assert_approx_eq(players.states.get(&2).unwrap().health, expected_health);
             players.states.get_mut(&1).unwrap().auto_attack_cooldown = 0.0;
         }
 
-        accept_auto_attack(1, 2, &mut players, &mut combat_events);
+        let combat_event_count = combat_events.events.len();
+        let event = accept_auto_attack(1, 2, &mut players, &mut abilities)
+            .expect("the valid auto attack starts a projectile");
+        assert_approx_eq(players.states.get(&2).unwrap().health, expected_health);
+        assert_eq!(combat_events.events.len(), combat_event_count);
+        advance_server_auto_attack_projectiles(
+            &mut abilities,
+            &mut players,
+            &mut lane,
+            &mut combat_events,
+            event.travel_seconds,
+        );
         expected_health -= combo.damage_for_stage(0);
         assert_approx_eq(players.states.get(&2).unwrap().health, expected_health);
         assert!(
@@ -4060,9 +4421,108 @@ mod tests {
                 .all(|event| event.kind == NetworkCombatNumberKind::AutoAttack)
         );
     }
+
+    #[test]
+    fn player_auto_attack_damage_waits_for_minion_tower_and_nexus_projectile_impact() {
+        let damage = auto_attack_combo(ChampionId::LIRA).damage_for_stage(0);
+
+        for kind in [
+            LaneUnitKind::MeleeBox,
+            LaneUnitKind::Tower,
+            LaneUnitKind::Nexus,
+        ] {
+            let mut players = ConnectedPlayers::default();
+            let mut abilities = ActiveServerAbilities::default();
+            let mut lane = ServerLaneState::default();
+            let mut combat_events = ServerCombatNumberEvents::default();
+            players.states.insert(
+                1,
+                test_player_state(ChampionId::LIRA, DevelopmentTeam::Light, Vec3::ZERO),
+            );
+            let target_id =
+                lane.spawn_spell_test_unit(kind, TeamSpec::Dark, Vec3::new(3.0, 0.0, 0.0));
+            let initial_health = lane
+                .spell_test_unit_health(target_id)
+                .expect("the lane target exists");
+
+            let event = accept_auto_attack_target(
+                1,
+                NetworkTargetId::LaneUnit(target_id),
+                &mut players,
+                Some(&mut lane),
+                &mut abilities,
+            )
+            .expect("the valid auto attack starts a projectile");
+
+            assert_eq!(lane.spell_test_unit_health(target_id), Some(initial_health));
+            advance_server_auto_attack_projectiles(
+                &mut abilities,
+                &mut players,
+                &mut lane,
+                &mut combat_events,
+                event.travel_seconds * 0.5,
+            );
+            assert_eq!(lane.spell_test_unit_health(target_id), Some(initial_health));
+
+            advance_server_auto_attack_projectiles(
+                &mut abilities,
+                &mut players,
+                &mut lane,
+                &mut combat_events,
+                event.travel_seconds,
+            );
+            assert_approx_eq(
+                lane.spell_test_unit_health(target_id)
+                    .expect("the lane target remains after one attack"),
+                initial_health - damage,
+            );
+        }
+    }
+
+    #[test]
+    fn player_auto_attack_projectile_ignores_a_despawned_lane_target() {
+        let mut players = ConnectedPlayers::default();
+        let mut abilities = ActiveServerAbilities::default();
+        let mut lane = ServerLaneState::default();
+        let mut combat_events = ServerCombatNumberEvents::default();
+        players.states.insert(
+            1,
+            test_player_state(ChampionId::LIRA, DevelopmentTeam::Light, Vec3::ZERO),
+        );
+        let target_id = lane.spawn_spell_test_unit(
+            LaneUnitKind::MeleeBox,
+            TeamSpec::Dark,
+            Vec3::new(3.0, 0.0, 0.0),
+        );
+        let event = accept_auto_attack_target(
+            1,
+            NetworkTargetId::LaneUnit(target_id),
+            &mut players,
+            Some(&mut lane),
+            &mut abilities,
+        )
+        .expect("the valid auto attack starts a projectile");
+
+        lane.despawn_test_unit(target_id);
+        assert_eq!(lane.spell_test_unit_health(target_id), None);
+
+        advance_server_auto_attack_projectiles(
+            &mut abilities,
+            &mut players,
+            &mut lane,
+            &mut combat_events,
+            event.travel_seconds,
+        );
+
+        assert!(abilities.auto_attack_projectiles.is_empty());
+        assert_eq!(lane.spell_test_unit_health(target_id), None);
+    }
+
     #[test]
     fn auto_attack_combo_resets_when_target_changes() {
         let mut players = ConnectedPlayers::default();
+        let mut abilities = ActiveServerAbilities::default();
+        let mut lane = ServerLaneState::default();
         let mut combat_events = ServerCombatNumberEvents::default();
         players.states.insert(
             1,
@@ -4087,9 +4547,20 @@ mod tests {
 
         let first_hit_damage = auto_attack_combo(ChampionId::YUNA).damage_for_stage(0);
 
-        accept_auto_attack(1, 2, &mut players, &mut combat_events);
+        let first_event = accept_auto_attack(1, 2, &mut players, &mut abilities)
+            .expect("the first valid auto attack starts a projectile");
         players.states.get_mut(&1).unwrap().auto_attack_cooldown = 0.0;
-        accept_auto_attack(1, 3, &mut players, &mut combat_events);
+        let second_event = accept_auto_attack(1, 3, &mut players, &mut abilities)
+            .expect("the target change starts a new projectile");
+
+        assert_eq!(players.states.get(&3).unwrap().health, 100.0);
+        advance_server_auto_attack_projectiles(
+            &mut abilities,
+            &mut players,
+            &mut lane,
+            &mut combat_events,
+            first_event.travel_seconds.max(second_event.travel_seconds),
+        );
 
         assert_approx_eq(
             players.states.get(&3).unwrap().health,
@@ -4099,6 +4570,8 @@ mod tests {
     #[test]
     fn auto_attack_combo_resets_after_idle_timeout() {
         let mut players = ConnectedPlayers::default();
+        let mut abilities = ActiveServerAbilities::default();
+        let mut lane = ServerLaneState::default();
         let mut combat_events = ServerCombatNumberEvents::default();
         players.states.insert(
             1,
@@ -4115,14 +4588,30 @@ mod tests {
 
         let first_hit_damage = auto_attack_combo(ChampionId::YUNA).damage_for_stage(0);
 
-        accept_auto_attack(1, 2, &mut players, &mut combat_events);
+        let first_event = accept_auto_attack(1, 2, &mut players, &mut abilities)
+            .expect("the first valid auto attack starts a projectile");
+        advance_server_auto_attack_projectiles(
+            &mut abilities,
+            &mut players,
+            &mut lane,
+            &mut combat_events,
+            first_event.travel_seconds,
+        );
         players.states.get_mut(&1).unwrap().auto_attack_cooldown = 0.0;
         tick_ability_cooldowns(
             &mut players,
             AUTO_ATTACK_COMBO_RESET_SECONDS
                 + auto_attack_combo(ChampionId::YUNA).cooldown_seconds(),
         );
-        accept_auto_attack(1, 2, &mut players, &mut combat_events);
+        let second_event = accept_auto_attack(1, 2, &mut players, &mut abilities)
+            .expect("the idle-reset auto attack starts a projectile");
+        advance_server_auto_attack_projectiles(
+            &mut abilities,
+            &mut players,
+            &mut lane,
+            &mut combat_events,
+            second_event.travel_seconds,
+        );
 
         assert_approx_eq(
             players.states.get(&2).unwrap().health,
@@ -4376,43 +4865,45 @@ mod tests {
     }
 
     #[test]
-    fn player_navigation_routes_around_a_living_tower() {
-        let mut navigation = ServerPlayerNavigation::default();
-        let mut players = ConnectedPlayers::default();
-        let mut lane = ServerLaneState::default();
-        let tower_position = Vec3::ZERO;
-        lane.spawn_spell_test_unit(LaneUnitKind::Tower, TeamSpec::Dark, tower_position);
-        players.states.insert(
-            1,
-            test_player_state(
-                ChampionId::LIRA,
-                DevelopmentTeam::Light,
-                Vec3::new(0.0, 0.0, -10.0),
-            ),
-        );
-        navigation.request_move(1, Vec3::new(0.0, 0.0, 10.0));
+    fn player_navigation_routes_around_living_structures() {
+        for structure_kind in [LaneUnitKind::Tower, LaneUnitKind::Nexus] {
+            let mut navigation = ServerPlayerNavigation::default();
+            let mut players = ConnectedPlayers::default();
+            let mut lane = ServerLaneState::default();
+            let structure_position = Vec3::ZERO;
+            lane.spawn_spell_test_unit(structure_kind, TeamSpec::Dark, structure_position);
+            players.states.insert(
+                1,
+                test_player_state(
+                    ChampionId::LIRA,
+                    DevelopmentTeam::Light,
+                    Vec3::new(0.0, 0.0, -10.0),
+                ),
+            );
+            navigation.request_move(1, Vec3::new(0.0, 0.0, 10.0));
 
-        let mut maximum_side_offset = 0.0_f32;
-        let minimum_clearance =
-            lane_unit_stats(LaneUnitKind::Tower).hit_radius + DEVELOPMENT_PLAYER_HIT_RADIUS;
-        for _ in 0..80 {
-            advance_server_player_navigation(
-                &mut navigation,
-                &mut players,
-                &mut lane,
-                &ActiveServerAbilities::default(),
-                0.1,
-            );
-            let position = players.states[&1].position;
-            maximum_side_offset = maximum_side_offset.max(position.x.abs());
-            assert!(
-                horizontal_distance(position, tower_position) + 0.001 >= minimum_clearance,
-                "player crossed the tower at {position:?}"
-            );
+            let mut maximum_side_offset = 0.0_f32;
+            let minimum_clearance =
+                lane_unit_stats(structure_kind).hit_radius + DEVELOPMENT_PLAYER_HIT_RADIUS;
+            for _ in 0..80 {
+                advance_server_player_navigation(
+                    &mut navigation,
+                    &mut players,
+                    &mut lane,
+                    &ActiveServerAbilities::default(),
+                    0.1,
+                );
+                let position = players.states[&1].position;
+                maximum_side_offset = maximum_side_offset.max(position.x.abs());
+                assert!(
+                    horizontal_distance(position, structure_position) + 0.001 >= minimum_clearance,
+                    "player crossed the {structure_kind:?} at {position:?}"
+                );
+            }
+
+            assert!(maximum_side_offset > 1.0);
+            assert!(players.states[&1].position.z > 9.5);
         }
-
-        assert!(maximum_side_offset > 1.0);
-        assert!(players.states[&1].position.z > 9.5);
     }
 
     #[test]
@@ -4490,10 +4981,7 @@ mod tests {
         let projected_target = navigation.paths[&1].target;
         assert_ne!(projected_target, Vec3::ZERO);
 
-        assert!(
-            lane.apply_player_auto_attack(Vec3::new(0.0, 0.0, -5.0), TeamSpec::Light, 1, 10_000.0)
-                .is_some()
-        );
+        lane.despawn_test_unit(1);
         advance_server_player_navigation(
             &mut navigation,
             &mut players,
@@ -4518,6 +5006,7 @@ mod tests {
             yaw: 0.0,
             moving: false,
             health: 100.0,
+            max_health: 100.0,
             champion,
             lira_q_cooldown: 0.0,
             lira_w_cooldown: 0.0,

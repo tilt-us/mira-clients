@@ -3,6 +3,7 @@ use super::common::{
     indicator_material, ready_timer, ready_timer_percent, remaining_timer_seconds,
     send_ability_command, timer_progress, total_timer_seconds,
 };
+use crate::systems::lane::RemoteLaneUnit;
 use crate::systems::{
     CurrentChampionVisual, TrainingDummy, targeting::clamp_world_point_to_map_top,
 };
@@ -428,7 +429,7 @@ pub(in crate::systems) fn cast_e_stun_bolt(
     camera_query: Query<(&Camera, &GlobalTransform), With<TopDownCamera>>,
     map_query: Query<(&GlobalTransform, &MapGround)>,
     player_query: Query<(&Transform, &Health, &CurrentChampionVisual), With<PlayerControlled>>,
-    enemy_query: Query<(&TrainingDummy, &Transform)>,
+    enemy_query: Query<(&TrainingDummy, &Transform, Option<&RemoteLaneUnit>)>,
     mut command_senders: Query<&mut MessageSender<PlayerCommand>, With<Client>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -502,7 +503,7 @@ pub(in crate::systems) fn update_yuna_indicators(
         ),
     >,
     enemy_query: Query<
-        (&TrainingDummy, &Transform),
+        (&TrainingDummy, &Transform, Option<&RemoteLaneUnit>),
         (
             Without<YunaQRangeIndicator>,
             Without<YunaQTargetIndicator>,

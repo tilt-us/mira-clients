@@ -1,6 +1,7 @@
 use super::{TrainingDummy, healthbar};
 use bevy::ecs::query::QueryFilter;
-use bevy::math::primitives::{Cuboid, Cylinder, Sphere};
+use bevy::math::primitives::{Cone, Cuboid, Cylinder, Sphere};
+use bevy::mesh::{MeshBuilder, Meshable};
 use bevy::prelude::*;
 use game_shared::game::{
     lane::{LaneUnitKind, TOWER_ATTACK_RANGE, lane_unit_stats},
@@ -16,6 +17,15 @@ const LANE_ROTATION_SMOOTHING: f32 = 16.0;
 const MAX_INTERPOLATED_POSITION_DELTA: f32 = 14.0;
 const TOWER_ATTACK_LINE_THICKNESS: f32 = 0.075;
 const TOWER_ATTACK_LINE_HEIGHT: f32 = 1.55;
+const NEXUS_CRYSTAL_RADIUS: f32 = 1.35;
+const NEXUS_CRYSTAL_HEIGHT: f32 = 4.8;
+const NEXUS_CRYSTAL_FACET_COUNT: u32 = 6;
+const NEXUS_CRYSTAL_HORIZONTAL_SCALE: f32 = 1.1;
+const NEXUS_HEALTH_BAR_CLEARANCE: f32 = 0.75;
+const NEXUS_CRYSTAL_OPACITY: f32 = 0.88;
+const NEXUS_CRYSTAL_EMISSIVE_ALPHA: f32 = 0.72;
+const NEXUS_CRYSTAL_METALLIC: f32 = 0.48;
+const NEXUS_CRYSTAL_ROUGHNESS: f32 = 0.16;
 
 const LIGHT_TEAM_COLOR: Color = Color::srgb_u8(0x2e, 0x7d, 0xf6);
 const DARK_TEAM_COLOR: Color = Color::srgb_u8(0xe2, 0x3a, 0x3a);
@@ -44,9 +54,14 @@ pub(super) struct RemoteLaneUnit {
 }
 
 impl RemoteLaneUnit {
+    /// Returns whether this replicated unit is a stationary lane structure.
+    pub(super) fn is_structure(&self) -> bool {
+        self.kind.is_structure()
+    }
+
     /// Returns whether this replicated unit is a lane tower.
     pub(super) fn is_tower(&self) -> bool {
-        self.kind == LaneUnitKind::Tower
+        is_tower_lane_unit(self.kind)
     }
 
     /// Returns the latest authoritative collision center received for this lane unit.
@@ -61,13 +76,20 @@ impl RemoteLaneUnit {
 
     /// Returns whether this lane entity is a minion that player spells can target.
     pub(super) fn is_spell_target(&self) -> bool {
-        self.kind != LaneUnitKind::Tower
+        self.kind.is_minion()
     }
 
     /// Returns the authoritative collision radius used by spell target visuals.
     pub(super) fn spell_target_radius(&self) -> f32 {
         lane_unit_stats(self.kind).hit_radius
     }
+}
+
+/// Returns whether a local spell may target an entity with the optional lane-unit role.
+///
+/// Standalone local training dummies remain valid targets while replicated structures do not.
+pub(super) fn is_local_spell_target(lane_unit: Option<&RemoteLaneUnit>) -> bool {
+    lane_unit.is_none_or(RemoteLaneUnit::is_spell_target)
 }
 
 /// Marks the translucent 6 metre attack radius displayed below each tower.
@@ -89,7 +111,7 @@ struct TowerAttackLineGeometry {
     team: TeamSpec,
 }
 
-/// Reconciles replicated towers and minions from the latest server lane snapshot.
+/// Reconciles replicated lane units from the latest server lane snapshot.
 ///
 /// - `commands`: ECS command buffer used to spawn and remove lane presentation entities.
 /// - `receivers`: Lane snapshot receivers attached to the local client link.
@@ -225,7 +247,7 @@ pub(super) fn update_tower_attack_lines(
 ) {
     let mut wanted_lines = HashMap::new();
     for (tower, tower_transform) in &tower_query {
-        if tower.kind != LaneUnitKind::Tower {
+        if !tower.is_tower() {
             continue;
         }
         let Some(target) = tower.attack_target else {
@@ -276,7 +298,7 @@ pub(super) fn update_tower_attack_lines(
     }
 }
 
-/// Spawns one visual stand-in for a tower or minion from a server lane snapshot entry.
+/// Spawns one visual stand-in for a lane unit from a server lane snapshot entry.
 fn spawn_lane_unit(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -312,7 +334,8 @@ fn spawn_lane_unit(
             Mesh3d(meshes.add(lane_unit_mesh(snapshot_unit.kind))),
             MeshMaterial3d(material),
             Transform::from_translation(position)
-                .with_rotation(Quat::from_rotation_y(snapshot_unit.yaw)),
+                .with_rotation(Quat::from_rotation_y(snapshot_unit.yaw))
+                .with_scale(layout.visual_scale),
         ))
         .id();
 
@@ -344,7 +367,7 @@ fn spawn_lane_unit(
         attack_target: snapshot_unit.attack_target,
     });
 
-    if snapshot_unit.kind == LaneUnitKind::Tower {
+    if is_tower_lane_unit(snapshot_unit.kind) {
         let range_material = materials.add(tower_range_material(snapshot_unit.team));
         let range_entity = commands
             .spawn((
@@ -463,6 +486,10 @@ fn lane_unit_mesh(kind: LaneUnitKind) -> Mesh {
         LaneUnitKind::LargeRangedBox => Mesh::from(Cuboid::new(1.25, 1.25, 1.25)),
         LaneUnitKind::RangedOrb => Mesh::from(Sphere::new(0.45)),
         LaneUnitKind::Tower => Mesh::from(Cylinder::new(1.25, 2.6)),
+        LaneUnitKind::Nexus => Cone::new(NEXUS_CRYSTAL_RADIUS, NEXUS_CRYSTAL_HEIGHT)
+            .mesh()
+            .resolution(NEXUS_CRYSTAL_FACET_COUNT)
+            .build(),
     }
 }
 
@@ -472,26 +499,41 @@ fn lane_unit_layout(kind: LaneUnitKind) -> LaneUnitLayout {
         LaneUnitKind::MeleeBox => LaneUnitLayout {
             center_height: 0.375,
             health_bar_offset: 1.25,
+            visual_scale: Vec3::ONE,
         },
         LaneUnitKind::LargeRangedBox => LaneUnitLayout {
             center_height: 0.625,
             health_bar_offset: 1.55,
+            visual_scale: Vec3::ONE,
         },
         LaneUnitKind::RangedOrb => LaneUnitLayout {
             center_height: 0.45,
             health_bar_offset: 1.3,
+            visual_scale: Vec3::ONE,
         },
         LaneUnitKind::Tower => LaneUnitLayout {
             center_height: 1.3,
             health_bar_offset: 2.05,
+            visual_scale: Vec3::ONE,
+        },
+        LaneUnitKind::Nexus => LaneUnitLayout {
+            center_height: NEXUS_CRYSTAL_HEIGHT * 0.5,
+            health_bar_offset: NEXUS_CRYSTAL_HEIGHT * 0.5 + NEXUS_HEALTH_BAR_CLEARANCE,
+            visual_scale: Vec3::new(
+                NEXUS_CRYSTAL_HORIZONTAL_SCALE,
+                1.0,
+                NEXUS_CRYSTAL_HORIZONTAL_SCALE,
+            ),
         },
     }
 }
 
 /// Holds the vertical offsets used for a lane-unit presentation entity.
+#[derive(Debug, Clone, Copy, PartialEq)]
 struct LaneUnitLayout {
     center_height: f32,
     health_bar_offset: f32,
+    visual_scale: Vec3,
 }
 
 /// Converts a ground-level network position into the center position for a visible lane mesh.
@@ -499,30 +541,33 @@ fn visual_position(position: Vec3, kind: LaneUnitKind) -> Vec3 {
     position + Vec3::Y * lane_unit_layout(kind).center_height
 }
 
-/// Builds a team-colored material for a minion or tower mesh.
+/// Builds a team-colored material for a replicated lane-unit mesh.
 fn lane_unit_material(team: TeamSpec, kind: LaneUnitKind) -> StandardMaterial {
     let color = team_color(team);
-    let roughness = if kind == LaneUnitKind::Tower {
-        0.38
-    } else {
-        0.62
-    };
-    StandardMaterial {
-        base_color: color,
-        emissive: color
-            .with_alpha(if kind == LaneUnitKind::Tower {
-                0.32
-            } else {
-                0.18
-            })
-            .into(),
-        metallic: if kind == LaneUnitKind::Tower {
-            0.22
-        } else {
-            0.0
+    match kind {
+        LaneUnitKind::Nexus => StandardMaterial {
+            base_color: color.with_alpha(NEXUS_CRYSTAL_OPACITY),
+            emissive: color.with_alpha(NEXUS_CRYSTAL_EMISSIVE_ALPHA).into(),
+            metallic: NEXUS_CRYSTAL_METALLIC,
+            perceptual_roughness: NEXUS_CRYSTAL_ROUGHNESS,
+            alpha_mode: AlphaMode::Blend,
+            ..default()
         },
-        perceptual_roughness: roughness,
-        ..default()
+        LaneUnitKind::Tower => StandardMaterial {
+            base_color: color,
+            emissive: color.with_alpha(0.32).into(),
+            metallic: 0.22,
+            perceptual_roughness: 0.38,
+            ..default()
+        },
+        LaneUnitKind::MeleeBox | LaneUnitKind::LargeRangedBox | LaneUnitKind::RangedOrb => {
+            StandardMaterial {
+                base_color: color,
+                emissive: color.with_alpha(0.18).into(),
+                perceptual_roughness: 0.62,
+                ..default()
+            }
+        }
     }
 }
 
@@ -555,7 +600,13 @@ fn lane_unit_name(kind: LaneUnitKind) -> &'static str {
         LaneUnitKind::LargeRangedBox => "Ranged Minion",
         LaneUnitKind::RangedOrb => "Orb Minion",
         LaneUnitKind::Tower => "Tower",
+        LaneUnitKind::Nexus => "Nexus Crystal",
     }
+}
+
+/// Returns whether a lane unit owns tower-only presentation behavior.
+fn is_tower_lane_unit(kind: LaneUnitKind) -> bool {
+    kind == LaneUnitKind::Tower
 }
 
 /// Returns the display name used for one team in lane unit labels.
@@ -564,5 +615,81 @@ fn team_name(team: TeamSpec) -> &'static str {
         TeamSpec::Light => "Light",
         TeamSpec::Dark => "Dark",
         TeamSpec::Neutral => "Neutral",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::ecs::world::CommandQueue;
+
+    fn remote_lane_unit(kind: LaneUnitKind) -> RemoteLaneUnit {
+        RemoteLaneUnit {
+            id: 1,
+            kind,
+            team: TeamSpec::Light,
+            is_enemy: true,
+            health_bar: Entity::PLACEHOLDER,
+            target_position: Vec3::ZERO,
+            target_rotation: Quat::IDENTITY,
+            attack_target: None,
+        }
+    }
+
+    #[test]
+    fn nexus_uses_a_distinct_crystal_presentation() {
+        let nexus_layout = lane_unit_layout(LaneUnitKind::Nexus);
+        let tower_layout = lane_unit_layout(LaneUnitKind::Tower);
+        let nexus_material = lane_unit_material(TeamSpec::Light, LaneUnitKind::Nexus);
+
+        assert_eq!(lane_unit_name(LaneUnitKind::Nexus), "Nexus Crystal");
+        assert!(nexus_layout.center_height > tower_layout.center_height);
+        assert!(nexus_layout.health_bar_offset > nexus_layout.center_height);
+        assert_eq!(
+            nexus_layout.visual_scale,
+            Vec3::new(
+                NEXUS_CRYSTAL_HORIZONTAL_SCALE,
+                1.0,
+                NEXUS_CRYSTAL_HORIZONTAL_SCALE,
+            )
+        );
+        assert_eq!(nexus_material.alpha_mode, AlphaMode::Blend);
+        assert_eq!(nexus_material.metallic, NEXUS_CRYSTAL_METALLIC);
+    }
+
+    #[test]
+    fn nexus_is_only_an_auto_attack_target_without_tower_only_behaviors() {
+        let nexus = remote_lane_unit(LaneUnitKind::Nexus);
+        let minion = remote_lane_unit(LaneUnitKind::MeleeBox);
+
+        assert!(nexus.is_structure());
+        assert!(!nexus.is_tower());
+        assert!(!nexus.is_spell_target());
+        assert!(!minion.is_structure());
+        assert!(minion.is_spell_target());
+        assert!(!is_local_spell_target(Some(&nexus)));
+        assert!(is_local_spell_target(Some(&minion)));
+        assert!(is_local_spell_target(None));
+        assert!(!is_tower_lane_unit(LaneUnitKind::Nexus));
+    }
+
+    #[test]
+    fn despawning_removed_lane_unit_cleans_up_health_bar_and_children() {
+        let mut world = World::new();
+        let lane_unit = world.spawn_empty().id();
+        let health_bar = world.spawn_empty().id();
+        let child_entity = world.spawn_empty().id();
+        world.entity_mut(lane_unit).add_child(child_entity);
+
+        let mut command_queue = CommandQueue::default();
+        {
+            let mut commands = Commands::new(&mut command_queue, &world);
+            despawn_lane_unit(&mut commands, lane_unit, health_bar);
+        }
+        command_queue.apply(&mut world);
+
+        assert!(world.get_entity(lane_unit).is_err());
+        assert!(world.get_entity(health_bar).is_err());
+        assert!(world.get_entity(child_entity).is_err());
     }
 }

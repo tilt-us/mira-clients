@@ -22,6 +22,8 @@ use std::time::Duration;
 use crate::network::{NetworkPingState, ping_color, ping_text};
 
 const MINIMUM_CLIENT_LOADING_DURATION: Duration = Duration::from_secs(5);
+const INITIAL_CONNECTION_RETRY_DELAY: Duration = Duration::from_secs(1);
+const MAXIMUM_INITIAL_CONNECTION_RETRIES: u8 = 2;
 const LOADING_TEAM_SIZE: usize = 5;
 const PROGRESS_BADGE_WIDTH: u32 = 112;
 const PROGRESS_BADGE_HEIGHT: u32 = 30;
@@ -72,6 +74,48 @@ struct ClientLoadingMatchPlayer {
 #[derive(Resource, Debug)]
 struct LoadingScreenReadyGate {
     minimum_timer: Timer,
+}
+
+/// Tracks whether the loading-screen client has completed its first game-server connection.
+#[derive(Resource, Debug, Default)]
+struct LoadingScreenConnectionState {
+    has_connected: bool,
+    initial_retry_count: u8,
+    retry_timer: Option<Timer>,
+}
+
+impl LoadingScreenConnectionState {
+    fn mark_connected(&mut self) {
+        self.has_connected = true;
+        self.initial_retry_count = 0;
+        self.retry_timer = None;
+    }
+
+    fn schedule_initial_retry(&mut self) -> bool {
+        if self.has_connected
+            || self.retry_timer.is_some()
+            || self.initial_retry_count >= MAXIMUM_INITIAL_CONNECTION_RETRIES
+        {
+            return false;
+        }
+
+        self.initial_retry_count += 1;
+        self.retry_timer = Some(Timer::new(INITIAL_CONNECTION_RETRY_DELAY, TimerMode::Once));
+        true
+    }
+
+    fn retry_is_ready(&mut self, elapsed: Duration) -> bool {
+        let Some(retry_timer) = self.retry_timer.as_mut() else {
+            return false;
+        };
+
+        retry_timer.tick(elapsed);
+        retry_timer.is_finished()
+    }
+
+    fn clear_pending_retry(&mut self) {
+        self.retry_timer = None;
+    }
 }
 
 /// Tracks wallpaper assets while they are being preloaded.
@@ -188,6 +232,7 @@ pub struct LoadingScreenPlugin;
 impl Plugin for LoadingScreenPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<LoadingScreenReadyGate>()
+            .init_resource::<LoadingScreenConnectionState>()
             .init_resource::<LoadingScreenWallpaperPreload>()
             .init_resource::<LoadingAvatarCache>()
             .init_resource::<ClientLoadingMatchManifest>()
@@ -204,7 +249,9 @@ impl Plugin for LoadingScreenPlugin {
             .add_systems(
                 Update,
                 (
+                    record_loading_screen_connection,
                     record_loading_screen_disconnect,
+                    retry_initial_game_server_connection,
                     update_loading_screen_wallpaper_status,
                     update_loading_screen_ready_gate,
                     send_display_ready,
@@ -393,10 +440,16 @@ fn update_loading_screen_ready_gate(
 
 fn send_display_ready(
     mut state: ResMut<LoadingScreenState>,
+    connection: Res<LoadingScreenConnectionState>,
     mut senders: Query<&mut MessageSender<DisplayReady>, With<Client>>,
 ) {
     if !state.active || !state.client_ready || state.ready_sent || state.connection_error.is_some()
     {
+        return;
+    }
+
+    if !connection.has_connected {
+        state.status_text = "Connecting to game server".to_string();
         return;
     }
 
@@ -453,10 +506,23 @@ fn receive_loading_screen_status(
     }
 }
 
+/// Records the first successful game-server connection during loading.
+fn record_loading_screen_connection(
+    connected_clients: Query<Entity, (With<Client>, Added<Connected>)>,
+    mut connection: ResMut<LoadingScreenConnectionState>,
+) {
+    if connected_clients.is_empty() {
+        return;
+    }
+
+    connection.mark_connected();
+}
+
 /// Records a failed game-server connection while keeping the loading screen visible.
 fn record_loading_screen_disconnect(
     disconnected_clients: Query<&Disconnected, (With<Client>, Added<Disconnected>)>,
     mut state: ResMut<LoadingScreenState>,
+    mut connection: ResMut<LoadingScreenConnectionState>,
 ) {
     if !state.active || state.complete || state.connection_error.is_some() {
         return;
@@ -470,6 +536,15 @@ fn record_loading_screen_disconnect(
             continue;
         }
 
+        if connection.schedule_initial_retry() {
+            info!(
+                retry = connection.initial_retry_count,
+                "Game-server connection ended before the initial handshake; retrying."
+            );
+            state.status_text = "Connecting to game server".to_string();
+            return;
+        }
+
         warn!("Game server connection failed: {reason}");
         let status_text = loading_connection_error_text(reason);
         state.connection_error = Some(status_text.to_string());
@@ -478,6 +553,32 @@ fn record_loading_screen_disconnect(
         state.status_text = status_text.to_string();
         return;
     }
+}
+
+/// Retries a transient disconnect that occurs before the first successful connection.
+fn retry_initial_game_server_connection(
+    time: Res<Time>,
+    state: Res<LoadingScreenState>,
+    mut connection: ResMut<LoadingScreenConnectionState>,
+    disconnected_clients: Query<Entity, (With<Client>, With<Disconnected>)>,
+    mut commands: Commands,
+) {
+    if !state.active || state.complete || state.connection_error.is_some() {
+        return;
+    }
+    if !connection.retry_is_ready(time.delta()) {
+        return;
+    }
+
+    let Some(client_entity) = disconnected_clients.iter().next() else {
+        connection.clear_pending_retry();
+        return;
+    };
+
+    connection.clear_pending_retry();
+    commands.trigger(Connect {
+        entity: client_entity,
+    });
 }
 
 fn loading_connection_error_text(reason: &str) -> &'static str {
@@ -1530,15 +1631,70 @@ mod tests {
     }
 
     #[test]
-    fn disconnect_blocks_display_ready_in_the_same_update() {
+    fn initial_disconnect_schedules_a_retry_without_showing_an_error() {
+        let mut app = App::new();
+        app.insert_resource(loading_screen_state_for_test())
+            .init_resource::<LoadingScreenConnectionState>()
+            .add_systems(Update, record_loading_screen_disconnect);
+        app.world_mut().spawn((
+            Client::default(),
+            Disconnected {
+                reason: Some("Client disconnected: ConnectionRequestTimedOut".to_string()),
+            },
+        ));
+
+        app.update();
+
+        let state = app.world().resource::<LoadingScreenState>();
+        let connection = app.world().resource::<LoadingScreenConnectionState>();
+        assert_eq!(state.connection_error, None);
+        assert_eq!(state.status_text, "Connecting to game server");
+        assert_eq!(connection.initial_retry_count, 1);
+        assert!(connection.retry_timer.is_some());
+    }
+
+    #[test]
+    fn exhausted_initial_retries_show_the_connection_error() {
+        let mut connection = LoadingScreenConnectionState::default();
+        connection.initial_retry_count = MAXIMUM_INITIAL_CONNECTION_RETRIES;
+
+        let mut app = App::new();
+        app.insert_resource(loading_screen_state_for_test())
+            .insert_resource(connection)
+            .add_systems(Update, record_loading_screen_disconnect);
+        app.world_mut().spawn((
+            Client::default(),
+            Disconnected {
+                reason: Some("Client disconnected: ConnectionRequestTimedOut".to_string()),
+            },
+        ));
+
+        app.update();
+
+        assert_eq!(
+            app.world()
+                .resource::<LoadingScreenState>()
+                .connection_error
+                .as_deref(),
+            Some("Connection to game server timed out")
+        );
+    }
+
+    #[test]
+    fn established_connection_disconnect_blocks_display_ready_in_the_same_update() {
         let mut state = loading_screen_state_for_test();
         state.ready_sent = false;
 
         let mut app = App::new();
-        app.insert_resource(state).add_systems(
-            Update,
-            (record_loading_screen_disconnect, send_display_ready).chain(),
-        );
+        app.insert_resource(state)
+            .insert_resource(LoadingScreenConnectionState {
+                has_connected: true,
+                ..default()
+            })
+            .add_systems(
+                Update,
+                (record_loading_screen_disconnect, send_display_ready).chain(),
+            );
         app.world_mut().spawn((
             Client::default(),
             Disconnected {
@@ -1555,6 +1711,23 @@ mod tests {
         );
         assert!(!state.ready_sent);
         assert!(state.is_visible());
+    }
+
+    #[test]
+    fn display_ready_waits_for_the_first_server_connection() {
+        let mut state = loading_screen_state_for_test();
+        state.ready_sent = false;
+
+        let mut app = App::new();
+        app.insert_resource(state)
+            .init_resource::<LoadingScreenConnectionState>()
+            .add_systems(Update, send_display_ready);
+
+        app.update();
+
+        let state = app.world().resource::<LoadingScreenState>();
+        assert!(!state.ready_sent);
+        assert_eq!(state.status_text, "Connecting to game server");
     }
 
     #[test]

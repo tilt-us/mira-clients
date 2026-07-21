@@ -3,9 +3,9 @@ use super::common::{
     ready_timer_percent, remaining_timer_seconds, send_ability_command, timer_progress,
     total_timer_seconds,
 };
-use crate::systems::lane::RemoteLaneUnit;
+use crate::systems::lane::{RemoteLaneUnit, is_local_spell_target};
 use crate::systems::{
-    CurrentChampionVisual, TrainingDummy, TrainingDummyHealthChangeKind,
+    CurrentChampionVisual, TrainingDummy, TrainingDummyHealthChangeKind, movement,
     targeting::clamp_world_point_to_map_top,
 };
 use bevy::ecs::query::QueryFilter;
@@ -14,6 +14,7 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use game_shared::game::{
     camera::TopDownCamera,
+    lane_navigation::{LaneNavigationObstacle, resolve_circle_obstacle_collisions},
     map::MapGround,
     player::{Health, Player, PlayerControlled},
     team::Team,
@@ -36,6 +37,8 @@ const W_MINION_SECONDS: f32 = 8.0;
 const W_SEARCH_RADIUS: f32 = 4.5;
 const W_CHASE_SPEED: f32 = 6.6;
 const W_MINION_RADIUS: f32 = 0.34;
+const W_MINION_FOLLOW_SPEED: f32 = 10.0;
+const W_MINION_FOLLOW_STOP_DISTANCE: f32 = 0.02;
 
 const E_COOLDOWN_SECONDS: f32 = 8.0;
 const E_BUFF_SECONDS: f32 = 4.0;
@@ -338,7 +341,7 @@ pub(in crate::systems) fn cast_q_orb_on_left_click(
     camera_query: Query<(&Camera, &GlobalTransform), With<TopDownCamera>>,
     map_query: Query<(&GlobalTransform, &MapGround)>,
     player_query: Query<(&Transform, &Health, &CurrentChampionVisual), With<PlayerControlled>>,
-    enemy_query: Query<(Entity, &TrainingDummy, &Transform)>,
+    enemy_query: Query<(Entity, &TrainingDummy, &Transform, Option<&RemoteLaneUnit>)>,
     mut command_senders: Query<&mut MessageSender<PlayerCommand>, With<Client>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -503,7 +506,7 @@ pub(in crate::systems) fn update_sophia_indicators(
         ),
     >,
     enemy_query: Query<
-        (Entity, &TrainingDummy, &Transform),
+        (Entity, &TrainingDummy, &Transform, Option<&RemoteLaneUnit>),
         (
             Without<SophiaQRangeIndicator>,
             Without<SophiaQTargetIndicator>,
@@ -600,7 +603,7 @@ pub(in crate::systems) fn update_q_orbs(
     time: Res<Time>,
     mut commands: Commands,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    mut dummy_query: Query<&mut TrainingDummy>,
+    mut dummy_query: Query<(&mut TrainingDummy, Option<&RemoteLaneUnit>)>,
     target_query: Query<&Transform, Without<SophiaQOrb>>,
     remote_player_query: Query<(&Player, &Transform), Without<SophiaQOrb>>,
     mut query: Query<(
@@ -636,7 +639,8 @@ pub(in crate::systems) fn update_q_orbs(
 
         if orb.damage_timer.just_finished()
             && let Some(target) = orb.target
-            && let Ok(mut dummy) = dummy_query.get_mut(target)
+            && let Ok((mut dummy, lane_unit)) = dummy_query.get_mut(target)
+            && is_local_spell_target(lane_unit)
             && dummy.local_damage_enabled
         {
             dummy.apply_damage(orb.damage_per_second, TrainingDummyHealthChangeKind::Spell);
@@ -668,8 +672,11 @@ pub(in crate::systems) fn update_minions(
         ),
         Without<SophiaMinion>,
     >,
+    structure_query: Query<(&RemoteLaneUnit, &Health), Without<PlayerControlled>>,
     mut query: Query<(Entity, &mut SophiaMinion, &mut Transform)>,
 ) {
+    let structure_obstacles = movement::live_structure_navigation_obstacles(&structure_query);
+
     for (entity, mut minion, mut transform) in &mut query {
         minion.timer.tick(time.delta());
         if minion.timer.is_finished() {
@@ -680,12 +687,15 @@ pub(in crate::systems) fn update_minions(
         if minion.target.is_none() {
             let desired =
                 minion_follow_position(&minion, &target_query).unwrap_or(transform.translation);
-            let to_desired = desired - transform.translation;
-            let distance = to_desired.length();
-            if distance > 0.02 {
-                transform.translation +=
-                    to_desired.normalize() * (10.0 * time.delta_secs()).min(distance);
-            }
+            move_sophia_minion_toward(
+                &mut transform,
+                desired,
+                W_MINION_FOLLOW_SPEED,
+                W_MINION_FOLLOW_STOP_DISTANCE,
+                time.delta_secs(),
+                minion.settings.minion_radius,
+                &structure_obstacles,
+            );
             minion.target = find_minion_target(
                 transform.translation,
                 minion.settings.search_radius,
@@ -725,16 +735,20 @@ pub(in crate::systems) fn update_minions(
                     continue;
                 }
             };
-            let to_target = target_position - transform.translation;
-            let distance = to_target.length();
+            let distance = target_position.distance(transform.translation);
             if distance <= minion.settings.minion_radius + target_radius {
                 commands.entity(entity).despawn();
                 continue;
             }
-            if distance > f32::EPSILON {
-                let step = minion.settings.chase_speed * time.delta_secs();
-                transform.translation += to_target.normalize() * step.min(distance);
-            }
+            move_sophia_minion_toward(
+                &mut transform,
+                target_position,
+                minion.settings.chase_speed,
+                f32::EPSILON,
+                time.delta_secs(),
+                minion.settings.minion_radius,
+                &structure_obstacles,
+            );
         }
     }
 }
@@ -938,6 +952,32 @@ fn spawn_buff_arrow(
             .with_rotation(Quat::from_rotation_x(std::f32::consts::PI)),
     ));
 }
+
+/// Moves a local Sophia minion toward a target without crossing a replicated structure.
+fn move_sophia_minion_toward(
+    transform: &mut Transform,
+    target_position: Vec3,
+    movement_speed: f32,
+    stop_distance: f32,
+    delta_seconds: f32,
+    minion_radius: f32,
+    structure_obstacles: &[LaneNavigationObstacle],
+) {
+    let start_position = transform.translation;
+    let offset = target_position - start_position;
+    let distance = offset.length();
+    if distance > stop_distance {
+        let step = (movement_speed * delta_seconds).min(distance);
+        transform.translation += offset.normalize() * step;
+    }
+    transform.translation = resolve_circle_obstacle_collisions(
+        start_position,
+        transform.translation,
+        minion_radius,
+        structure_obstacles,
+    );
+}
+
 fn minion_follow_position(
     minion: &SophiaMinion,
     target_query: &Query<
@@ -1066,7 +1106,7 @@ fn is_sophia_spell_target(player: Option<&Player>, lane_unit: Option<&RemoteLane
 }
 fn find_clicked_enemy_target<'a, F>(
     cursor_hit: Vec3,
-    enemy_query: &'a Query<(Entity, &TrainingDummy, &Transform), F>,
+    enemy_query: &'a Query<(Entity, &TrainingDummy, &Transform, Option<&RemoteLaneUnit>), F>,
     radius: f32,
 ) -> Option<(Entity, &'a TrainingDummy, &'a Transform)>
 where
@@ -1074,12 +1114,44 @@ where
 {
     enemy_query
         .iter()
-        .filter(|(_, dummy, transform)| {
-            dummy.health > 0.0 && horizontal_distance(cursor_hit, transform.translation) <= radius
+        .filter(|(_, dummy, transform, lane_unit)| {
+            dummy.health > 0.0
+                && is_local_spell_target(*lane_unit)
+                && horizontal_distance(cursor_hit, transform.translation) <= radius
         })
-        .min_by(|(_, _, left), (_, _, right)| {
+        .min_by(|(_, _, left, _), (_, _, right, _)| {
             horizontal_distance(cursor_hit, left.translation)
                 .partial_cmp(&horizontal_distance(cursor_hit, right.translation))
                 .unwrap_or(std::cmp::Ordering::Equal)
         })
+        .map(|(entity, dummy, transform, _)| (entity, dummy, transform))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use game_shared::game::lane::{LaneUnitKind, lane_unit_stats};
+
+    #[test]
+    fn sophia_minions_do_not_cross_nexus_obstacles() {
+        let nexus = LaneNavigationObstacle::new(
+            Vec3::ZERO,
+            lane_unit_stats(LaneUnitKind::Nexus).hit_radius,
+        );
+        let mut transform = Transform::from_xyz(0.0, 0.35, -3.0);
+
+        move_sophia_minion_toward(
+            &mut transform,
+            Vec3::new(0.0, 0.35, 3.0),
+            W_MINION_FOLLOW_SPEED,
+            f32::EPSILON,
+            1.0,
+            W_MINION_RADIUS,
+            &[nexus],
+        );
+
+        let required_clearance = nexus.radius + W_MINION_RADIUS;
+        assert!(horizontal_distance(transform.translation, nexus.center) >= required_clearance);
+        assert!(transform.translation.z < 0.0);
+    }
 }

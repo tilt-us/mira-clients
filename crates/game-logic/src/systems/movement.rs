@@ -108,7 +108,7 @@ pub(super) fn set_move_target_from_mouse_input(
         ),
         (With<PlayerControlled>, Without<MoveTargetMarker>),
     >,
-    tower_query: Query<(&RemoteLaneUnit, &Health), Without<PlayerControlled>>,
+    structure_query: Query<(&RemoteLaneUnit, &Health), Without<PlayerControlled>>,
     mut marker_query: Query<
         (&mut Transform, &mut Visibility, &mut MoveTargetMarkerFx),
         (With<MoveTargetMarker>, Without<PlayerControlled>),
@@ -151,8 +151,8 @@ pub(super) fn set_move_target_from_mouse_input(
     let Some(target) = ray_hit_map_top(ray, map_transform, *map_ground) else {
         return;
     };
-    let tower_obstacles = live_tower_navigation_obstacles(&tower_query);
-    let obstacle_revision = lane_navigation_obstacle_revision(&tower_obstacles);
+    let structure_obstacles = live_structure_navigation_obstacles(&structure_query);
+    let obstacle_revision = lane_navigation_obstacle_revision(&structure_obstacles);
 
     let mut marker_target = target;
     let mut did_set_move_target = false;
@@ -206,7 +206,7 @@ pub(super) fn set_move_target_from_mouse_input(
             player_transform.translation,
             requested_move_target,
             obstacle_revision,
-            &tower_obstacles,
+            &structure_obstacles,
         ) else {
             commands.entity(entity).remove::<MoveTarget>();
             commands.entity(entity).remove::<LocalNavigationRoute>();
@@ -246,11 +246,11 @@ pub(super) fn set_move_target_from_mouse_input(
         }
     }
 }
-/// Advances local route waypoints and replans them when replicated tower obstacles change.
+/// Advances local route waypoints and replans them when replicated structure obstacles change.
 ///
 /// - `commands`: ECS command buffer used to update the immediate movement waypoint.
 /// - `player_query`: Controlled players with an active local navigation route.
-/// - `tower_query`: Living replicated towers used as pathfinding obstacles.
+/// - `structure_query`: Living replicated structures used as pathfinding obstacles.
 pub(super) fn advance_local_navigation_routes(
     mut commands: Commands,
     mut player_query: Query<
@@ -263,10 +263,10 @@ pub(super) fn advance_local_navigation_routes(
         ),
         With<PlayerControlled>,
     >,
-    tower_query: Query<(&RemoteLaneUnit, &Health), Without<PlayerControlled>>,
+    structure_query: Query<(&RemoteLaneUnit, &Health), Without<PlayerControlled>>,
 ) {
-    let tower_obstacles = live_tower_navigation_obstacles(&tower_query);
-    let obstacle_revision = lane_navigation_obstacle_revision(&tower_obstacles);
+    let structure_obstacles = live_structure_navigation_obstacles(&structure_query);
+    let obstacle_revision = lane_navigation_obstacle_revision(&structure_obstacles);
 
     for (entity, health, transform, movement_modifier, mut route) in &mut player_query {
         if health.current == 0 || movement_modifier.is_some_and(|modifier| modifier.stunned) {
@@ -280,7 +280,7 @@ pub(super) fn advance_local_navigation_routes(
                 &mut route,
                 transform.translation,
                 obstacle_revision,
-                &tower_obstacles,
+                &structure_obstacles,
             )
         {
             commands.entity(entity).remove::<MoveTarget>();
@@ -291,12 +291,12 @@ pub(super) fn advance_local_navigation_routes(
         route.discard_reached_waypoints(transform.translation);
         let next_waypoint = route.next_waypoint();
         if next_waypoint.is_some_and(|waypoint| {
-            !route_segment_is_clear(transform.translation, waypoint, &tower_obstacles)
+            !route_segment_is_clear(transform.translation, waypoint, &structure_obstacles)
         }) && !replan_local_navigation_route(
             &mut route,
             transform.translation,
             obstacle_revision,
-            &tower_obstacles,
+            &structure_obstacles,
         ) {
             commands.entity(entity).remove::<MoveTarget>();
             commands.entity(entity).remove::<LocalNavigationRoute>();
@@ -335,9 +335,9 @@ pub(super) fn move_controlled_player(
         ),
         With<PlayerControlled>,
     >,
-    tower_query: Query<(&RemoteLaneUnit, &Health), Without<PlayerControlled>>,
+    structure_query: Query<(&RemoteLaneUnit, &Health), Without<PlayerControlled>>,
 ) {
-    let tower_obstacles = live_tower_navigation_obstacles(&tower_query);
+    let structure_obstacles = live_structure_navigation_obstacles(&structure_query);
 
     for (entity, health, move_speed, move_target, movement_modifier, mut transform) in
         &mut player_query
@@ -391,7 +391,7 @@ pub(super) fn move_controlled_player(
             start_position,
             transform.translation,
             LANE_PLAYER_COLLISION_RADIUS,
-            &tower_obstacles,
+            &structure_obstacles,
         );
         transform.translation.y = 0.0;
     }
@@ -402,9 +402,9 @@ fn plan_local_navigation_route(
     start: Vec3,
     requested_goal: Vec3,
     obstacle_revision: u64,
-    tower_obstacles: &[LaneNavigationObstacle],
+    structure_obstacles: &[LaneNavigationObstacle],
 ) -> Option<LocalNavigationRoute> {
-    let mesh = LaneNavigationMesh::new(LANE_PLAYER_COLLISION_RADIUS, tower_obstacles);
+    let mesh = LaneNavigationMesh::new(LANE_PLAYER_COLLISION_RADIUS, structure_obstacles);
     let mut path = mesh.find_path_with_projection(start, requested_goal)?;
     let has_recovery_waypoint = path.prepend_start_recovery_waypoint(start);
     let recovery_waypoint = has_recovery_waypoint.then_some(path.start);
@@ -427,13 +427,13 @@ fn replan_local_navigation_route(
     route: &mut LocalNavigationRoute,
     start: Vec3,
     obstacle_revision: u64,
-    tower_obstacles: &[LaneNavigationObstacle],
+    structure_obstacles: &[LaneNavigationObstacle],
 ) -> bool {
     let Some(replanned_route) = plan_local_navigation_route(
         start,
         route.requested_goal,
         obstacle_revision,
-        tower_obstacles,
+        structure_obstacles,
     ) else {
         return false;
     };
@@ -446,7 +446,7 @@ fn replan_local_navigation_route(
     true
 }
 
-/// Updates the locally predicted tower-safe route for one ordered basic attack.
+/// Updates the locally predicted structure-safe route for one ordered basic attack.
 pub(super) fn update_local_attack_navigation(
     commands: &mut Commands,
     player_entity: Entity,
@@ -455,9 +455,9 @@ pub(super) fn update_local_attack_navigation(
     target_position: Vec3,
     attack_range: f32,
     current_route: Option<&LocalNavigationRoute>,
-    tower_obstacles: &[LaneNavigationObstacle],
+    structure_obstacles: &[LaneNavigationObstacle],
 ) {
-    let obstacle_revision = lane_navigation_obstacle_revision(tower_obstacles);
+    let obstacle_revision = lane_navigation_obstacle_revision(structure_obstacles);
     let matching_route = current_route.filter(|route| route.attack_target == Some(target_entity));
     let target_moved = matching_route.is_some_and(|route| {
         route
@@ -487,7 +487,7 @@ pub(super) fn update_local_attack_navigation(
         player_position,
         requested_goal,
         obstacle_revision,
-        tower_obstacles,
+        structure_obstacles,
     ) else {
         commands.entity(player_entity).remove::<MoveTarget>();
         commands
@@ -560,17 +560,24 @@ fn send_move_to_command(
     }
 }
 
-/// Returns navigation circles for living towers replicated by the server.
-pub(super) fn live_tower_navigation_obstacles(
-    tower_query: &Query<(&RemoteLaneUnit, &Health), Without<PlayerControlled>>,
+/// Returns navigation circles for living structures replicated by the server.
+pub(super) fn live_structure_navigation_obstacles(
+    structure_query: &Query<(&RemoteLaneUnit, &Health), Without<PlayerControlled>>,
 ) -> Vec<LaneNavigationObstacle> {
-    tower_query
+    structure_query
         .iter()
-        .filter(|(tower, health)| tower.is_tower() && health.current > 0)
-        .map(|(tower, _)| {
-            LaneNavigationObstacle::new(tower.collision_center(), tower.collision_radius())
-        })
+        .filter_map(|(structure, health)| structure_navigation_obstacle(structure, health))
         .collect()
+}
+
+/// Converts one living replicated structure into a local navigation obstacle.
+fn structure_navigation_obstacle(
+    structure: &RemoteLaneUnit,
+    health: &Health,
+) -> Option<LaneNavigationObstacle> {
+    (structure.is_structure() && health.current > 0).then(|| {
+        LaneNavigationObstacle::new(structure.collision_center(), structure.collision_radius())
+    })
 }
 fn apply_external_pull(
     transform: &mut Transform,
@@ -641,6 +648,7 @@ pub(super) fn animate_move_target_marker(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use game_shared::game::lane::{LaneUnitKind, lane_unit_stats};
 
     #[test]
     fn held_right_click_preserves_an_active_auto_attack_order() {
@@ -664,6 +672,29 @@ mod tests {
         assert_eq!(route.reachable_goal, Vec3::new(0.0, 0.0, 12.0));
 
         let mut previous = Vec3::new(0.0, 0.0, -12.0);
+        for waypoint in &route.waypoints {
+            assert!(route_segment_is_clear(previous, *waypoint, &obstacles));
+            previous = *waypoint;
+        }
+    }
+
+    #[test]
+    fn local_routes_avoid_nexus_navigation_obstacles() {
+        let nexus = LaneNavigationObstacle::new(
+            Vec3::ZERO,
+            lane_unit_stats(LaneUnitKind::Nexus).hit_radius,
+        );
+        let obstacles = vec![nexus];
+        let start = Vec3::new(0.0, 0.0, -12.0);
+        let route = plan_local_navigation_route(
+            start,
+            Vec3::new(0.0, 0.0, 12.0),
+            lane_navigation_obstacle_revision(&obstacles),
+            &obstacles,
+        )
+        .expect("a route around the Nexus");
+
+        let mut previous = start;
         for waypoint in &route.waypoints {
             assert!(route_segment_is_clear(previous, *waypoint, &obstacles));
             previous = *waypoint;

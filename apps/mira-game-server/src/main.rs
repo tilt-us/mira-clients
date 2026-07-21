@@ -3,7 +3,7 @@ mod app;
 use app::control_api::ServerControlApiSettings;
 use app::network::ServerNetworkSettings;
 use std::env;
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr, UdpSocket};
 use std::process::ExitCode;
 /// Starts the dedicated server app.
 fn main() -> ExitCode {
@@ -19,8 +19,31 @@ fn main() -> ExitCode {
             }
         };
 
+    if let Err(message) = ensure_listener_ports_available(
+        network_settings.listen_addr,
+        control_api_settings.listen_addr,
+    ) {
+        eprintln!("{message}");
+        return ExitCode::from(1);
+    }
+
     app::run(network_settings, control_api_settings);
     ExitCode::SUCCESS
+}
+
+fn ensure_listener_ports_available(
+    network_addr: SocketAddr,
+    control_addr: SocketAddr,
+) -> Result<(), String> {
+    let _udp_socket = UdpSocket::bind(network_addr).map_err(|error| {
+        format!("game server UDP bind failed for {network_addr}: {error}")
+    })?;
+
+    std::net::TcpListener::bind(control_addr).map_err(|error| {
+        format!("control API bind failed for {control_addr}: {error}")
+    })?;
+
+    Ok(())
 }
 /// Parses dedicated server networking settings from CLI args.
 ///

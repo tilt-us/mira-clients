@@ -1,4 +1,8 @@
-use crate::systems::{TrainingDummy, targeting::ray_hit_map_top};
+use crate::systems::{
+    TrainingDummy,
+    lane::{RemoteLaneUnit, is_local_spell_target},
+    targeting::ray_hit_map_top,
+};
 use bevy::ecs::query::QueryFilter;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
@@ -86,7 +90,7 @@ pub(super) fn clamp_cast_target(origin: Vec3, target: Vec3, range: f32) -> Vec3 
 /// Returns the nearest living training target within the specified click radius.
 pub(super) fn find_clicked_enemy_target<'a, F>(
     cursor_hit: Vec3,
-    enemy_query: &'a Query<(&TrainingDummy, &Transform), F>,
+    enemy_query: &'a Query<(&TrainingDummy, &Transform, Option<&RemoteLaneUnit>), F>,
     radius: f32,
 ) -> Option<(&'a TrainingDummy, &'a Transform)>
 where
@@ -94,14 +98,17 @@ where
 {
     enemy_query
         .iter()
-        .filter(|(dummy, transform)| {
-            dummy.health > 0.0 && horizontal_distance(cursor_hit, transform.translation) <= radius
+        .filter(|(dummy, transform, lane_unit)| {
+            dummy.health > 0.0
+                && is_local_spell_target(*lane_unit)
+                && horizontal_distance(cursor_hit, transform.translation) <= radius
         })
-        .min_by(|(_, left), (_, right)| {
+        .min_by(|(_, left, _), (_, right, _)| {
             horizontal_distance(cursor_hit, left.translation)
                 .partial_cmp(&horizontal_distance(cursor_hit, right.translation))
                 .unwrap_or(std::cmp::Ordering::Equal)
         })
+        .map(|(dummy, transform, _)| (dummy, transform))
 }
 
 /// Returns a finite positive value or the supplied fallback.

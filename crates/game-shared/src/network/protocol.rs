@@ -158,14 +158,14 @@ pub struct AbilityVisualEvent {
 pub enum NetworkTargetId {
     /// A player identified by its stable network player id.
     Player(u64),
-    /// A tower or minion identified by its stable lane-unit id.
+    /// A tower, Nexus, or minion identified by its stable lane-unit id.
     LaneUnit(u64),
 }
 
 /// Describes one accepted auto-attack projectile that other clients should render.
 ///
 /// - `caster_player_id`: Player id of the attacking player.
-/// - `target`: Stable identifier for the attacked player, tower, or minion.
+/// - `target`: Stable identifier for the attacked player or lane unit.
 /// - `start`: World-space projectile start.
 /// - `end`: World-space projectile end.
 /// - `travel_seconds`: Projectile travel duration used by clients.
@@ -402,7 +402,7 @@ pub struct MatchSnapshot {
     pub players: Vec<NetworkPlayer>,
 }
 
-/// Describes one server-authoritative tower or minion currently active on the lane.
+/// Describes one server-authoritative lane unit currently active on the map.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct NetworkLaneUnit {
     /// Stable lane-unit id used by commands and client reconciliation.
@@ -428,7 +428,7 @@ pub struct NetworkLaneUnit {
 /// Sends the latest server-authoritative single-lane state to clients.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct LaneSnapshot {
-    /// Active towers and minions sorted by stable lane-unit id.
+    /// Active lane units sorted by stable lane-unit id.
     pub units: Vec<NetworkLaneUnit>,
 }
 /// Sends the local player's current visual state to the server.
@@ -489,7 +489,7 @@ pub struct LoadingScreenPlayer {
 /// - `MoveTo`: Requests movement toward a world-space point.
 /// - `AttackMove`: Requests movement toward a hostile target until it is inside basic-attack range.
 /// - `CastAbility`: Requests an ability cast for the given champion and slot.
-/// - `AutoAttack`: Requests a basic attack against a player, tower, or minion.
+/// - `AutoAttack`: Requests a basic attack against a player or lane unit.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 pub enum PlayerCommand {
     MoveTo(WorldPosition),

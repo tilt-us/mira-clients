@@ -5,9 +5,11 @@ use super::lobby::{
     ActiveServerAbilities, ConnectedPlayers, LeavingPlayers, LoadingScreenReadyPlayers,
     LoadingScreenStatusBroadcastTimer, MatchSnapshotBroadcastTimer, SentChampionCatalogClients,
     ServerPlayerNavigation, broadcast_loading_screen_status, broadcast_match_snapshots,
-    rebroadcast_ability_visuals, receive_client_leave, receive_display_ready,
-    receive_player_commands, receive_player_state_updates, send_champion_catalogs,
-    update_player_death_and_respawn, update_server_abilities, update_server_player_navigation,
+    handle_client_disconnection, rebroadcast_ability_visuals, receive_client_leave,
+    receive_display_ready, receive_player_commands, receive_player_state_updates,
+    send_champion_catalogs, update_player_death_and_respawn, update_player_health_regeneration,
+    update_server_abilities, update_server_auto_attack_projectiles,
+    update_server_player_navigation,
 };
 use crate::app::control_api::ServerReadiness;
 use bevy::prelude::*;
@@ -18,16 +20,8 @@ use lightyear::prelude::client::Connected;
 use lightyear::prelude::server::*;
 use lightyear::prelude::*;
 
-const EMPTY_SERVER_SHUTDOWN_SECONDS: f32 = 60.0;
 /// Registers Lightyear server networking and starts the development UDP listener.
 pub struct ServerNetworkPlugin;
-
-/// Stores Empty Server Shutdown data used by the dedicated server network plugin.
-#[derive(Resource, Debug, Default)]
-struct EmptyServerShutdown {
-    had_clients: bool,
-    idle_seconds: f32,
-}
 
 impl Plugin for ServerNetworkPlugin {
     /// Registers Bevy resources, plugins, or systems for the dedicated server network plugin.
@@ -47,7 +41,6 @@ impl Plugin for ServerNetworkPlugin {
         .init_resource::<LoadingScreenStatusBroadcastTimer>()
         .init_resource::<MatchSnapshotBroadcastTimer>()
         .init_resource::<SentChampionCatalogClients>()
-        .init_resource::<EmptyServerShutdown>()
         .add_systems(Startup, start_server)
         .add_systems(
             Update,
@@ -57,8 +50,10 @@ impl Plugin for ServerNetworkPlugin {
                 receive_display_ready,
                 broadcast_loading_screen_status,
                 receive_player_state_updates,
+                update_server_auto_attack_projectiles,
                 receive_player_commands,
                 update_server_abilities,
+                update_player_health_regeneration,
                 update_server_player_navigation,
                 update_player_death_and_respawn,
                 update_server_lane,
@@ -69,7 +64,8 @@ impl Plugin for ServerNetworkPlugin {
             )
                 .chain(),
         )
-        .add_systems(Update, (sync_server_readiness, shutdown_empty_server))
+        .add_systems(Update, sync_server_readiness)
+        .add_observer(handle_client_disconnection)
         .add_observer(handle_new_client);
     }
 }
@@ -100,35 +96,6 @@ fn sync_server_readiness(
     if changed && let Some(listen_addr) = listen_addr {
         info!("Lightyear server ready on {}", listen_addr.0);
     }
-}
-/// Gracefully exits the dedicated server after all connected players left.
-fn shutdown_empty_server(
-    clients: Query<Entity, (With<ClientOf>, With<Connected>)>,
-    time: Res<Time>,
-    mut shutdown: ResMut<EmptyServerShutdown>,
-    mut app_exit: MessageWriter<AppExit>,
-) {
-    let connected_count = clients.iter().count();
-    if connected_count > 0 {
-        shutdown.had_clients = true;
-        shutdown.idle_seconds = 0.0;
-        return;
-    }
-
-    if !shutdown.had_clients {
-        return;
-    }
-
-    shutdown.idle_seconds += time.delta_secs();
-    if shutdown.idle_seconds < EMPTY_SERVER_SHUTDOWN_SECONDS {
-        return;
-    }
-
-    info!(
-        "No clients connected for {} seconds; shutting down dedicated server.",
-        EMPTY_SERVER_SHUTDOWN_SECONDS
-    );
-    app_exit.write(AppExit::Success);
 }
 /// Spawns and starts the Lightyear server entity when auto-start is enabled.
 ///

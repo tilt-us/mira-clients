@@ -1,0 +1,46 @@
+[
+  {
+    "name": "Lira",
+    "stats": {
+      "base_stats": { "max_health": 575.0 },
+      "abilities": {
+        "q": { "cooldown_seconds": 5.0, "range": 11.5, "travel_seconds": 0.8, "projectile_height": 0.26, "projectile_radius": 0.525, "explosion_radius": 1.65, "damage": { "direct_hit": 36.0, "area": 78.0 } },
+        "w": { "cooldown_seconds": 6.0, "range": 8.0, "travel_seconds": 0.9, "projectile_height": 0.85, "target_height": 0.2, "explosion_radius": 2.35, "damage": { "area": 52.0 } },
+        "e": { "cooldown_seconds": 8.0, "missile_count": 4, "missile_lifetime_seconds": 5.0, "missile_search_radius": 6.0, "missile_orbit_radius": 1.4, "missile_orbit_height": 1.05, "missile_orbit_speed": 2.5, "missile_chase_speed": 13.0, "missile_radius": 0.2, "damage": { "missile": 22.0 } }
+      }
+    }
+  },
+  {
+    "name": "Ignara",
+    "stats": {
+      "base_stats": { "max_health": 620.0 },
+      "abilities": {
+        "q": { "cooldown_seconds": 7.0, "range": 8.0, "travel_seconds": 3.0, "lifetime_seconds": 3.0, "width": 3.0, "damage_per_second": 22.0 },
+        "w": { "cooldown_seconds": 6.0, "range": 9.0, "travel_seconds": 0.55, "projectile_radius": 0.34, "target_radius": 1.4, "damage": { "direct_hit": 112.0 } },
+        "e": { "cooldown_seconds": 9.0, "range": 10.0, "travel_seconds": 0.95, "width": 1.5, "small_distance": 2.5, "medium_distance": 6.75, "small_damage": 55.0, "medium_damage": 118.0, "large_damage": 180.0 }
+      }
+    }
+  },
+  {
+    "name": "Yuna",
+    "stats": {
+      "base_stats": { "max_health": 565.0 },
+      "abilities": {
+        "q": { "cooldown_seconds": 8.0, "range": 8.0, "travel_seconds": 0.65, "projectile_radius": 1.25, "explosion_radius": 4.5, "lifetime_seconds": 3.0, "damage_per_second": 12.0, "pull_speed": 2.4, "move_speed_multiplier": 0.65 },
+        "w": { "cooldown_seconds": 9.0, "explosion_radius": 4.5, "lifetime_seconds": 3.0, "heal": 56.0 },
+        "e": { "cooldown_seconds": 8.0, "range": 9.0, "travel_seconds": 0.45, "projectile_radius": 0.32, "target_radius": 1.4, "stun_seconds": 1.5 }
+      }
+    }
+  },
+  {
+    "name": "Sophia",
+    "stats": {
+      "base_stats": { "max_health": 600.0 },
+      "abilities": {
+        "q": { "cooldown_seconds": 6.0, "range": 8.0, "projectile_radius": 0.28, "target_radius": 1.4, "lifetime_seconds": 4.0, "damage_per_second": 24.0 },
+        "w": { "cooldown_seconds": 10.0, "missile_count": 2, "missile_lifetime_seconds": 8.0, "missile_search_radius": 4.5, "missile_orbit_radius": 0.95, "missile_chase_speed": 6.6, "missile_radius": 0.34, "move_speed_multiplier": 0.5, "slow_seconds": 2.0, "damage": { "missile": 75.0 } },
+        "e": { "cooldown_seconds": 8.0, "lifetime_seconds": 4.0, "speed_seconds": 2.0, "move_speed_multiplier": 1.2, "damage_multiplier": 1.2 }
+      }
+    }
+  }
+]

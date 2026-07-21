@@ -7,7 +7,7 @@ use super::{
     sophia::{SophiaESettings, SophiaQSettings, SophiaWSettings},
     yuna::{YunaESettings, YunaQSettings, YunaWSettings},
 };
-use crate::systems::lane::RemoteLaneUnit;
+use crate::systems::lane::{RemoteLaneUnit, is_local_spell_target};
 use crate::systems::{
     CurrentChampionVisual, TrainingDummy, TrainingDummyHealthChangeKind,
     targeting::clamp_world_point_to_map_top,
@@ -662,7 +662,12 @@ pub(in crate::systems) fn update_q_skillshot_projectiles(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut dummy_query: Query<
-        (Entity, &mut TrainingDummy, &Transform),
+        (
+            Entity,
+            &mut TrainingDummy,
+            &Transform,
+            Option<&RemoteLaneUnit>,
+        ),
         (Without<LiraQProjectile>, Without<LiraQExplosion>),
     >,
     mut projectile_query: Query<
@@ -691,8 +696,8 @@ pub(in crate::systems) fn update_q_skillshot_projectiles(
         transform.scale = Vec3::splat(1.0 + (progress * 12.0).sin().abs() * 0.1);
 
         if projectile.can_apply_damage {
-            for (dummy_entity, mut dummy, dummy_transform) in &mut dummy_query {
-                if !dummy.local_damage_enabled {
+            for (dummy_entity, mut dummy, dummy_transform, lane_unit) in &mut dummy_query {
+                if !is_local_spell_target(lane_unit) || !dummy.local_damage_enabled {
                     continue;
                 }
                 if projectile.hit_targets.contains(&dummy_entity) {
@@ -753,7 +758,7 @@ pub(in crate::systems) fn update_q_skillshot_explosions(
     mut commands: Commands,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut dummy_query: Query<
-        (&mut TrainingDummy, &Transform),
+        (&mut TrainingDummy, &Transform, Option<&RemoteLaneUnit>),
         (Without<LiraQProjectile>, Without<LiraQExplosion>),
     >,
     mut explosion_query: Query<
@@ -775,8 +780,8 @@ pub(in crate::systems) fn update_q_skillshot_explosions(
         transform.scale = Vec3::splat(1.0 + progress * 2.1);
 
         if explosion.can_apply_damage && !explosion.did_apply_damage {
-            for (mut dummy, dummy_transform) in &mut dummy_query {
-                if !dummy.local_damage_enabled {
+            for (mut dummy, dummy_transform, lane_unit) in &mut dummy_query {
+                if !is_local_spell_target(lane_unit) || !dummy.local_damage_enabled {
                     continue;
                 }
                 let distance = transform.translation.distance(dummy_transform.translation);
@@ -1093,7 +1098,10 @@ pub(in crate::systems) fn update_w_arc_explosions(
     time: Res<Time>,
     mut commands: Commands,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    mut dummy_query: Query<(&mut TrainingDummy, &Transform), Without<LiraWExplosion>>,
+    mut dummy_query: Query<
+        (&mut TrainingDummy, &Transform, Option<&RemoteLaneUnit>),
+        Without<LiraWExplosion>,
+    >,
     mut explosion_query: Query<
         (
             Entity,
@@ -1113,8 +1121,8 @@ pub(in crate::systems) fn update_w_arc_explosions(
         transform.scale = Vec3::splat(1.0 + progress * 2.6);
 
         if explosion.can_apply_damage && !explosion.did_apply_damage {
-            for (mut dummy, dummy_transform) in &mut dummy_query {
-                if !dummy.local_damage_enabled {
+            for (mut dummy, dummy_transform, lane_unit) in &mut dummy_query {
+                if !is_local_spell_target(lane_unit) || !dummy.local_damage_enabled {
                     continue;
                 }
                 let distance =
@@ -1332,8 +1340,8 @@ pub(in crate::systems) fn update_e_contact_missiles(
     transform_query: Query<&Transform, Without<LiraEMissile>>,
     team_query: Query<&Team, Without<LiraEMissile>>,
     mut dummy_queries: ParamSet<(
-        Query<(Entity, &TrainingDummy, &Transform), Without<LiraEMissile>>,
-        Query<(&mut TrainingDummy, &Transform), Without<LiraEMissile>>,
+        Query<(Entity, &TrainingDummy, &Transform, Option<&RemoteLaneUnit>), Without<LiraEMissile>>,
+        Query<(&mut TrainingDummy, &Transform, Option<&RemoteLaneUnit>), Without<LiraEMissile>>,
     )>,
     mut missile_query: Query<
         (Entity, &mut LiraEMissile, &mut Transform),
@@ -1419,10 +1427,15 @@ pub(in crate::systems) fn update_e_contact_missiles(
             LiraEMissileMode::Chasing(target) => {
                 if missile.can_apply_damage {
                     let mut dummies = dummy_queries.p1();
-                    let Ok((mut dummy, dummy_transform)) = dummies.get_mut(target) else {
+                    let Ok((mut dummy, dummy_transform, lane_unit)) = dummies.get_mut(target)
+                    else {
                         commands.entity(entity).despawn();
                         continue;
                     };
+                    if !is_local_spell_target(lane_unit) {
+                        commands.entity(entity).despawn();
+                        continue;
+                    }
 
                     let target_position = dummy_transform.translation + Vec3::Y * 0.7;
                     let to_target = target_position - missile_transform.translation;
@@ -1488,7 +1501,10 @@ pub(in crate::systems) fn update_e_contact_missiles(
 ///
 /// - Entity of the nearest visual target inside E search range.
 fn find_e_visual_target(
-    dummies: &Query<(Entity, &TrainingDummy, &Transform), Without<LiraEMissile>>,
+    dummies: &Query<
+        (Entity, &TrainingDummy, &Transform, Option<&RemoteLaneUnit>),
+        Without<LiraEMissile>,
+    >,
     local_player: Option<(Entity, &Transform, &Team)>,
     owner_team: Option<&Team>,
     owner: Option<Entity>,
@@ -1498,17 +1514,18 @@ fn find_e_visual_target(
 ) -> Option<Entity> {
     let dummy_target = dummies
         .iter()
-        .filter(|(target_entity, dummy, dummy_transform)| {
+        .filter(|(target_entity, dummy, dummy_transform, lane_unit)| {
             Some(*target_entity) != owner
                 && dummy.health > 0.0
+                && is_local_spell_target(*lane_unit)
                 && horizontal_distance(owner_position, dummy_transform.translation) <= search_radius
         })
-        .min_by(|(_, _, left), (_, _, right)| {
+        .min_by(|(_, _, left, _), (_, _, right, _)| {
             horizontal_distance(missile_position, left.translation)
                 .partial_cmp(&horizontal_distance(missile_position, right.translation))
                 .unwrap_or(std::cmp::Ordering::Equal)
         })
-        .map(|(target_entity, _, transform)| {
+        .map(|(target_entity, _, transform, _)| {
             (
                 target_entity,
                 horizontal_distance(missile_position, transform.translation),
@@ -1551,24 +1568,28 @@ fn find_e_visual_target(
 ///
 /// - Entity of the nearest target inside E search range.
 fn find_e_damage_target(
-    dummies: &Query<(Entity, &TrainingDummy, &Transform), Without<LiraEMissile>>,
+    dummies: &Query<
+        (Entity, &TrainingDummy, &Transform, Option<&RemoteLaneUnit>),
+        Without<LiraEMissile>,
+    >,
     owner_position: Vec3,
     missile_position: Vec3,
     search_radius: f32,
 ) -> Option<Entity> {
     dummies
         .iter()
-        .filter(|(_, dummy, dummy_transform)| {
+        .filter(|(_, dummy, dummy_transform, lane_unit)| {
             dummy.local_damage_enabled
                 && dummy.health > 0.0
+                && is_local_spell_target(*lane_unit)
                 && horizontal_distance(owner_position, dummy_transform.translation) <= search_radius
         })
-        .min_by(|(_, _, left), (_, _, right)| {
+        .min_by(|(_, _, left, _), (_, _, right, _)| {
             horizontal_distance(missile_position, left.translation)
                 .partial_cmp(&horizontal_distance(missile_position, right.translation))
                 .unwrap_or(std::cmp::Ordering::Equal)
         })
-        .map(|(target_entity, _, _)| target_entity)
+        .map(|(target_entity, _, _, _)| target_entity)
 }
 /// Moves one Lira E missile toward its current target position.
 ///
