@@ -265,6 +265,8 @@ pub struct NetworkChampionDefinition {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct NetworkChampionStats {
     pub base_stats: NetworkChampionBaseStats,
+    #[serde(default)]
+    pub auto_attack: NetworkAutoAttackDefinition,
     pub abilities: NetworkChampionAbilities,
 }
 /// Stores base stats for one champion.
@@ -273,6 +275,25 @@ pub struct NetworkChampionStats {
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 pub struct NetworkChampionBaseStats {
     pub max_health: f32,
+}
+
+/// Stores server-authoritative basic-attack tuning for one champion.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
+#[serde(default)]
+pub struct NetworkAutoAttackDefinition {
+    pub base_damage: f32,
+    pub attacks_per_second: f32,
+    pub combo_damage_multipliers: [f32; 4],
+}
+
+impl Default for NetworkAutoAttackDefinition {
+    fn default() -> Self {
+        Self {
+            base_damage: 50.0,
+            attacks_per_second: 1.0,
+            combo_damage_multipliers: [0.90, 1.05, 1.15, 1.25],
+        }
+    }
 }
 /// Stores ability tuning for one champion.
 ///

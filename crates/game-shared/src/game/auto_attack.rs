@@ -52,10 +52,14 @@ pub fn auto_attack_projectile_travel_seconds(distance: f32) -> f32 {
 /// Defines shared auto-attack combo tuning used by client prediction and the server.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AutoAttackCombo {
+    /// Damage before the combo-stage multiplier is applied.
+    pub base_damage: f32,
     /// Number of hits before the combo returns to its first stage.
     pub combo_length: usize,
     /// Number of accepted auto attacks per second.
     pub attacks_per_second: f32,
+    /// Damage multiplier for each combo stage.
+    pub damage_multipliers: [f32; AUTO_ATTACK_COMBO_LENGTH],
 }
 
 impl AutoAttackCombo {
@@ -69,15 +73,17 @@ impl AutoAttackCombo {
         let combo_length = self.combo_length.clamp(1, AUTO_ATTACK_COMBO_LENGTH);
         let combo_stage = stage % combo_length;
 
-        CHARACTER_BASE_ATTACK_DAMAGE * AUTO_ATTACK_COMBO_DAMAGE_MULTIPLIERS[combo_stage]
+        self.base_damage * self.damage_multipliers[combo_stage]
     }
 }
 
 /// Returns the standard auto-attack combo tuning for a character.
 pub fn auto_attack_combo(_champion: ChampionId) -> AutoAttackCombo {
     AutoAttackCombo {
+        base_damage: CHARACTER_BASE_ATTACK_DAMAGE,
         combo_length: AUTO_ATTACK_COMBO_LENGTH,
         attacks_per_second: DEFAULT_ATTACKS_PER_SECOND,
+        damage_multipliers: AUTO_ATTACK_COMBO_DAMAGE_MULTIPLIERS,
     }
 }
 

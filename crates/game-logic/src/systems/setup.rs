@@ -28,6 +28,7 @@ use bevy::math::primitives::{Capsule3d, Cuboid, Cylinder};
 use bevy::prelude::*;
 use bevy_transform_interpolation::prelude::{RotationInterpolation, TranslationInterpolation};
 use game_shared::game::{
+    auto_attack::{AutoAttackCombo, auto_attack_combo},
     camera::{CameraZoom, TopDownCameraBundle},
     lane::{LANE_SPAWN_Z, LANE_TOWER_Z},
     player::{Health, PlayerBundle, PlayerControlled, PlayerId, PlayerProfile},
@@ -86,6 +87,21 @@ struct ChampionAnimationEntry {
 #[derive(Resource, Debug, Default, Clone)]
 pub(super) struct ClientChampionCatalog {
     champions: HashMap<ChampionId, NetworkChampionDefinition>,
+}
+
+impl ClientChampionCatalog {
+    /// Returns the latest server-provided basic-attack timing for a champion.
+    pub(super) fn auto_attack_combo(&self, champion: ChampionId) -> AutoAttackCombo {
+        self.champions
+            .get(&champion)
+            .map(|definition| AutoAttackCombo {
+                base_damage: definition.stats.auto_attack.base_damage,
+                combo_length: definition.stats.auto_attack.combo_damage_multipliers.len(),
+                attacks_per_second: definition.stats.auto_attack.attacks_per_second,
+                damage_multipliers: definition.stats.auto_attack.combo_damage_multipliers,
+            })
+            .unwrap_or_else(|| auto_attack_combo(champion))
+    }
 }
 
 /// Stores Client Champion Tuning Params data used by the client setup and champion tuning system.

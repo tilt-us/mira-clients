@@ -1,8 +1,9 @@
 use bevy::prelude::*;
+use game_shared::game::auto_attack::{AUTO_ATTACK_COMBO_LENGTH, AutoAttackCombo};
 use game_shared::network::{
     AbilitySlot, ChampionCatalogUpdate, ChampionId, NetworkAbilityDamage, NetworkAbilityDefinition,
-    NetworkChampionAbilities, NetworkChampionBaseStats, NetworkChampionDefinition,
-    NetworkChampionStats,
+    NetworkAutoAttackDefinition, NetworkChampionAbilities, NetworkChampionBaseStats,
+    NetworkChampionDefinition, NetworkChampionStats,
 };
 use serde::Deserialize;
 use std::{
@@ -87,6 +88,7 @@ impl ServerChampionCatalog {
                     base_stats: NetworkChampionBaseStats {
                         max_health: champion.base_stats.max_health,
                     },
+                    auto_attack: (&champion.auto_attack).into(),
                     abilities: NetworkChampionAbilities {
                         q: (&champion.abilities.q).into(),
                         w: (&champion.abilities.w).into(),
@@ -121,6 +123,29 @@ impl ServerChampionCatalog {
         self.champion(champion_id)
             .and_then(|champion| champion.ability(slot))
     }
+
+    /// Returns the authoritative basic-attack combo for one champion.
+    pub fn auto_attack_combo(&self, champion_id: ChampionId) -> Option<AutoAttackCombo> {
+        self.champion(champion_id)
+            .map(|champion| champion.auto_attack.combo())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn embedded_test_catalog() -> Self {
+        let api_champions = load_embedded_development_champion_catalog().unwrap();
+        Self::from_api_champions(&api_champions).unwrap()
+    }
+
+    #[cfg(test)]
+    fn from_api_champions(api_champions: &[ChampionApiResponse]) -> Result<Self, String> {
+        let mut champions = HashMap::new();
+        for champion_id in ChampionId::PROTOTYPE_ROSTER {
+            let champion = load_champion_definition(champion_id, api_champions)?;
+            validate_development_champion(champion_id, &champion)?;
+            champions.insert(champion_id, champion);
+        }
+        Ok(Self { champions })
+    }
 }
 /// Stores one server-authoritative champion definition.
 ///
@@ -131,6 +156,7 @@ impl ServerChampionCatalog {
 pub struct ServerChampionDefinition {
     pub display_name: String,
     pub base_stats: ServerChampionBaseStats,
+    pub auto_attack: ServerAutoAttackDefinition,
     pub abilities: ServerChampionAbilities,
 }
 
@@ -155,6 +181,25 @@ impl ServerChampionDefinition {
 #[derive(Debug, Clone, Copy)]
 pub struct ServerChampionBaseStats {
     pub max_health: f32,
+}
+
+/// Stores server-authoritative basic-attack tuning for one champion.
+#[derive(Debug, Clone, Copy)]
+pub struct ServerAutoAttackDefinition {
+    pub base_damage: f32,
+    pub attacks_per_second: f32,
+    pub combo_damage_multipliers: [f32; AUTO_ATTACK_COMBO_LENGTH],
+}
+
+impl ServerAutoAttackDefinition {
+    fn combo(self) -> AutoAttackCombo {
+        AutoAttackCombo {
+            base_damage: self.base_damage,
+            combo_length: AUTO_ATTACK_COMBO_LENGTH,
+            attacks_per_second: self.attacks_per_second,
+            damage_multipliers: self.combo_damage_multipliers,
+        }
+    }
 }
 /// Stores server-authoritative ability tuning for a champion.
 ///
@@ -250,12 +295,33 @@ impl From<ChampionApiResponse> for ServerChampionDefinition {
             base_stats: ServerChampionBaseStats {
                 max_health: value.stats.base_stats.max_health,
             },
+            auto_attack: value.stats.auto_attack.into(),
             abilities: ServerChampionAbilities {
                 q: value.stats.abilities.q.into(),
                 w: value.stats.abilities.w.into(),
                 e: value.stats.abilities.e.into(),
                 r: value.stats.abilities.r.map(Into::into),
             },
+        }
+    }
+}
+
+impl From<NetworkAutoAttackDefinition> for ServerAutoAttackDefinition {
+    fn from(value: NetworkAutoAttackDefinition) -> Self {
+        Self {
+            base_damage: value.base_damage,
+            attacks_per_second: value.attacks_per_second,
+            combo_damage_multipliers: value.combo_damage_multipliers,
+        }
+    }
+}
+
+impl From<&ServerAutoAttackDefinition> for NetworkAutoAttackDefinition {
+    fn from(value: &ServerAutoAttackDefinition) -> Self {
+        Self {
+            base_damage: value.base_damage,
+            attacks_per_second: value.attacks_per_second,
+            combo_damage_multipliers: value.combo_damage_multipliers,
         }
     }
 }
@@ -533,6 +599,29 @@ fn validate_development_champion(
         champion_id,
         "base_stats.max_health",
     )?;
+    require_positive(
+        champion.auto_attack.base_damage,
+        champion_id,
+        "auto_attack.base_damage",
+    )?;
+    require_positive(
+        champion.auto_attack.attacks_per_second,
+        champion_id,
+        "auto_attack.attacks_per_second",
+    )?;
+    for (stage, multiplier) in champion
+        .auto_attack
+        .combo_damage_multipliers
+        .iter()
+        .copied()
+        .enumerate()
+    {
+        require_positive(
+            multiplier,
+            champion_id,
+            format!("auto_attack.combo_damage_multipliers[{stage}]"),
+        )?;
+    }
     validate_basic_ability(champion_id, AbilitySlot::Q, &champion.abilities.q)?;
     validate_basic_ability(champion_id, AbilitySlot::W, &champion.abilities.w)?;
     validate_basic_ability(champion_id, AbilitySlot::E, &champion.abilities.e)?;

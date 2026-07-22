@@ -3,6 +3,7 @@ use super::{
     horizontal_distance,
     lane::RemoteLaneUnit,
     movement::{self, LocalNavigationRoute},
+    setup::ClientChampionCatalog,
     targeting::{clamp_world_point_to_map_top, ray_hit_map_top},
 };
 use bevy::math::primitives::Sphere;
@@ -158,6 +159,7 @@ pub(super) fn update_auto_attack_target(
         Option<&NetworkTargetId>,
     )>,
     structure_query: Query<(&RemoteLaneUnit, &Health), Without<PlayerControlled>>,
+    catalog: Res<ClientChampionCatalog>,
     mut command_senders: Query<&mut MessageSender<PlayerCommand>, With<Client>>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -232,7 +234,7 @@ pub(super) fn update_auto_attack_target(
     }
 
     let champion = visual.champion.unwrap_or(super::LOCAL_CHAMPION_ID);
-    let combo = auto_attack_combo(champion);
+    let combo = catalog.auto_attack_combo(champion);
     let target_id = target_player
         .map(|player| NetworkTargetId::Player(player.id.0))
         .or(target_network_id.copied());

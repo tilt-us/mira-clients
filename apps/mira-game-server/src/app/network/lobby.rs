@@ -997,6 +997,7 @@ pub(super) fn receive_player_commands(
                             &mut players,
                             Some(&mut lane),
                             &mut abilities,
+                            &catalog,
                         ) {
                             auto_attack_visual_events.push(event);
                         }
@@ -2047,12 +2048,14 @@ fn accept_auto_attack(
     players: &mut ConnectedPlayers,
     abilities: &mut ActiveServerAbilities,
 ) -> Option<AutoAttackVisualEvent> {
+    let catalog = ServerChampionCatalog::embedded_test_catalog();
     accept_auto_attack_target(
         caster_player_id,
         NetworkTargetId::Player(target_player_id),
         players,
         None,
         abilities,
+        &catalog,
     )
 }
 
@@ -2063,6 +2066,7 @@ fn accept_auto_attack_target(
     players: &mut ConnectedPlayers,
     mut lane: Option<&mut ServerLaneState>,
     abilities: &mut ActiveServerAbilities,
+    catalog: &ServerChampionCatalog,
 ) -> Option<AutoAttackVisualEvent> {
     let caster = *players.states.get(&caster_player_id)?;
     if caster.health <= 0.0
@@ -2098,7 +2102,9 @@ fn accept_auto_attack_target(
         return None;
     }
 
-    let combo = auto_attack_combo(caster.champion);
+    let combo = catalog
+        .auto_attack_combo(caster.champion)
+        .unwrap_or_else(|| auto_attack_combo(caster.champion));
     let combo_stage = if caster.auto_attack_combo_target == Some(target) {
         caster
             .auto_attack_combo_stage
@@ -4424,7 +4430,11 @@ mod tests {
 
     #[test]
     fn player_auto_attack_damage_waits_for_minion_tower_and_nexus_projectile_impact() {
-        let damage = auto_attack_combo(ChampionId::LIRA).damage_for_stage(0);
+        let catalog = ServerChampionCatalog::embedded_test_catalog();
+        let damage = catalog
+            .auto_attack_combo(ChampionId::LIRA)
+            .unwrap()
+            .damage_for_stage(0);
 
         for kind in [
             LaneUnitKind::MeleeBox,
@@ -4451,6 +4461,7 @@ mod tests {
                 &mut players,
                 Some(&mut lane),
                 &mut abilities,
+                &catalog,
             )
             .expect("the valid auto attack starts a projectile");
 
@@ -4481,6 +4492,7 @@ mod tests {
 
     #[test]
     fn player_auto_attack_projectile_ignores_a_despawned_lane_target() {
+        let catalog = ServerChampionCatalog::embedded_test_catalog();
         let mut players = ConnectedPlayers::default();
         let mut abilities = ActiveServerAbilities::default();
         let mut lane = ServerLaneState::default();
@@ -4500,6 +4512,7 @@ mod tests {
             &mut players,
             Some(&mut lane),
             &mut abilities,
+            &catalog,
         )
         .expect("the valid auto attack starts a projectile");
 
