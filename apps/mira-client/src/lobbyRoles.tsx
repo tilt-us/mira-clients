@@ -76,6 +76,36 @@ export function normalizeLobbyRoleSelection(roles: [unknown, unknown]) {
   ] satisfies LobbyRoleSelection;
 }
 
+export const lobbyRolesStorageKey = "mira-client-lobby-roles";
+
+export function readStoredLobbyRoles(): LobbyRoleSelection {
+  try {
+    const storedRoles = localStorage.getItem(lobbyRolesStorageKey);
+
+    if (!storedRoles) {
+      return [undefined, undefined];
+    }
+
+    const parsedRoles = JSON.parse(storedRoles) as unknown;
+
+    if (!Array.isArray(parsedRoles)) {
+      return [undefined, undefined];
+    }
+
+    return normalizeLobbyRoleSelection([parsedRoles[0], parsedRoles[1]]);
+  } catch {
+    return [undefined, undefined];
+  }
+}
+
+export function writeStoredLobbyRoles(roles: LobbyRoleSelection) {
+  try {
+    localStorage.setItem(lobbyRolesStorageKey, JSON.stringify(roles));
+  } catch {
+    // Ignore write failures (e.g. storage disabled or full).
+  }
+}
+
 function getLobbyRoleMode(roles: LobbyRoleSelection) {
   const apiRoles = roles
     .filter((role): role is LobbyRoleId => Boolean(role))

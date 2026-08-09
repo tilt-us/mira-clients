@@ -216,7 +216,9 @@ import {
   LobbyRoleIcon,
   lobbyRoles,
   normalizeLobbyRoleSelection,
+  readStoredLobbyRoles,
   toApiLobbyRole,
+  writeStoredLobbyRoles,
   type GameMode,
   type LobbyMemberWithRoles,
   type LobbyRoleId,
@@ -339,7 +341,7 @@ function Client({
   const [partyInviteSearching, setPartyInviteSearching] = useState(false);
   const [partyInviteBusyId, setPartyInviteBusyId] = useState<number>();
   const [selectedLobbyRoles, setSelectedLobbyRoles] =
-    useState<LobbyRoleSelection>([undefined, undefined]);
+    useState<LobbyRoleSelection>(() => readStoredLobbyRoles());
   const [lobbyMemberRoles, setLobbyMemberRoles] = useState<
     Record<number, LobbyRoleSelection>
   >({});
@@ -369,6 +371,7 @@ function Client({
   const [championsReadyMarkedMatchId, setChampionsReadyMarkedMatchId] = useState<string>();
   const [forceOnlinePublicIds, setForceOnlinePublicIds] = useState<number[]>([]);
   const activeLobbyRef = useRef<LobbySnapshot | undefined>(undefined);
+  const appliedRememberedRolesLobbyIdRef = useRef<string | undefined>(undefined);
   const championSelectionMatchRef = useRef<ApiMatchResponse | undefined>(undefined);
   const gameInProgressRef = useRef(false);
   const gameLaunchParametersRef = useRef<GameLaunchParameters | undefined>(undefined);
@@ -1240,10 +1243,57 @@ function Client({
       return;
     }
 
-    setSelectedLobbyRoles([undefined, undefined]);
+    // Keep the selected roles as a sticky preference so closing the lobby does
+    // not discard the player's chosen role. Only the per-lobby state is reset.
     setOpenLobbyRolePicker(undefined);
     setLobbyMemberRoles({});
+    appliedRememberedRolesLobbyIdRef.current = undefined;
   }, [activeLobby]);
+
+  // Persist the selected roles so they survive closing the lobby and restarting
+  // the client. Empty selections never overwrite a remembered preference.
+  useEffect(() => {
+    if (hasLobbyRoles(selectedLobbyRoles)) {
+      writeStoredLobbyRoles(selectedLobbyRoles);
+    }
+  }, [selectedLobbyRoles]);
+
+  // Re-apply the remembered roles to a freshly opened lobby whose current member
+  // does not have any roles yet, so the saved role is restored on the server too.
+  useEffect(() => {
+    if (!activeLobby?.id || activeLobby.status !== "OPEN") {
+      return;
+    }
+
+    if (typeof profilePublicId !== "number") {
+      return;
+    }
+
+    const currentMember = getCurrentLobbyMember(
+      activeLobby,
+      profilePublicId,
+      profileName,
+    );
+
+    if (!currentMember) {
+      return;
+    }
+
+    if (hasLobbyRoles(getEffectiveLobbyMemberRoles(currentMember))) {
+      appliedRememberedRolesLobbyIdRef.current = activeLobby.id;
+      return;
+    }
+
+    if (
+      !hasLobbyRoles(selectedLobbyRoles) ||
+      appliedRememberedRolesLobbyIdRef.current === activeLobby.id
+    ) {
+      return;
+    }
+
+    appliedRememberedRolesLobbyIdRef.current = activeLobby.id;
+    void applyRememberedLobbyRoles(selectedLobbyRoles);
+  }, [activeLobby, lobbyMemberRoles, profileName, profilePublicId, selectedLobbyRoles]);
 
   useEffect(() => {
     if (!partyInvitesLocked) {
@@ -3698,6 +3748,36 @@ function Client({
     setPartyInviteSearchResults([]);
     setPartyInviteOnlinePage(0);
     setLobbyError(undefined);
+  }
+
+  async function applyRememberedLobbyRoles(roles: LobbyRoleSelection) {
+    const nextSelectedRoles = normalizeLobbyRoleSelection([
+      roles[0],
+      lobbyIsFull ? undefined : roles[1],
+    ]);
+
+    if (!hasLobbyRoles(nextSelectedRoles)) {
+      return;
+    }
+
+    setSelectedLobbyRoles(nextSelectedRoles);
+
+    if (typeof profilePublicId === "number") {
+      setLobbyMemberRoles((currentRoles) => ({
+        ...currentRoles,
+        [profilePublicId]: nextSelectedRoles,
+      }));
+    }
+
+    if (activeLobbyRef.current) {
+      setPresenceStatus("inlobby");
+      void publishPresence(
+        "IN_LOBBY",
+        getLobbyPresenceMode(selectedGameMode, nextSelectedRoles),
+      );
+    }
+
+    await saveLobbyMemberRoles(nextSelectedRoles);
   }
 
   async function saveLobbyMemberRoles(
