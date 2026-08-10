@@ -1,3 +1,4 @@
+use crate::{MiraClientGameplaySettings, MiraClientSystemsPlugin, OverheadHealthBarStyle};
 use bevy::app::AppExit;
 use bevy::asset::AssetMetaCheck;
 use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
@@ -8,18 +9,14 @@ use bevy::window::{
     MonitorSelection, PresentMode, VideoModeSelection, WindowMode, WindowResolution,
 };
 use bevy_transform_interpolation::prelude::TransformInterpolationPlugin;
-use game_logic::{
-    MiraClientGameplaySettings, MiraClientSystemsPlugin, MiraGameplaySystemsPlugin,
-    OverheadHealthBarStyle,
-};
-use game_shared::MiraSharedPlugin;
-use game_shared::network::FIXED_TIMESTEP_HZ;
-use game_world::MiraWorldPlugin;
+use mira_game_api::MiraGameApiPlugin;
+use mira_game_api::network::FIXED_TIMESTEP_HZ;
 
 use super::settings::{
     ClientAppSettings, ClientLaunchGate, ClientLaunchSettings, ClientScreenMode,
 };
 use super::states::ClientState;
+use super::world::MiraWorldPlugin;
 use crate::app::leave_menu::LeaveMenuPlugin;
 use crate::app::loading_screen::LoadingScreenPlugin;
 use crate::app::main_hud::MainHudPlugin;
@@ -112,10 +109,9 @@ impl Plugin for ClientAppPlugins {
 
         app.add_plugins(TransformInterpolationPlugin::default())
             .add_plugins((
-                MiraSharedPlugin,
+                MiraGameApiPlugin,
                 ClientNetworkPlugin,
                 MiraWorldPlugin,
-                MiraGameplaySystemsPlugin,
                 MiraClientSystemsPlugin,
                 LoadingScreenPlugin,
             ));

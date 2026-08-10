@@ -10,6 +10,13 @@ Install `just` once if it is not available:
 cargo install just
 ```
 
+The development recipes fetch the private dedicated-server repository through
+SSH. Configure GitHub SSH access before running them. The checkout is cached at
+`~/.cache/mira-game-server` by default; set `MIRA_GAME_SERVER_DIRECTORY` to use
+another checkout or `MIRA_GAME_SERVER_REVISION` to select a different revision.
+`just dev` builds an updated server before applying its 60-second readiness
+timeout.
+
 ## Start Local Game Development
 
 Start a local dedicated game server and a client connected to it:

@@ -7,11 +7,10 @@ description = "Mira game client app"
 
 [dependencies]
 bevy.workspace = true
+bevy_fontmesh = "0.6.0"
 bevy_transform_interpolation.workspace = true
-game-logic.workspace = true
-game-shared.workspace = true
-game-world.workspace = true
 lightyear.workspace = true
+mira-game-api.workspace = true
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 serde.workspace = true
 serde_json.workspace = true

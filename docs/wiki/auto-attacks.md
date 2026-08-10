@@ -28,7 +28,8 @@ first combo hit.
 
 ## Damage
 
-Combo damage is shared between client prediction and the server through `game-shared`.
+Combo damage is calculated by the authoritative server using tuning from `mira-game-api`.
+Clients only render the replicated combat outcome.
 
 - First combo hit: `6` damage.
 - Final combo hit: `18` damage.

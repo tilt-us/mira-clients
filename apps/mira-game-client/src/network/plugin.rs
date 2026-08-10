@@ -1,7 +1,7 @@
 use super::ClientNetworkSettings;
 use bevy::prelude::*;
 use core::time::Duration;
-use game_shared::network::{
+use mira_game_api::network::{
     NETCODE_CLIENT_TIMEOUT_SECS, PROTOCOL_ID, SharedNetworkPlugin, fixed_timestep_duration,
 };
 use lightyear::netcode::Key;

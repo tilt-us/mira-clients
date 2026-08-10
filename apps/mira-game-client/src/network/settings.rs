@@ -1,5 +1,5 @@
 use core::net::SocketAddr;
-use game_shared::network::{DEFAULT_CLIENT_ADDR, DEFAULT_SERVER_ADDR};
+use mira_game_api::network::{DEFAULT_CLIENT_ADDR, DEFAULT_SERVER_ADDR};
 /// Stores local client networking settings for the Lightyear connector.
 ///
 /// - `client_id`: Netcode client id used for development authentication.
