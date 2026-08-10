@@ -1,19 +1,22 @@
 use super::match_manifest::ServerMatchManifest;
+use bevy::prelude::Resource;
 use serde::Serialize;
 use std::collections::HashSet;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream};
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
+};
 use std::thread;
 
-/// Stores Server Control Api Settings data used by the dedicated server control API system.
+/// Configuration for the local server control API.
 #[derive(Debug, Clone, Copy)]
 pub struct ServerControlApiSettings {
     pub listen_addr: SocketAddr,
 }
 
 impl Default for ServerControlApiSettings {
-    /// Returns the default configuration used by the dedicated server control API system.
     fn default() -> Self {
         Self {
             listen_addr: SocketAddr::new(IpAddr::from([127, 0, 0, 1]), 6000),
@@ -21,15 +24,30 @@ impl Default for ServerControlApiSettings {
     }
 }
 
-/// Stores Control State data used by the dedicated server control API system.
+/// Shares the dedicated server UDP readiness state with the control API thread.
+#[derive(Resource, Clone, Debug, Default)]
+pub struct ServerReadiness(Arc<AtomicBool>);
+
+impl ServerReadiness {
+    /// Updates the readiness value and returns whether it changed.
+    pub fn set_ready(&self, ready: bool) -> bool {
+        self.0.swap(ready, Ordering::AcqRel) != ready
+    }
+
+    /// Returns whether the server UDP listener is ready to accept clients.
+    fn is_ready(&self) -> bool {
+        self.0.load(Ordering::Acquire)
+    }
+}
+
 #[derive(Clone)]
 struct ControlState {
     match_id: Option<String>,
     allowed_players: HashSet<u64>,
     ready_players: Arc<Mutex<HashSet<u64>>>,
+    server_readiness: ServerReadiness,
 }
 
-/// Stores Display Ready Response data used by the dedicated server control API system.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DisplayReadyResponse {
@@ -42,7 +60,6 @@ struct DisplayReadyResponse {
     all_clients_ready: bool,
 }
 
-/// Stores Loading Screen Response data used by the dedicated server control API system.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct LoadingScreenResponse {
@@ -53,19 +70,25 @@ struct LoadingScreenResponse {
     can_close: bool,
 }
 
-/// Stores Error Response data used by the dedicated server control API system.
+#[derive(Serialize)]
+struct ServerReadyResponse {
+    ready: bool,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ErrorResponse {
     error: String,
 }
 
-/// Runs the spawn step for the dedicated server control API system.
-pub fn spawn(settings: ServerControlApiSettings, manifest: ServerMatchManifest) {
+/// Starts the control API thread and returns the shared UDP readiness flag.
+pub fn spawn(settings: ServerControlApiSettings, manifest: ServerMatchManifest) -> ServerReadiness {
+    let server_readiness = ServerReadiness::default();
     let state = ControlState {
         match_id: manifest.match_id.clone(),
         allowed_players: manifest.player_ids().into_iter().collect(),
         ready_players: Arc::new(Mutex::new(HashSet::new())),
+        server_readiness: server_readiness.clone(),
     };
 
     thread::spawn(move || {
@@ -92,9 +115,10 @@ pub fn spawn(settings: ServerControlApiSettings, manifest: ServerMatchManifest) 
             }
         }
     });
+
+    server_readiness
 }
 
-/// Runs the handle connection step for the dedicated server control API system.
 fn handle_connection(mut stream: TcpStream, state: &ControlState) {
     let Ok(request) = read_request(&stream) else {
         write_json(
@@ -114,7 +138,6 @@ fn handle_connection(mut stream: TcpStream, state: &ControlState) {
     }
 }
 
-/// Runs the route step for the dedicated server control API system.
 fn route(method: &str, path: &str, state: &ControlState) -> RouteResponse {
     if method == "OPTIONS" {
         return RouteResponse::NoContent;
@@ -127,6 +150,10 @@ fn route(method: &str, path: &str, state: &ControlState) -> RouteResponse {
         .split('/')
         .filter(|segment| !segment.is_empty())
         .collect::<Vec<_>>();
+
+    if method == "GET" && segments.as_slice() == ["ready"] {
+        return server_ready(state);
+    }
 
     if segments.len() == 6
         && method == "POST"
@@ -155,7 +182,15 @@ fn route(method: &str, path: &str, state: &ControlState) -> RouteResponse {
     json_error(404, "Endpoint was not found.")
 }
 
-/// Runs the mark display ready step for the dedicated server control API system.
+fn server_ready(state: &ControlState) -> RouteResponse {
+    let ready = state.server_readiness.is_ready();
+    json_response(
+        if ready { 200 } else { 503 },
+        &ServerReadyResponse { ready },
+    )
+}
+
+/// Marks an authorized player as ready and returns the current loading summary.
 fn mark_display_ready(
     match_id: &str,
     player_public_id: u64,
@@ -173,22 +208,20 @@ fn mark_display_ready(
         .lock()
         .unwrap_or_else(|error| error.into_inner());
     ready_players.insert(player_public_id);
-    let ready_count = ready_players.len();
-    let ready_player_ids = ready_player_ids(&ready_players);
-    let total_players = total_players(state, ready_count);
+    let readiness = readiness_summary(state, &ready_players);
     let response = DisplayReadyResponse {
         match_id: match_id.to_string(),
         player_public_id,
         display_ready: true,
-        ready_players: ready_count,
-        total_players,
-        ready_player_ids,
-        all_clients_ready: ready_count >= total_players,
+        ready_players: readiness.ready_player_count,
+        total_players: readiness.total_player_count,
+        ready_player_ids: readiness.ready_player_ids,
+        all_clients_ready: readiness.all_players_ready,
     };
     json_response(200, &response)
 }
 
-/// Runs the loading screen step for the dedicated server control API system.
+/// Returns the current loading-screen readiness for a match.
 fn loading_screen(match_id: &str, state: &ControlState) -> RouteResponse {
     if !match_matches(match_id, state) {
         return json_error(404, "Match was not found on this server.");
@@ -198,27 +231,38 @@ fn loading_screen(match_id: &str, state: &ControlState) -> RouteResponse {
         .ready_players
         .lock()
         .unwrap_or_else(|error| error.into_inner());
-    let ready_count = ready_players.len();
-    let ready_player_ids = ready_player_ids(&ready_players);
-    let total_players = total_players(state, ready_count);
+    let readiness = readiness_summary(state, &ready_players);
     let response = LoadingScreenResponse {
         match_id: match_id.to_string(),
-        ready_players: ready_count,
-        total_players,
-        ready_player_ids,
-        can_close: ready_count >= total_players,
+        ready_players: readiness.ready_player_count,
+        total_players: readiness.total_player_count,
+        ready_player_ids: readiness.ready_player_ids,
+        can_close: readiness.all_players_ready,
     };
     json_response(200, &response)
 }
 
-/// Runs the ready player ids step for the dedicated server control API system.
-fn ready_player_ids(ready_players: &HashSet<u64>) -> Vec<u64> {
-    let mut player_ids = ready_players.iter().copied().collect::<Vec<_>>();
-    player_ids.sort_unstable();
-    player_ids
+struct ReadinessSummary {
+    ready_player_count: usize,
+    total_player_count: usize,
+    ready_player_ids: Vec<u64>,
+    all_players_ready: bool,
 }
 
-/// Runs the match matches step for the dedicated server control API system.
+fn readiness_summary(state: &ControlState, ready_players: &HashSet<u64>) -> ReadinessSummary {
+    let ready_player_count = ready_players.len();
+    let mut player_ids = ready_players.iter().copied().collect::<Vec<_>>();
+    player_ids.sort_unstable();
+    let total_player_count = total_players(state, ready_player_count);
+
+    ReadinessSummary {
+        ready_player_count,
+        total_player_count,
+        ready_player_ids: player_ids,
+        all_players_ready: ready_player_count >= total_player_count,
+    }
+}
+
 fn match_matches(match_id: &str, state: &ControlState) -> bool {
     state
         .match_id
@@ -227,7 +271,6 @@ fn match_matches(match_id: &str, state: &ControlState) -> bool {
         .unwrap_or(true)
 }
 
-/// Runs the total players step for the dedicated server control API system.
 fn total_players(state: &ControlState, ready_count: usize) -> usize {
     if state.allowed_players.is_empty() {
         ready_count.max(1)
@@ -236,7 +279,6 @@ fn total_players(state: &ControlState, ready_count: usize) -> usize {
     }
 }
 
-/// Runs the json response step for the dedicated server control API system.
 fn json_response<T: Serialize>(status: u16, body: &T) -> RouteResponse {
     RouteResponse::Json(
         status,
@@ -245,7 +287,6 @@ fn json_response<T: Serialize>(status: u16, body: &T) -> RouteResponse {
     )
 }
 
-/// Runs the json error step for the dedicated server control API system.
 fn json_error(status: u16, error: &str) -> RouteResponse {
     json_response(
         status,
@@ -255,7 +296,6 @@ fn json_error(status: u16, error: &str) -> RouteResponse {
     )
 }
 
-/// Runs the read request step for the dedicated server control API system.
 fn read_request(stream: &TcpStream) -> Result<HttpRequest, std::io::Error> {
     let mut reader = BufReader::new(stream);
     let mut request_line = String::new();
@@ -266,14 +306,12 @@ fn read_request(stream: &TcpStream) -> Result<HttpRequest, std::io::Error> {
     Ok(HttpRequest { method, path })
 }
 
-/// Runs the write json step for the dedicated server control API system.
 fn write_json<T: Serialize>(stream: &mut TcpStream, status: u16, body: &T) {
     let body = serde_json::to_string(body)
         .unwrap_or_else(|_| "{\"error\":\"Serialization failed.\"}".to_string());
     write_raw_json(stream, status, &body);
 }
 
-/// Runs the write raw json step for the dedicated server control API system.
 fn write_raw_json(stream: &mut TcpStream, status: u16, body: &str) {
     let status_text = status_text(status);
     let _ = write!(
@@ -284,7 +322,6 @@ fn write_raw_json(stream: &mut TcpStream, status: u16, body: &str) {
     );
 }
 
-/// Runs the write no content step for the dedicated server control API system.
 fn write_no_content(stream: &mut TcpStream) {
     let _ = write!(
         stream,
@@ -292,7 +329,6 @@ fn write_no_content(stream: &mut TcpStream) {
     );
 }
 
-/// Runs the status text step for the dedicated server control API system.
 fn status_text(status: u16) -> &'static str {
     match status {
         200 => "OK",
@@ -300,17 +336,16 @@ fn status_text(status: u16) -> &'static str {
         400 => "Bad Request",
         403 => "Forbidden",
         404 => "Not Found",
+        503 => "Service Unavailable",
         _ => "Error",
     }
 }
 
-/// Stores Http Request data used by the dedicated server control API system.
 struct HttpRequest {
     method: String,
     path: String,
 }
 
-/// Enumerates Route Response states or variants used by the dedicated server control API system.
 enum RouteResponse {
     Json(u16, String),
     NoContent,
@@ -320,13 +355,13 @@ enum RouteResponse {
 mod tests {
     use super::*;
 
-    /// Runs the marks manifest player ready step for the dedicated server control API system.
     #[test]
     fn marks_manifest_player_ready() {
         let state = ControlState {
             match_id: Some("match-1".to_string()),
             allowed_players: HashSet::from([1, 2]),
             ready_players: Arc::new(Mutex::new(HashSet::new())),
+            server_readiness: ServerReadiness::default(),
         };
 
         let response = route(
@@ -339,13 +374,13 @@ mod tests {
         assert_eq!(state.ready_players.lock().unwrap().len(), 1);
     }
 
-    /// Verifies rejects player outside manifest behavior for the dedicated server control API system.
     #[test]
     fn rejects_player_outside_manifest() {
         let state = ControlState {
             match_id: Some("match-1".to_string()),
             allowed_players: HashSet::from([1]),
             ready_players: Arc::new(Mutex::new(HashSet::new())),
+            server_readiness: ServerReadiness::default(),
         };
 
         let response = route(
@@ -355,5 +390,28 @@ mod tests {
         );
 
         assert!(matches!(response, RouteResponse::Json(403, _)));
+    }
+
+    #[test]
+    fn reports_server_readiness_after_udp_bind() {
+        let readiness = ServerReadiness::default();
+        let state = ControlState {
+            match_id: Some("match-1".to_string()),
+            allowed_players: HashSet::new(),
+            ready_players: Arc::new(Mutex::new(HashSet::new())),
+            server_readiness: readiness.clone(),
+        };
+
+        assert!(matches!(
+            route("GET", "/ready", &state),
+            RouteResponse::Json(503, _)
+        ));
+
+        readiness.set_ready(true);
+
+        assert!(matches!(
+            route("GET", "/ready", &state),
+            RouteResponse::Json(200, _)
+        ));
     }
 }

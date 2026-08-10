@@ -5,13 +5,84 @@ use bevy::prelude::*;
 use bevy::window::WindowCloseRequested;
 use game_shared::network::{ClientLeave, ReliableCommandChannel};
 use lightyear::prelude::*;
+use std::time::Duration;
+use bevy::app::ctrlc::Error;
 
+const LEAVE_NOTIFICATION_GRACE_PERIOD: Duration = Duration::from_millis(120);
+const NETWORK_DISCONNECT_GRACE_PERIOD: Duration = Duration::from_millis(40);
+const LEAVE_MENU_Z_INDEX: i32 = 9_500;
+
+/// Registers the in-game leave confirmation menu.
 pub struct LeaveMenuPlugin;
 
 #[derive(Resource, Debug, Default)]
 struct LeaveMenuState {
-    exit_timer: Option<Timer>,
+    exit_stage: LeaveExitStage,
     open: bool,
+}
+
+/// Tracks the short graceful shutdown sequence used when a player leaves a match.
+#[derive(Debug, Default)]
+enum LeaveExitStage {
+    #[default]
+    Idle,
+    NotifyingServer(Timer),
+    Disconnecting(Timer),
+}
+
+/// Describes the next side effect required by the leave shutdown sequence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LeaveExitAction {
+    None,
+    Disconnect,
+    Exit,
+}
+
+impl LeaveMenuState {
+    fn begin_exit(&mut self) -> bool {
+        if !matches!(self.exit_stage, LeaveExitStage::Idle) {
+            return false;
+        }
+
+        self.exit_stage = LeaveExitStage::NotifyingServer(Timer::new(
+            LEAVE_NOTIFICATION_GRACE_PERIOD,
+            TimerMode::Once,
+        ));
+        true
+    }
+
+    fn advance_exit(&mut self, elapsed: Duration) -> LeaveExitAction {
+        let action = match &mut self.exit_stage {
+            LeaveExitStage::Idle => LeaveExitAction::None,
+            LeaveExitStage::NotifyingServer(timer) => {
+                if timer.tick(elapsed).just_finished() {
+                    LeaveExitAction::Disconnect
+                } else {
+                    LeaveExitAction::None
+                }
+            }
+            LeaveExitStage::Disconnecting(timer) => {
+                if timer.tick(elapsed).just_finished() {
+                    LeaveExitAction::Exit
+                } else {
+                    LeaveExitAction::None
+                }
+            }
+        };
+
+        match action {
+            LeaveExitAction::Disconnect => {
+                self.exit_stage = LeaveExitStage::Disconnecting(Timer::new(
+                    NETWORK_DISCONNECT_GRACE_PERIOD,
+                    TimerMode::Once,
+                ));
+            }
+            LeaveExitAction::Exit => self.exit_stage = LeaveExitStage::Idle,
+            LeaveExitAction::None => {}
+        }
+
+        action
+    }
 }
 
 #[derive(Component)]
@@ -34,7 +105,7 @@ impl Plugin for LeaveMenuPlugin {
                     sync_leave_menu_visibility,
                     handle_leave_menu_buttons,
                     notify_leave_on_window_close,
-                    finish_leave_after_grace,
+                    advance_leave_exit,
                 ),
             );
     }
@@ -56,7 +127,7 @@ fn spawn_leave_menu(mut commands: Commands) {
                 ..default()
             },
             BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.58)),
-            ZIndex(9500),
+            ZIndex(LEAVE_MENU_Z_INDEX),
         ))
         .with_children(|root| {
             root.spawn((
@@ -182,9 +253,10 @@ fn handle_leave_menu_buttons(
 
         match action {
             LeaveMenuAction::Leave => {
-                send_client_leave(&mut senders);
-                state.open = false;
-                state.exit_timer = Some(Timer::from_seconds(0.12, TimerMode::Once));
+                if state.begin_exit() {
+                    send_client_leave(&mut senders);
+                    state.open = false;
+                }
             }
             LeaveMenuAction::Stay => {
                 state.open = false;
@@ -193,34 +265,79 @@ fn handle_leave_menu_buttons(
     }
 }
 
-fn finish_leave_after_grace(
+fn advance_leave_exit(
     time: Res<Time>,
     mut state: ResMut<LeaveMenuState>,
+    clients: Query<Entity, (With<Client>, Without<Disconnected>)>,
+    mut commands: Commands,
     mut app_exit: MessageWriter<AppExit>,
 ) {
-    let Some(timer) = state.exit_timer.as_mut() else {
-        return;
-    };
-
-    if timer.tick(time.delta()).just_finished() {
-        state.exit_timer = None;
-        app_exit.write(AppExit::Success);
+    match state.advance_exit(time.delta()) {
+        LeaveExitAction::None => {}
+        LeaveExitAction::Disconnect => disconnect_from_game_server(&clients, &mut commands),
+        LeaveExitAction::Exit => {
+            app_exit.write(AppExit::Success);
+        }
     }
 }
 
 fn notify_leave_on_window_close(
     mut close_requests: MessageReader<WindowCloseRequested>,
     mut senders: Query<&mut MessageSender<ClientLeave>, With<Client>>,
+    clients: Query<Entity, (With<Client>, Without<Disconnected>)>,
+    mut commands: Commands,
 ) {
     if close_requests.read().next().is_none() {
         return;
     }
 
     send_client_leave(&mut senders);
+    disconnect_from_game_server(&clients, &mut commands);
 }
 
 fn send_client_leave(senders: &mut Query<&mut MessageSender<ClientLeave>, With<Client>>) {
     for mut sender in senders.iter_mut() {
         sender.send::<ReliableCommandChannel>(ClientLeave);
+    }
+}
+
+/// Triggers Netcode's explicit disconnect path for every active local game client.
+fn disconnect_from_game_server(
+    clients: &Query<Entity, (With<Client>, Without<Disconnected>)>,
+    commands: &mut Commands,
+) {
+    for client_entity in clients.iter() {
+        commands.trigger(Disconnect {
+            entity: client_entity,
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn leave_exit_waits_for_notification_and_disconnect_packets() {
+        let mut state = LeaveMenuState::default();
+
+        assert!(state.begin_exit());
+        assert!(!state.begin_exit());
+        assert_eq!(
+            state.advance_exit(LEAVE_NOTIFICATION_GRACE_PERIOD),
+            LeaveExitAction::Disconnect
+        );
+        assert_eq!(
+            state.advance_exit(NETWORK_DISCONNECT_GRACE_PERIOD),
+            LeaveExitAction::Exit
+        );
+    }
+
+    #[test]
+    fn idle_leave_exit_does_not_request_side_effects() {
+        assert_eq!(
+            LeaveMenuState::default().advance_exit(Duration::ZERO),
+            LeaveExitAction::None
+        );
     }
 }

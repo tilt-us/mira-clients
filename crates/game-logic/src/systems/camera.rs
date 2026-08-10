@@ -5,11 +5,8 @@ use game_shared::game::{
     camera::{CameraFocus, CameraZoom, TopDownCamera, TopDownCameraSettings},
     player::PlayerControlled,
 };
-
-/// Description:
 /// Moves the top-down camera focus target to the controlled player when centered.
 ///
-/// Params:
 /// - `player_query`: Controlled player transform used as the camera follow target.
 /// - `camera_focus_query`: Camera focus components that should track the player.
 pub(super) fn follow_controlled_player(
@@ -26,11 +23,8 @@ pub(super) fn follow_controlled_player(
         }
     }
 }
-
-/// Description:
 /// Applies mouse wheel input to top-down camera zoom components.
 ///
-/// Params:
 /// - `mouse_wheel_events`: Mouse wheel events collected during the frame.
 /// - `camera_query`: Camera zoom components to adjust.
 pub(super) fn handle_camera_zoom(
@@ -46,11 +40,8 @@ pub(super) fn handle_camera_zoom(
         zoom.zoom_by(-scroll_delta);
     }
 }
-
-/// Description:
 /// Smoothly positions and aims the top-down camera from its focus and zoom settings.
 ///
-/// Params:
 /// - `time`: Frame timing used for interpolation.
 /// - `camera_query`: Camera transforms and top-down camera state to update.
 pub(super) fn update_top_down_camera(

@@ -1,16 +1,12 @@
 use bevy::math::Ray3d;
 use bevy::prelude::*;
 use game_shared::game::map::MapGround;
-
-/// Description:
 /// Intersects a world-space ray with the top surface of the map ground.
 ///
-/// Params:
 /// - `ray`: World-space ray to test.
 /// - `map_transform`: Map transform used to convert between world and local space.
 /// - `map`: Map bounds and top-surface data.
 ///
-/// Return:
 /// - The world-space hit point on the map top surface, or `None` when no valid hit exists.
 pub(super) fn ray_hit_map_top(
     ray: Ray3d,
@@ -40,16 +36,12 @@ pub(super) fn ray_hit_map_top(
     let top_hit_local = Vec3::new(local_hit.x, top_y, local_hit.z);
     Some(map_to_world.transform_point3(top_hit_local))
 }
-
-/// Description:
 /// Clamps a world-space point to the map bounds and places it on the map top surface.
 ///
-/// Params:
 /// - `world_point`: Point to clamp.
 /// - `map_transform`: Map transform used to convert between world and local space.
 /// - `map`: Map bounds and top-surface data.
 ///
-/// Return:
 /// - The clamped world-space point on the map top surface.
 pub(super) fn clamp_world_point_to_map_top(
     world_point: Vec3,

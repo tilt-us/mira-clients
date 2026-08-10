@@ -7,7 +7,7 @@ use bevy::render::render_resource::PrimitiveTopology;
 use bevy_fontmesh::{JustifyText, TextAnchor, TextMesh, TextMeshStyle};
 use game_shared::game::{
     camera::TopDownCamera,
-    player::{Health, Mana, Player, PlayerProfile},
+    player::{DEFAULT_PLAYER_HEALTH, Health, Mana, Player, PlayerProfile},
 };
 use std::collections::HashMap;
 
@@ -19,6 +19,7 @@ const BAR_DEPTH: f32 = 0.035;
 const HEALTH_FILL_Y: f32 = 0.048;
 const MANA_FILL_Y: f32 = -0.052;
 const BAR_BORDER_THICKNESS: f32 = 0.012;
+const PLAIN_HEALTH_FILL_HEIGHT: f32 = BAR_HEIGHT - BAR_BORDER_THICKNESS * 2.0;
 const NAME_TEXT_Y: f32 = BAR_HEIGHT * 0.5 + 0.18;
 const NAME_TEXT_SCALE: f32 = 0.16;
 const TOTAL_DAMAGE_TEXT_Y: f32 = NAME_TEXT_Y + 0.17;
@@ -40,16 +41,15 @@ const LEVEL_BADGE_BORDER_X: f32 = LEVEL_BADGE_LEFT + LEVEL_BADGE_BORDER_WIDTH_TO
 const LEVEL_BADGE_BORDER_Y: f32 = LEVEL_BADGE_TOP - LEVEL_BADGE_BORDER_HEIGHT * 0.5;
 const LEVEL_TEXT_X: f32 = LEVEL_BADGE_X - (LEVEL_BADGE_WIDTH_TOP - LEVEL_BADGE_WIDTH_BOTTOM) * 0.25;
 const MAX_HEALTH_MARKER_THRESHOLD: u32 = 3000;
+const HEALTH_MARKER_INTERVAL: u32 = 100;
 const OVERHEAD_FONT_PATH: &str = "fonts/Roboto-Bold.ttf";
-const LIRA_BAR_OFFSET: f32 = 2.65;
+const PLAYER_HEALTH_BAR_Y_OFFSET: f32 = 2.65;
 const ALLY_HEALTH_COLOR: Color = Color::srgb_u8(0x23, 0xad, 0xd9);
 const ENEMY_HEALTH_COLOR: Color = Color::srgb_u8(0xd9, 0x23, 0x2f);
 const LOCAL_HEALTH_COLOR: Color = Color::srgb_u8(0x4a, 0xd1, 0x1b);
 const MANA_COLOR: Color = Color::srgb_u8(0x1b, 0x5a, 0xd1);
 const DEFAULT_ACCENT_COLOR: Color = Color::srgb_u8(0xf2, 0xc4, 0x5b);
 const HEALTH_BAR_PANEL_COLOR: Color = Color::srgb_u8(0x00, 0x00, 0x00);
-
-/// Description:
 /// Stores visual options used by overhead health bars.
 #[derive(Resource, Debug, Clone, Copy)]
 pub struct OverheadHealthBarStyle {
@@ -65,8 +65,6 @@ impl Default for OverheadHealthBarStyle {
         }
     }
 }
-
-/// Description:
 /// Stores public player names received before the gameplay snapshot starts.
 #[derive(Resource, Debug, Clone, Default)]
 pub struct OverheadPlayerProfiles {
@@ -74,7 +72,6 @@ pub struct OverheadPlayerProfiles {
 }
 
 impl OverheadPlayerProfiles {
-    /// Description:
     /// Stores a public display name for one network player id.
     pub fn set_display_name(&mut self, player_id: u64, display_name: impl Into<String>) {
         let display_name = display_name.into();
@@ -82,18 +79,13 @@ impl OverheadPlayerProfiles {
             self.display_names.insert(player_id, display_name);
         }
     }
-
-    /// Description:
     /// Returns the public display name for one network player id.
     pub fn display_name(&self, player_id: u64) -> Option<&str> {
         self.display_names.get(&player_id).map(String::as_str)
     }
 }
-
-/// Description:
 /// Stores the world-space tracking data for an overhead health bar.
 ///
-/// Fields:
 /// - `target`: Entity that the health bar follows.
 /// - `y_offset`: Vertical world-space offset above the target.
 #[derive(Component, Debug, Clone, Copy)]
@@ -101,11 +93,8 @@ pub(in crate::systems) struct HealthBar {
     target: Entity,
     y_offset: f32,
 }
-
-/// Description:
 /// Stores fill-scaling data for a health bar foreground segment.
 ///
-/// Fields:
 /// - `target`: Entity whose health controls the fill width.
 /// - `max_health`: Fallback maximum health value for sources without a max-health field.
 /// - `source`: Health source type used to read the correct component.
@@ -115,15 +104,11 @@ pub(in crate::systems) struct HealthBarFill {
     max_health: f32,
     source: HealthBarSource,
 }
-
-/// Description:
 /// Stores fill-scaling data for a mana bar foreground segment.
 #[derive(Component, Debug, Clone, Copy)]
 pub(in crate::systems) struct HealthBarManaFill {
     target: Entity,
 }
-
-/// Description:
 /// Stores one fixed 100-HP marker on the overhead health bar.
 #[derive(Component, Debug, Clone, Copy)]
 pub(in crate::systems) struct HealthBarHpMarker {
@@ -132,25 +117,18 @@ pub(in crate::systems) struct HealthBarHpMarker {
     source: HealthBarSource,
     threshold: f32,
 }
-
-/// Description:
 /// Tracks the player profile shown above the overhead health bar.
 #[derive(Component, Debug, Clone)]
 pub(in crate::systems) struct HealthBarName {
     target: Entity,
 }
-
-/// Description:
 /// Shows accumulated dummy damage above the overhead health bar.
 #[derive(Component, Debug, Clone)]
 pub(in crate::systems) struct HealthBarTotalDamageText {
     target: Entity,
 }
-
-/// Description:
 /// Identifies which component type provides health for a health bar fill.
 ///
-/// Fields:
 /// - `Player`: Reads health from the shared `Health` component.
 /// - `TrainingDummy`: Reads health from an enemy training dummy or remote player stand-in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -158,18 +136,14 @@ pub(in crate::systems) enum HealthBarSource {
     Player,
     TrainingDummy,
 }
-
-/// Description:
 /// Spawns an overhead health bar for a remote enemy player.
 ///
-/// Params:
 /// - `commands`: ECS command buffer used to spawn health bar entities.
 /// - `meshes`: Mesh assets used by health bar geometry.
 /// - `materials`: Material assets used by health bar visuals.
 /// - `target`: Remote player entity followed by the health bar.
 /// - `max_health`: Maximum health value used to scale the fill.
 ///
-/// Return:
 /// - Spawned health bar entity.
 pub(in crate::systems) fn spawn_remote_enemy_player_health_bar(
     commands: &mut Commands,
@@ -186,15 +160,13 @@ pub(in crate::systems) fn spawn_remote_enemy_player_health_bar(
         meshes,
         materials,
         target,
-        LIRA_BAR_OFFSET,
+        PLAYER_HEALTH_BAR_Y_OFFSET,
         max_health,
         HealthBarSource::TrainingDummy,
         ENEMY_HEALTH_COLOR,
         accent_color,
     )
 }
-
-/// Description:
 /// Spawns an overhead health bar for a remote allied player.
 pub(in crate::systems) fn spawn_remote_ally_player_health_bar(
     commands: &mut Commands,
@@ -211,7 +183,7 @@ pub(in crate::systems) fn spawn_remote_ally_player_health_bar(
         meshes,
         materials,
         target,
-        LIRA_BAR_OFFSET,
+        PLAYER_HEALTH_BAR_Y_OFFSET,
         max_health,
         HealthBarSource::Player,
         ALLY_HEALTH_COLOR,
@@ -219,16 +191,50 @@ pub(in crate::systems) fn spawn_remote_ally_player_health_bar(
     )
 }
 
-/// Description:
+/// Spawns an overhead health bar for a replicated lane unit.
+///
+/// - `commands`: ECS command buffer used to spawn health bar entities.
+/// - `meshes`: Mesh assets used by health bar geometry.
+/// - `materials`: Material assets used by health bar visuals.
+/// - `target`: Lane-unit entity followed by the health bar.
+/// - `max_health`: Maximum health value used to scale the fill.
+/// - `is_enemy`: Whether the lane unit belongs to the opposing team.
+/// - `y_offset`: Vertical world-space offset above the lane unit.
+///
+/// - Spawned health bar entity.
+pub(in crate::systems) fn spawn_remote_lane_unit_health_bar(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    target: Entity,
+    max_health: f32,
+    is_enemy: bool,
+    y_offset: f32,
+) -> Entity {
+    let (source, health_color) = if is_enemy {
+        (HealthBarSource::TrainingDummy, ENEMY_HEALTH_COLOR)
+    } else {
+        (HealthBarSource::Player, ALLY_HEALTH_COLOR)
+    };
+
+    spawn_plain_health_bar(
+        commands,
+        meshes,
+        materials,
+        target,
+        y_offset,
+        max_health,
+        source,
+        health_color,
+    )
+}
 /// Spawns an overhead health bar for the local player.
 ///
-/// Params:
 /// - `commands`: ECS command buffer used to spawn health bar entities.
 /// - `meshes`: Mesh assets used by health bar geometry.
 /// - `materials`: Material assets used by health bar visuals.
 /// - `target`: Player entity followed by the health bar.
 ///
-/// Return:
 /// - Spawned health bar entity.
 pub(in crate::systems) fn spawn_player_health_bar(
     commands: &mut Commands,
@@ -244,18 +250,15 @@ pub(in crate::systems) fn spawn_player_health_bar(
         meshes,
         materials,
         target,
-        LIRA_BAR_OFFSET,
-        100.0,
+        PLAYER_HEALTH_BAR_Y_OFFSET,
+        DEFAULT_PLAYER_HEALTH as f32,
         HealthBarSource::Player,
         LOCAL_HEALTH_COLOR,
         accent_color,
     )
 }
-
-/// Description:
 /// Updates overhead health bar positions and rotates them to face the top-down camera.
 ///
-/// Params:
 /// - `camera_query`: Top-down camera transform used as the billboard orientation source.
 /// - `target_query`: Target transforms followed by health bars.
 /// - `bar_query`: Health bar tracking components and transforms to update.
@@ -279,11 +282,8 @@ pub(in crate::systems) fn update_health_bar_positions(
         transform.rotation = camera_rotation;
     }
 }
-
-/// Description:
 /// Updates health bar fill width and visibility from the tracked target health.
 ///
-/// Params:
 /// - `player_query`: Player health components.
 /// - `training_dummy_query`: Enemy training dummy health components.
 /// - `fill_query`: Health bar fills that should be scaled or hidden.
@@ -365,8 +365,6 @@ pub(in crate::systems) fn update_health_bar_fills(
         *visibility = Visibility::Visible;
     }
 }
-
-/// Description:
 /// Updates overhead health bar name and dummy total-damage labels.
 pub(in crate::systems) fn update_health_bar_texts(
     profile_query: Query<&PlayerProfile>,
@@ -416,11 +414,8 @@ pub(in crate::systems) fn update_health_bar_texts(
         *visibility = Visibility::Visible;
     }
 }
-
-/// Description:
 /// Spawns the shared child geometry for an overhead health bar.
 ///
-/// Params:
 /// - `commands`: ECS command buffer used to spawn the health bar hierarchy.
 /// - `meshes`: Mesh assets used by background, fill, and stripe geometry.
 /// - `materials`: Material assets used by background, fill, and stripe visuals.
@@ -430,7 +425,6 @@ pub(in crate::systems) fn update_health_bar_texts(
 /// - `source`: Health source type read by the fill update system.
 /// - `health_color`: Color used by the health fill and level badge.
 ///
-/// Return:
 /// - Spawned health bar entity.
 fn spawn_health_bar(
     commands: &mut Commands,
@@ -504,7 +498,7 @@ fn spawn_health_bar(
         materials.add(text_mesh_material(Color::srgba(0.0, 0.0, 0.0, 0.92)));
     let level_text_material = materials.add(text_mesh_material(Color::WHITE));
     let level_shadow_material = materials.add(text_mesh_material(Color::srgba(0.0, 0.0, 0.0, 0.8)));
-    let bar_entity = commands
+    commands
         .spawn((
             Name::new("HealthBar"),
             HealthBar { target, y_offset },
@@ -680,12 +674,123 @@ fn spawn_health_bar(
                     .with_scale(Vec3::splat(LEVEL_TEXT_SCALE)),
             ));
         })
-        .id();
-
-    bar_entity
+        .id()
 }
 
-/// Runs the text mesh material step for the overhead health bar HUD system.
+/// Spawns the minimal overhead health bar used by lane units.
+fn spawn_plain_health_bar(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    target: Entity,
+    y_offset: f32,
+    max_health: f32,
+    source: HealthBarSource,
+    health_color: Color,
+) -> Entity {
+    let background_mesh = meshes.add(Cuboid::new(BAR_WIDTH, BAR_HEIGHT, BAR_DEPTH));
+    let health_fill_mesh = meshes.add(Cuboid::new(1.0, PLAIN_HEALTH_FILL_HEIGHT, BAR_DEPTH * 1.25));
+    let horizontal_border_mesh = meshes.add(Cuboid::new(
+        BAR_WIDTH,
+        BAR_BORDER_THICKNESS,
+        BAR_DEPTH * 1.45,
+    ));
+    let vertical_border_mesh = meshes.add(Cuboid::new(
+        BAR_BORDER_THICKNESS,
+        BAR_HEIGHT,
+        BAR_DEPTH * 1.45,
+    ));
+    let background_material = materials.add(StandardMaterial {
+        base_color: HEALTH_BAR_PANEL_COLOR,
+        emissive: Color::BLACK.into(),
+        cull_mode: None,
+        unlit: true,
+        ..default()
+    });
+    let border_material = materials.add(StandardMaterial {
+        base_color: HEALTH_BAR_PANEL_COLOR,
+        emissive: HEALTH_BAR_PANEL_COLOR.with_alpha(0.26).into(),
+        cull_mode: None,
+        unlit: true,
+        ..default()
+    });
+    let health_fill_material = materials.add(StandardMaterial {
+        base_color: health_color,
+        emissive: health_color.with_alpha(0.24).into(),
+        unlit: true,
+        ..default()
+    });
+
+    commands
+        .spawn((
+            Name::new("LaneHealthBar"),
+            HealthBar { target, y_offset },
+            Transform::default(),
+            Visibility::Visible,
+        ))
+        .with_children(|bar| {
+            bar.spawn((
+                Name::new("LaneHealthBarBackground"),
+                Mesh3d(background_mesh),
+                MeshMaterial3d(background_material),
+                Transform::default(),
+            ));
+            bar.spawn((
+                Name::new("LaneHealthBarFill"),
+                HealthBarFill {
+                    target,
+                    max_health,
+                    source,
+                },
+                Mesh3d(health_fill_mesh),
+                MeshMaterial3d(health_fill_material),
+                Transform::from_xyz(0.0, 0.0, BAR_DEPTH * 0.8)
+                    .with_scale(Vec3::new(BAR_WIDTH, 1.0, 1.0)),
+                Visibility::Visible,
+            ));
+            bar.spawn((
+                Name::new("LaneHealthBarTopBorder"),
+                Mesh3d(horizontal_border_mesh.clone()),
+                MeshMaterial3d(border_material.clone()),
+                Transform::from_xyz(
+                    0.0,
+                    BAR_HEIGHT * 0.5 - BAR_BORDER_THICKNESS * 0.5,
+                    BAR_DEPTH * 1.55,
+                ),
+            ));
+            bar.spawn((
+                Name::new("LaneHealthBarBottomBorder"),
+                Mesh3d(horizontal_border_mesh),
+                MeshMaterial3d(border_material.clone()),
+                Transform::from_xyz(
+                    0.0,
+                    -BAR_HEIGHT * 0.5 + BAR_BORDER_THICKNESS * 0.5,
+                    BAR_DEPTH * 1.55,
+                ),
+            ));
+            bar.spawn((
+                Name::new("LaneHealthBarLeftBorder"),
+                Mesh3d(vertical_border_mesh.clone()),
+                MeshMaterial3d(border_material.clone()),
+                Transform::from_xyz(
+                    -BAR_WIDTH * 0.5 + BAR_BORDER_THICKNESS * 0.5,
+                    0.0,
+                    BAR_DEPTH * 1.55,
+                ),
+            ));
+            bar.spawn((
+                Name::new("LaneHealthBarRightBorder"),
+                Mesh3d(vertical_border_mesh),
+                MeshMaterial3d(border_material),
+                Transform::from_xyz(
+                    BAR_WIDTH * 0.5 - BAR_BORDER_THICKNESS * 0.5,
+                    0.0,
+                    BAR_DEPTH * 1.55,
+                ),
+            ));
+        })
+        .id()
+}
 fn text_mesh_material(color: Color) -> StandardMaterial {
     StandardMaterial {
         base_color: color,
@@ -696,8 +801,6 @@ fn text_mesh_material(color: Color) -> StandardMaterial {
         ..default()
     }
 }
-
-/// Runs the overhead text style step for the overhead health bar HUD system.
 fn overhead_text_style() -> TextMeshStyle {
     TextMeshStyle {
         depth: 0.01,
@@ -706,8 +809,6 @@ fn overhead_text_style() -> TextMeshStyle {
         justify: JustifyText::Center,
     }
 }
-
-/// Runs the spawn health markers step for the overhead health bar HUD system.
 fn spawn_health_markers(
     bar: &mut ChildSpawnerCommands,
     target: Entity,
@@ -717,9 +818,9 @@ fn spawn_health_markers(
     marker_material: Handle<StandardMaterial>,
 ) {
     let marker_y = HEALTH_FILL_Y + HEALTH_FILL_HEIGHT * 0.25;
-    let marker_count = MAX_HEALTH_MARKER_THRESHOLD / 100;
+    let marker_count = MAX_HEALTH_MARKER_THRESHOLD / HEALTH_MARKER_INTERVAL;
     for marker_index in 1..=marker_count {
-        let threshold = marker_index as f32 * 100.0;
+        let threshold = marker_index as f32 * HEALTH_MARKER_INTERVAL as f32;
 
         bar.spawn((
             Name::new("HealthBarHpMarker"),
@@ -736,8 +837,6 @@ fn spawn_health_markers(
         ));
     }
 }
-
-/// Runs the health values step for the overhead health bar HUD system.
 fn health_values(
     target: Entity,
     source: HealthBarSource,
@@ -756,8 +855,6 @@ fn health_values(
             .map(|dummy| (dummy.health, dummy.max_health.max(f32::EPSILON))),
     }
 }
-
-/// Runs the compact display name step for the overhead health bar HUD system.
 fn compact_display_name(display_name: &str) -> String {
     let mut compact = display_name
         .split_whitespace()
@@ -774,8 +871,6 @@ fn compact_display_name(display_name: &str) -> String {
 
     compact
 }
-
-/// Runs the level badge mesh step for the overhead health bar HUD system.
 fn level_badge_mesh() -> Mesh {
     trapezoid_mesh(
         LEVEL_BADGE_WIDTH_TOP,
@@ -783,8 +878,6 @@ fn level_badge_mesh() -> Mesh {
         LEVEL_BADGE_HEIGHT,
     )
 }
-
-/// Runs the level badge border mesh step for the overhead health bar HUD system.
 fn level_badge_border_mesh() -> Mesh {
     trapezoid_mesh(
         LEVEL_BADGE_BORDER_WIDTH_TOP,
@@ -792,8 +885,6 @@ fn level_badge_border_mesh() -> Mesh {
         LEVEL_BADGE_BORDER_HEIGHT,
     )
 }
-
-/// Runs the trapezoid mesh step for the overhead health bar HUD system.
 fn trapezoid_mesh(top_width: f32, bottom_width: f32, height: f32) -> Mesh {
     let left = -top_width * 0.5;
     let right = top_width * 0.5;

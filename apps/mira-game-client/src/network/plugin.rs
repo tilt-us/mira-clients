@@ -2,25 +2,32 @@ use super::ClientNetworkSettings;
 use bevy::prelude::*;
 use core::time::Duration;
 use game_shared::network::{
-    FIXED_TIMESTEP_HZ, NETCODE_CLIENT_TIMEOUT_SECS, PROTOCOL_ID, SharedNetworkPlugin,
+    NETCODE_CLIENT_TIMEOUT_SECS, PROTOCOL_ID, SharedNetworkPlugin, fixed_timestep_duration,
 };
 use lightyear::netcode::Key;
 use lightyear::prelude::client::*;
 use lightyear::prelude::*;
 
-/// Description:
+const NETCODE_TOKEN_EXPIRY_TIMEOUT_MULTIPLIER: i32 = 4;
+const MILLISECONDS_PER_SECOND: f32 = 1_000.0;
+const EXCELLENT_PING_MAX_MILLIS: u32 = 40;
+const ACCEPTABLE_PING_MAX_MILLIS: u32 = 80;
+const HIGH_PING_MAX_MILLIS: u32 = 120;
+
 /// Registers Lightyear client networking and starts the development client link.
 pub struct ClientNetworkPlugin;
 
+/// Stores the most recent round-trip time reported by the connected client.
 #[derive(Resource, Debug, Clone, Copy, Default)]
 pub struct NetworkPingState {
-    pub rtt: Option<Duration>,
+    /// Round-trip time when connection statistics are available.
+    pub round_trip_time: Option<Duration>,
 }
 
 impl Plugin for ClientNetworkPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(ClientPlugins {
-            tick_duration: Duration::from_secs_f64(1.0 / FIXED_TIMESTEP_HZ),
+            tick_duration: fixed_timestep_duration(),
         })
         .add_plugins(SharedNetworkPlugin)
         .init_resource::<ClientNetworkSettings>()
@@ -29,11 +36,8 @@ impl Plugin for ClientNetworkPlugin {
         .add_systems(Update, update_network_ping);
     }
 }
-
-/// Description:
 /// Spawns and connects the Lightyear client entity when auto-connect is enabled.
 ///
-/// Params:
 /// - `commands`: ECS command buffer used to spawn and connect the client entity.
 /// - `settings`: Client networking settings used for local and remote addresses.
 fn connect_to_server(mut commands: Commands, settings: Res<ClientNetworkSettings>) -> Result {
@@ -55,12 +59,13 @@ fn connect_to_server(mut commands: Commands, settings: Res<ClientNetworkSettings
             LocalAddr(settings.local_addr),
             PeerAddr(settings.server_addr),
             Link::new(None),
-            ReplicationReceiver::default(),
+            ReplicationReceiver,
             NetcodeClient::new(
                 auth,
                 NetcodeConfig {
                     client_timeout_secs: NETCODE_CLIENT_TIMEOUT_SECS,
-                    token_expire_secs: NETCODE_CLIENT_TIMEOUT_SECS * 4,
+                    token_expire_secs: NETCODE_CLIENT_TIMEOUT_SECS
+                        * NETCODE_TOKEN_EXPIRY_TIMEOUT_MULTIPLIER,
                     ..Default::default()
                 },
             )?,
@@ -76,31 +81,43 @@ fn connect_to_server(mut commands: Commands, settings: Res<ClientNetworkSettings
     Ok(())
 }
 
-fn update_network_ping(mut ping: ResMut<NetworkPingState>, clients: Query<&Link, With<Client>>) {
-    ping.rtt = clients
+fn update_network_ping(
+    mut network_ping: ResMut<NetworkPingState>,
+    client_links: Query<&Link, With<Client>>,
+) {
+    network_ping.round_trip_time = client_links
         .iter()
         .next()
         .map(|link| link.stats.rtt)
-        .filter(|rtt| !rtt.is_zero());
+        .filter(|round_trip_time| !round_trip_time.is_zero());
 }
 
-pub fn ping_millis(ping: &NetworkPingState) -> u32 {
-    ping.rtt
-        .map(|rtt| rtt.as_secs_f32() * 1000.0)
+/// Returns the latest round-trip time rounded to milliseconds.
+pub fn ping_millis(network_ping: &NetworkPingState) -> u32 {
+    network_ping
+        .round_trip_time
+        .map(|round_trip_time| round_trip_time.as_secs_f32() * MILLISECONDS_PER_SECOND)
         .unwrap_or(0.0)
         .round()
         .max(0.0) as u32
 }
 
-pub fn ping_text(ping: &NetworkPingState) -> String {
-    format!("{}ms", ping_millis(ping))
+/// Formats the latest round-trip time for the HUD.
+pub fn ping_text(network_ping: &NetworkPingState) -> String {
+    format!("{}ms", ping_millis(network_ping))
 }
 
-pub fn ping_color(ping: &NetworkPingState) -> Color {
-    match ping_millis(ping) {
-        0..=40 => Color::srgb_u8(0x2B, 0xB8, 0x61),
-        41..=80 => Color::srgb_u8(0xCC, 0x90, 0x1C),
-        81..=120 => Color::srgb_u8(0xCC, 0x39, 0x1C),
-        _ => Color::srgb_u8(0x99, 0x19, 0x00),
+/// Returns the HUD color associated with the latest round-trip time.
+pub fn ping_color(network_ping: &NetworkPingState) -> Color {
+    let milliseconds = ping_millis(network_ping);
+
+    if milliseconds <= EXCELLENT_PING_MAX_MILLIS {
+        Color::srgb_u8(0x2B, 0xB8, 0x61)
+    } else if milliseconds <= ACCEPTABLE_PING_MAX_MILLIS {
+        Color::srgb_u8(0xCC, 0x90, 0x1C)
+    } else if milliseconds <= HIGH_PING_MAX_MILLIS {
+        Color::srgb_u8(0xCC, 0x39, 0x1C)
+    } else {
+        Color::srgb_u8(0x99, 0x19, 0x00)
     }
 }

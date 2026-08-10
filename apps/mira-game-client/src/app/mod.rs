@@ -11,11 +11,8 @@ use plugins::ClientAppPlugins;
 use settings::{ClientLaunchGate, ClientLaunchSettings};
 
 use crate::network::ClientNetworkSettings;
-
-/// Description:
 /// Builds and runs the playable client Bevy app.
 ///
-/// Params:
 /// - `launch_settings`: Matchmaking launch parameters parsed at startup.
 /// - `network_settings`: Client networking settings parsed at startup.
 /// - `launch_gate`: Startup validation result used to decide whether gameplay may load.

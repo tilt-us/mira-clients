@@ -39,6 +39,14 @@ Override parameters when needed:
 just dev 5001 6001 1002 ignara dark window
 ```
 
+The local recipes use the checked-in prototype champion catalog by default, so
+they do not require the Java game service on port `8084`. To validate against
+that service instead, start it and override the catalog source:
+
+```bash
+MIRA_DEVELOPMENT_CHAMPION_CATALOG=api just dev
+```
+
 ## Split Server And Client
 
 Run only the server:

@@ -36,8 +36,9 @@ Combo damage is shared between client prediction and the server through `game-sh
 
 ## Development Dummy
 
-The development dummy is only spawned in development preview flows. It cannot die locally and is
-clamped to at least `1` HP. If it is not hit for `2.0` seconds, it heals back to full health.
+The development dummy is disabled when a development preview opens. Press `F9` to spawn it at the
+current player position or remove it during a development preview session. It cannot die locally
+and is clamped to at least `1` HP. If it is not hit for `2.0` seconds, it heals back to full health.
 
 The dummy health bar shows accumulated damage as `Total Dmg <amount>`. This label resets and hides
 after `10.0` seconds without new damage.

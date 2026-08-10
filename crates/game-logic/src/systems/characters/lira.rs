@@ -1,11 +1,16 @@
 use super::{
+    common::{
+        cursor_hit_on_map, horizontal_distance, positive_or, ready_timer_percent,
+        remaining_timer_seconds, send_ability_command, total_timer_seconds,
+    },
     ignara::{IgnaraESettings, IgnaraQSettings, IgnaraWSettings},
     sophia::{SophiaESettings, SophiaQSettings, SophiaWSettings},
     yuna::{YunaESettings, YunaQSettings, YunaWSettings},
 };
+use crate::systems::lane::{RemoteLaneUnit, is_local_spell_target};
 use crate::systems::{
     CurrentChampionVisual, TrainingDummy, TrainingDummyHealthChangeKind,
-    targeting::{clamp_world_point_to_map_top, ray_hit_map_top},
+    targeting::clamp_world_point_to_map_top,
 };
 use bevy::math::primitives::Sphere;
 use bevy::prelude::*;
@@ -17,8 +22,7 @@ use game_shared::game::{
     team::Team,
 };
 use game_shared::network::{
-    AbilitySlot, AbilityVisualEvent, AbilityVisualTuning, CastTarget, ChampionId, PlayerCommand,
-    ReliableCommandChannel, WorldPosition,
+    AbilitySlot, AbilityVisualEvent, AbilityVisualTuning, ChampionId, PlayerCommand,
 };
 use lightyear::prelude::*;
 
@@ -49,11 +53,8 @@ const E_MISSILE_CHASE_SPEED: f32 = 13.0;
 const E_MISSILE_RADIUS: f32 = 0.24;
 const E_MISSILE_DAMAGE: f32 = 18.0;
 const REMOTE_PLAYER_VISUAL_HIT_RADIUS: f32 = 0.9;
-
-/// Description:
 /// Stores visual and gameplay tuning for Lira's Q skillshot preview and projectile.
 ///
-/// Fields:
 /// - `range`: Maximum projectile travel distance in world units.
 /// - `width`: Skillshot width used for preview and hit radius.
 /// - `cooldown_seconds`: Local prediction cooldown duration.
@@ -91,13 +92,10 @@ pub(in crate::systems) struct LiraQSettings {
 }
 
 impl LiraQSettings {
-    /// Description:
     /// Builds the current Q preview color from the configured HSL values.
     ///
-    /// Params:
     /// - `self`: Q settings containing color channels.
     ///
-    /// Return:
     /// - The configured Q preview color.
     pub(in crate::systems) fn color(self) -> Color {
         Color::hsla(self.hue, self.saturation, self.lightness, self.alpha)
@@ -127,11 +125,8 @@ impl Default for LiraQSettings {
         }
     }
 }
-
-/// Description:
 /// Stores visual and gameplay tuning for Lira's W arcing area spell.
 ///
-/// Fields:
 /// - `range`: Maximum cast range in world units.
 /// - `aoe_radius`: Radius of the target area and explosion.
 /// - `cooldown_seconds`: Local prediction cooldown duration.
@@ -157,13 +152,10 @@ pub(in crate::systems) struct LiraWSettings {
 }
 
 impl LiraWSettings {
-    /// Description:
     /// Builds the current W preview color using the same purple hue family as Q.
     ///
-    /// Params:
     /// - `self`: W settings containing preview opacity.
     ///
-    /// Return:
     /// - The configured W preview color.
     pub(in crate::systems) fn color(self) -> Color {
         Color::hsla(286.0, 0.92, 0.62, self.alpha)
@@ -187,11 +179,8 @@ impl Default for LiraWSettings {
         }
     }
 }
-
-/// Description:
 /// Stores local prediction and visual tuning for Lira's E contact missiles.
 ///
-/// Fields:
 /// - `cooldown_seconds`: Local prediction cooldown duration.
 /// - `missile_count`: Number of missile visuals to spawn.
 /// - `lifetime_seconds`: Local prediction missile lifetime.
@@ -235,13 +224,10 @@ impl Default for LiraESettings {
 }
 
 impl LiraESettings {
-    /// Description:
     /// Builds E visual settings from server-authoritative ability visual tuning.
     ///
-    /// Params:
     /// - `visual`: Visual tuning attached to an accepted server ability cast.
     ///
-    /// Returns:
     /// - E settings suitable for local visual-only missile rendering.
     pub(in crate::systems) fn from_visual(visual: AbilityVisualTuning) -> Self {
         let fallback = Self::default();
@@ -266,21 +252,14 @@ impl LiraESettings {
         }
     }
 }
-
-/// Description:
 /// Marks the rectangular body mesh used by Lira's Q skillshot preview.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(in crate::systems) struct LiraQIndicatorBody;
-
-/// Description:
 /// Marks the circular tip mesh used by Lira's Q skillshot preview.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(in crate::systems) struct LiraQIndicatorTip;
-
-/// Description:
 /// Stores runtime state for an active Lira Q projectile.
 ///
-/// Fields:
 /// - `start`: Projectile start position.
 /// - `end`: Projectile end position.
 /// - `timer`: Travel timer for interpolation.
@@ -302,11 +281,8 @@ pub(in crate::systems) struct LiraQProjectile {
     hit_targets: Vec<Entity>,
     can_apply_damage: bool,
 }
-
-/// Description:
 /// Stores runtime state for the Lira Q impact explosion.
 ///
-/// Fields:
 /// - `timer`: Lifetime timer for the explosion visual and damage window.
 /// - `radius`: Explosion damage radius.
 /// - `damage`: Damage applied by the explosion.
@@ -320,21 +296,14 @@ pub(in crate::systems) struct LiraQExplosion {
     did_apply_damage: bool,
     can_apply_damage: bool,
 }
-
-/// Description:
 /// Marks the range preview mesh used while aiming Lira's W spell.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(in crate::systems) struct LiraWRangeIndicator;
-
-/// Description:
 /// Marks the cursor-following area preview mesh used while aiming Lira's W spell.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(in crate::systems) struct LiraWAoeIndicator;
-
-/// Description:
 /// Stores runtime state for an active Lira W arcing projectile.
 ///
-/// Fields:
 /// - `start`: Projectile start position.
 /// - `end`: Projectile landing position.
 /// - `timer`: Travel timer for interpolation.
@@ -352,11 +321,8 @@ pub(in crate::systems) struct LiraWProjectile {
     damage: f32,
     can_apply_damage: bool,
 }
-
-/// Description:
 /// Stores runtime state for the Lira W landing explosion.
 ///
-/// Fields:
 /// - `timer`: Lifetime timer for the explosion visual and damage window.
 /// - `radius`: Explosion damage radius.
 /// - `damage`: Damage applied by the explosion.
@@ -370,11 +336,8 @@ pub(in crate::systems) struct LiraWExplosion {
     did_apply_damage: bool,
     can_apply_damage: bool,
 }
-
-/// Description:
 /// Stores runtime state for one Lira E contact missile.
 ///
-/// Fields:
 /// - `phase`: Initial orbit angle around Lira.
 /// - `lifetime`: Maximum active lifetime before despawn.
 /// - `mode`: Current missile behavior mode.
@@ -392,11 +355,8 @@ pub(in crate::systems) struct LiraEMissile {
     settings: LiraESettings,
     can_apply_damage: bool,
 }
-
-/// Description:
 /// Defines the current behavior mode of a Lira E contact missile.
 ///
-/// Fields:
 /// - `Orbiting`: Missile is orbiting Lira and searching for a target.
 /// - `Chasing`: Missile is moving toward the stored target entity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -404,51 +364,36 @@ enum LiraEMissileMode {
     Orbiting,
     Chasing(Entity),
 }
-
-/// Description:
 /// Stores cooldown state for Lira's Q skillshot.
 ///
-/// Fields:
 /// - `cooldown`: Timer that gates Q casts.
 #[derive(Resource, Debug, Clone)]
 pub(in crate::systems) struct LiraQCastState {
     cooldown: Timer,
 }
-
-/// Description:
 /// Stores aim-preview state for Lira's Q skillshot.
 ///
-/// Fields:
 /// - `suppress_until_release`: Whether the preview should stay hidden until Q is released.
 #[derive(Resource, Debug, Clone, Copy, Default)]
 pub(in crate::systems) struct LiraQIndicatorState {
     suppress_until_release: bool,
 }
-
-/// Description:
 /// Stores cooldown state for Lira's W arcing area spell.
 ///
-/// Fields:
 /// - `cooldown`: Timer that gates W casts.
 #[derive(Resource, Debug, Clone)]
 pub(in crate::systems) struct LiraWCastState {
     cooldown: Timer,
 }
-
-/// Description:
 /// Stores aim-preview state for Lira's W arcing area spell.
 ///
-/// Fields:
 /// - `suppress_until_release`: Whether the preview should stay hidden until W is released.
 #[derive(Resource, Debug, Clone, Copy, Default)]
 pub(in crate::systems) struct LiraWIndicatorState {
     suppress_until_release: bool,
 }
-
-/// Description:
 /// Stores cooldown state for Lira's E contact missiles.
 ///
-/// Fields:
 /// - `cooldown`: Timer that gates E casts.
 #[derive(Resource, Debug, Clone)]
 pub(in crate::systems) struct LiraECastState {
@@ -477,51 +422,36 @@ impl Default for LiraECastState {
 }
 
 impl LiraQCastState {
-    /// Description:
     /// Creates a ready Q cooldown state using the configured duration.
     ///
-    /// Params:
     /// - `cooldown_seconds`: Cooldown duration in seconds.
     ///
-    /// Returns:
     /// - Ready cooldown state for local prediction.
     pub(in crate::systems) fn ready(cooldown_seconds: f32) -> Self {
         let mut cooldown = Timer::from_seconds(cooldown_seconds.max(f32::EPSILON), TimerMode::Once);
         cooldown.set_elapsed(cooldown.duration());
         Self { cooldown }
     }
-
-    /// Description:
     /// Returns the remaining Q cooldown duration.
     ///
-    /// Params:
     /// - `self`: Q cast state to inspect.
     ///
-    /// Returns:
     /// - Remaining cooldown in seconds.
     pub(in crate::systems) fn remaining_seconds(&self) -> f32 {
         remaining_timer_seconds(&self.cooldown)
     }
-
-    /// Description:
     /// Returns the total Q cooldown duration.
     ///
-    /// Params:
     /// - `self`: Q cast state to inspect.
     ///
-    /// Returns:
     /// - Total cooldown duration in seconds.
     pub(in crate::systems) fn total_seconds(&self) -> f32 {
         total_timer_seconds(&self.cooldown)
     }
-
-    /// Description:
     /// Returns how ready Q is as a percentage.
     ///
-    /// Params:
     /// - `self`: Q cast state to inspect.
     ///
-    /// Returns:
     /// - Readiness percentage from `0.0` to `100.0`.
     pub(in crate::systems) fn ready_percent(&self) -> f32 {
         ready_timer_percent(&self.cooldown)
@@ -529,51 +459,36 @@ impl LiraQCastState {
 }
 
 impl LiraWCastState {
-    /// Description:
     /// Creates a ready W cooldown state using the configured duration.
     ///
-    /// Params:
     /// - `cooldown_seconds`: Cooldown duration in seconds.
     ///
-    /// Returns:
     /// - Ready cooldown state for local prediction.
     pub(in crate::systems) fn ready(cooldown_seconds: f32) -> Self {
         let mut cooldown = Timer::from_seconds(cooldown_seconds.max(f32::EPSILON), TimerMode::Once);
         cooldown.set_elapsed(cooldown.duration());
         Self { cooldown }
     }
-
-    /// Description:
     /// Returns the remaining W cooldown duration.
     ///
-    /// Params:
     /// - `self`: W cast state to inspect.
     ///
-    /// Returns:
     /// - Remaining cooldown in seconds.
     pub(in crate::systems) fn remaining_seconds(&self) -> f32 {
         remaining_timer_seconds(&self.cooldown)
     }
-
-    /// Description:
     /// Returns the total W cooldown duration.
     ///
-    /// Params:
     /// - `self`: W cast state to inspect.
     ///
-    /// Returns:
     /// - Total cooldown duration in seconds.
     pub(in crate::systems) fn total_seconds(&self) -> f32 {
         total_timer_seconds(&self.cooldown)
     }
-
-    /// Description:
     /// Returns how ready W is as a percentage.
     ///
-    /// Params:
     /// - `self`: W cast state to inspect.
     ///
-    /// Returns:
     /// - Readiness percentage from `0.0` to `100.0`.
     pub(in crate::systems) fn ready_percent(&self) -> f32 {
         ready_timer_percent(&self.cooldown)
@@ -581,98 +496,43 @@ impl LiraWCastState {
 }
 
 impl LiraECastState {
-    /// Description:
     /// Creates a ready E cooldown state using the configured duration.
     ///
-    /// Params:
     /// - `cooldown_seconds`: Cooldown duration in seconds.
     ///
-    /// Returns:
     /// - Ready cooldown state for local prediction.
     pub(in crate::systems) fn ready(cooldown_seconds: f32) -> Self {
         let mut cooldown = Timer::from_seconds(cooldown_seconds.max(f32::EPSILON), TimerMode::Once);
         cooldown.set_elapsed(cooldown.duration());
         Self { cooldown }
     }
-
-    /// Description:
     /// Returns the remaining E cooldown duration.
     ///
-    /// Params:
     /// - `self`: E cast state to inspect.
     ///
-    /// Returns:
     /// - Remaining cooldown in seconds.
     pub(in crate::systems) fn remaining_seconds(&self) -> f32 {
         remaining_timer_seconds(&self.cooldown)
     }
-
-    /// Description:
     /// Returns the total E cooldown duration.
     ///
-    /// Params:
     /// - `self`: E cast state to inspect.
     ///
-    /// Returns:
     /// - Total cooldown duration in seconds.
     pub(in crate::systems) fn total_seconds(&self) -> f32 {
         total_timer_seconds(&self.cooldown)
     }
-
-    /// Description:
     /// Returns how ready E is as a percentage.
     ///
-    /// Params:
     /// - `self`: E cast state to inspect.
     ///
-    /// Returns:
     /// - Readiness percentage from `0.0` to `100.0`.
     pub(in crate::systems) fn ready_percent(&self) -> f32 {
         ready_timer_percent(&self.cooldown)
     }
 }
-
-/// Description:
-/// Returns the positive duration of a cooldown timer.
-///
-/// Params:
-/// - `timer`: Timer whose duration should be inspected.
-///
-/// Returns:
-/// - Timer duration in seconds.
-fn total_timer_seconds(timer: &Timer) -> f32 {
-    timer.duration().as_secs_f32().max(f32::EPSILON)
-}
-
-/// Description:
-/// Returns the remaining time of a cooldown timer.
-///
-/// Params:
-/// - `timer`: Timer whose remaining time should be inspected.
-///
-/// Returns:
-/// - Remaining timer duration in seconds.
-fn remaining_timer_seconds(timer: &Timer) -> f32 {
-    (total_timer_seconds(timer) - timer.elapsed().as_secs_f32()).max(0.0)
-}
-
-/// Description:
-/// Returns the filled readiness percentage of a cooldown timer.
-///
-/// Params:
-/// - `timer`: Timer whose ready percentage should be inspected.
-///
-/// Returns:
-/// - Readiness percentage from `0.0` to `100.0`.
-fn ready_timer_percent(timer: &Timer) -> f32 {
-    let total = total_timer_seconds(timer);
-    ((total - remaining_timer_seconds(timer)) / total * 100.0).clamp(0.0, 100.0)
-}
-
-/// Description:
 /// Adjusts Lira's Q preview hue from bracket key input.
 ///
-/// Params:
 /// - `keyboard`: Keyboard input used to read bracket key state.
 /// - `settings`: Mutable Q settings containing the preview hue.
 pub(in crate::systems) fn adjust_q_skillshot_indicator_color(
@@ -686,11 +546,8 @@ pub(in crate::systems) fn adjust_q_skillshot_indicator_color(
         settings.hue = (settings.hue + 90.0 / 60.0).rem_euclid(360.0);
     }
 }
-
-/// Description:
 /// Casts Lira's Q skillshot when Q is held and the left mouse button is pressed.
 ///
-/// Params:
 /// - `time`: Frame timing used to advance the Q cooldown.
 /// - `mouse_buttons`: Mouse input used to detect the cast click.
 /// - `keyboard`: Keyboard input used to require Q aim mode.
@@ -734,7 +591,7 @@ pub(in crate::systems) fn cast_q_skillshot_on_left_click(
     let Ok((player_transform, health, visual)) = player_query.single() else {
         return;
     };
-    if health.current == 0 || visual.champion != Some(ChampionId(6606)) {
+    if health.current == 0 || visual.champion != Some(ChampionId::LIRA) {
         return;
     }
     let Ok((map_transform, map_ground)) = map_query.single() else {
@@ -781,7 +638,7 @@ pub(in crate::systems) fn cast_q_skillshot_on_left_click(
 
     send_ability_command(
         &mut command_senders,
-        ChampionId(6606),
+        ChampionId::LIRA,
         AbilitySlot::Q,
         cursor_hit,
     );
@@ -789,11 +646,8 @@ pub(in crate::systems) fn cast_q_skillshot_on_left_click(
     cast_state.cooldown.reset();
     indicator_state.suppress_until_release = true;
 }
-
-/// Description:
 /// Moves active Lira Q projectiles and applies one pass-through hit per target.
 ///
-/// Params:
 /// - `time`: Frame timing used to advance projectile travel.
 /// - `settings`: Q settings used to size the impact explosion.
 /// - `commands`: ECS command buffer used to despawn projectiles and spawn explosions.
@@ -808,7 +662,12 @@ pub(in crate::systems) fn update_q_skillshot_projectiles(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut dummy_query: Query<
-        (Entity, &mut TrainingDummy, &Transform),
+        (
+            Entity,
+            &mut TrainingDummy,
+            &Transform,
+            Option<&RemoteLaneUnit>,
+        ),
         (Without<LiraQProjectile>, Without<LiraQExplosion>),
     >,
     mut projectile_query: Query<
@@ -837,8 +696,8 @@ pub(in crate::systems) fn update_q_skillshot_projectiles(
         transform.scale = Vec3::splat(1.0 + (progress * 12.0).sin().abs() * 0.1);
 
         if projectile.can_apply_damage {
-            for (dummy_entity, mut dummy, dummy_transform) in &mut dummy_query {
-                if !dummy.local_damage_enabled {
+            for (dummy_entity, mut dummy, dummy_transform, lane_unit) in &mut dummy_query {
+                if !is_local_spell_target(lane_unit) || !dummy.local_damage_enabled {
                     continue;
                 }
                 if projectile.hit_targets.contains(&dummy_entity) {
@@ -887,11 +746,8 @@ pub(in crate::systems) fn update_q_skillshot_projectiles(
         }
     }
 }
-
-/// Description:
 /// Updates Lira Q explosion visuals and applies explosion damage once.
 ///
-/// Params:
 /// - `time`: Frame timing used to advance explosion lifetime.
 /// - `commands`: ECS command buffer used to despawn completed explosions.
 /// - `materials`: Material assets used to fade explosion visuals.
@@ -902,7 +758,7 @@ pub(in crate::systems) fn update_q_skillshot_explosions(
     mut commands: Commands,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut dummy_query: Query<
-        (&mut TrainingDummy, &Transform),
+        (&mut TrainingDummy, &Transform, Option<&RemoteLaneUnit>),
         (Without<LiraQProjectile>, Without<LiraQExplosion>),
     >,
     mut explosion_query: Query<
@@ -924,8 +780,8 @@ pub(in crate::systems) fn update_q_skillshot_explosions(
         transform.scale = Vec3::splat(1.0 + progress * 2.1);
 
         if explosion.can_apply_damage && !explosion.did_apply_damage {
-            for (mut dummy, dummy_transform) in &mut dummy_query {
-                if !dummy.local_damage_enabled {
+            for (mut dummy, dummy_transform, lane_unit) in &mut dummy_query {
+                if !is_local_spell_target(lane_unit) || !dummy.local_damage_enabled {
                     continue;
                 }
                 let distance = transform.translation.distance(dummy_transform.translation);
@@ -943,7 +799,7 @@ pub(in crate::systems) fn update_q_skillshot_explosions(
 
         if let Some(mut material) = materials.get_mut(&explosion_material.0) {
             material.base_color = material.base_color.with_alpha(1.0 - progress);
-            material.emissive = material.emissive * (1.0 - progress * 0.35);
+            material.emissive *= 1.0 - progress * 0.35;
         }
 
         if explosion.timer.is_finished() {
@@ -951,11 +807,8 @@ pub(in crate::systems) fn update_q_skillshot_explosions(
         }
     }
 }
-
-/// Description:
 /// Updates Lira's Q skillshot preview position, scale, visibility, and color.
 ///
-/// Params:
 /// - `keyboard`: Keyboard input used to detect Q aim mode.
 /// - `settings`: Q settings used to size and color the preview.
 /// - `indicator_state`: Q preview suppression state.
@@ -1041,7 +894,7 @@ pub(in crate::systems) fn update_q_skillshot_indicator(
         *tip_visibility = Visibility::Hidden;
         return;
     };
-    if visual.champion != Some(ChampionId(6606)) {
+    if visual.champion != Some(ChampionId::LIRA) {
         *body_visibility = Visibility::Hidden;
         *tip_visibility = Visibility::Hidden;
         return;
@@ -1099,11 +952,8 @@ pub(in crate::systems) fn update_q_skillshot_indicator(
     *body_visibility = Visibility::Visible;
     *tip_visibility = Visibility::Visible;
 }
-
-/// Description:
 /// Casts Lira's W arcing area spell when W is held and the left mouse button is pressed.
 ///
-/// Params:
 /// - `time`: Frame timing used to advance the W cooldown.
 /// - `mouse_buttons`: Mouse input used to detect the cast click.
 /// - `keyboard`: Keyboard input used to require W aim mode.
@@ -1147,7 +997,7 @@ pub(in crate::systems) fn cast_w_arc_on_left_click(
     let Ok((player_transform, health, visual)) = player_query.single() else {
         return;
     };
-    if health.current == 0 || visual.champion != Some(ChampionId(6606)) {
+    if health.current == 0 || visual.champion != Some(ChampionId::LIRA) {
         return;
     }
     let Ok((map_transform, map_ground)) = map_query.single() else {
@@ -1184,7 +1034,7 @@ pub(in crate::systems) fn cast_w_arc_on_left_click(
 
     send_ability_command(
         &mut command_senders,
-        ChampionId(6606),
+        ChampionId::LIRA,
         AbilitySlot::W,
         Some(target_ground),
     );
@@ -1192,11 +1042,8 @@ pub(in crate::systems) fn cast_w_arc_on_left_click(
     cast_state.cooldown.reset();
     indicator_state.suppress_until_release = true;
 }
-
-/// Description:
 /// Moves active Lira W projectiles along an arc and spawns landing explosions.
 ///
-/// Params:
 /// - `time`: Frame timing used to advance projectile travel.
 /// - `commands`: ECS command buffer used to despawn projectiles and spawn explosions.
 /// - `meshes`: Mesh assets used to spawn explosion visuals.
@@ -1240,11 +1087,8 @@ pub(in crate::systems) fn update_w_arc_projectiles(
         }
     }
 }
-
-/// Description:
 /// Updates Lira W explosion visuals and applies area damage once.
 ///
-/// Params:
 /// - `time`: Frame timing used to advance explosion lifetime.
 /// - `commands`: ECS command buffer used to despawn completed explosions.
 /// - `materials`: Material assets used to fade explosion visuals.
@@ -1254,7 +1098,10 @@ pub(in crate::systems) fn update_w_arc_explosions(
     time: Res<Time>,
     mut commands: Commands,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    mut dummy_query: Query<(&mut TrainingDummy, &Transform), Without<LiraWExplosion>>,
+    mut dummy_query: Query<
+        (&mut TrainingDummy, &Transform, Option<&RemoteLaneUnit>),
+        Without<LiraWExplosion>,
+    >,
     mut explosion_query: Query<
         (
             Entity,
@@ -1274,8 +1121,8 @@ pub(in crate::systems) fn update_w_arc_explosions(
         transform.scale = Vec3::splat(1.0 + progress * 2.6);
 
         if explosion.can_apply_damage && !explosion.did_apply_damage {
-            for (mut dummy, dummy_transform) in &mut dummy_query {
-                if !dummy.local_damage_enabled {
+            for (mut dummy, dummy_transform, lane_unit) in &mut dummy_query {
+                if !is_local_spell_target(lane_unit) || !dummy.local_damage_enabled {
                     continue;
                 }
                 let distance =
@@ -1294,7 +1141,7 @@ pub(in crate::systems) fn update_w_arc_explosions(
 
         if let Some(mut material) = materials.get_mut(&explosion_material.0) {
             material.base_color = material.base_color.with_alpha(1.0 - progress);
-            material.emissive = material.emissive * (1.0 - progress * 0.45);
+            material.emissive *= 1.0 - progress * 0.45;
         }
 
         if explosion.timer.is_finished() {
@@ -1302,11 +1149,8 @@ pub(in crate::systems) fn update_w_arc_explosions(
         }
     }
 }
-
-/// Description:
 /// Updates Lira's W range and area previews while W aim mode is active.
 ///
-/// Params:
 /// - `keyboard`: Keyboard input used to detect W aim mode.
 /// - `settings`: W settings used to size and color the previews.
 /// - `indicator_state`: W preview suppression state.
@@ -1392,7 +1236,7 @@ pub(in crate::systems) fn update_w_arc_indicator(
         *aoe_visibility = Visibility::Hidden;
         return;
     };
-    if visual.champion != Some(ChampionId(6606)) {
+    if visual.champion != Some(ChampionId::LIRA) {
         *range_visibility = Visibility::Hidden;
         *aoe_visibility = Visibility::Hidden;
         return;
@@ -1426,11 +1270,8 @@ pub(in crate::systems) fn update_w_arc_indicator(
     *range_visibility = Visibility::Visible;
     *aoe_visibility = Visibility::Visible;
 }
-
-/// Description:
 /// Spawns Lira's E contact missiles around the controlled player.
 ///
-/// Params:
 /// - `time`: Frame timing used to advance the E cooldown.
 /// - `keyboard`: Keyboard input used to detect E casts.
 /// - `settings`: E settings used for local prediction visuals.
@@ -1463,7 +1304,7 @@ pub(in crate::systems) fn cast_e_contact_missiles(
     let Ok((player_entity, player_transform, health, visual)) = player_query.single() else {
         return;
     };
-    if health.current == 0 || visual.champion != Some(ChampionId(6606)) {
+    if health.current == 0 || visual.champion != Some(ChampionId::LIRA) {
         return;
     }
 
@@ -1477,15 +1318,12 @@ pub(in crate::systems) fn cast_e_contact_missiles(
         true,
     );
 
-    send_ability_command(&mut command_senders, ChampionId(6606), AbilitySlot::E, None);
+    send_ability_command(&mut command_senders, ChampionId::LIRA, AbilitySlot::E, None);
 
     cast_state.cooldown.reset();
 }
-
-/// Description:
 /// Updates Lira E missiles, orbiting around Lira until they find and hit targets.
 ///
-/// Params:
 /// - `time`: Frame timing used to advance missile lifetime and movement.
 /// - `commands`: ECS command buffer used to despawn expired or spent missiles.
 /// - `player_query`: Controlled player transform used as the orbit origin.
@@ -1502,8 +1340,8 @@ pub(in crate::systems) fn update_e_contact_missiles(
     transform_query: Query<&Transform, Without<LiraEMissile>>,
     team_query: Query<&Team, Without<LiraEMissile>>,
     mut dummy_queries: ParamSet<(
-        Query<(Entity, &TrainingDummy, &Transform), Without<LiraEMissile>>,
-        Query<(&mut TrainingDummy, &Transform), Without<LiraEMissile>>,
+        Query<(Entity, &TrainingDummy, &Transform, Option<&RemoteLaneUnit>), Without<LiraEMissile>>,
+        Query<(&mut TrainingDummy, &Transform, Option<&RemoteLaneUnit>), Without<LiraEMissile>>,
     )>,
     mut missile_query: Query<
         (Entity, &mut LiraEMissile, &mut Transform),
@@ -1589,10 +1427,15 @@ pub(in crate::systems) fn update_e_contact_missiles(
             LiraEMissileMode::Chasing(target) => {
                 if missile.can_apply_damage {
                     let mut dummies = dummy_queries.p1();
-                    let Ok((mut dummy, dummy_transform)) = dummies.get_mut(target) else {
+                    let Ok((mut dummy, dummy_transform, lane_unit)) = dummies.get_mut(target)
+                    else {
                         commands.entity(entity).despawn();
                         continue;
                     };
+                    if !is_local_spell_target(lane_unit) {
+                        commands.entity(entity).despawn();
+                        continue;
+                    }
 
                     let target_position = dummy_transform.translation + Vec3::Y * 0.7;
                     let to_target = target_position - missile_transform.translation;
@@ -1647,11 +1490,8 @@ pub(in crate::systems) fn update_e_contact_missiles(
         }
     }
 }
-
-/// Description:
 /// Finds the nearest valid visual-only target for a Lira E missile.
 ///
-/// Params:
 /// - `dummies`: Enemy target query used for remote player stand-ins.
 /// - `local_player`: Optional local player target.
 /// - `owner`: Optional owner entity to exclude from visual targeting.
@@ -1659,10 +1499,12 @@ pub(in crate::systems) fn update_e_contact_missiles(
 /// - `missile_position`: Current missile position used to pick the nearest target.
 /// - `search_radius`: Missile search radius in world units.
 ///
-/// Returns:
 /// - Entity of the nearest visual target inside E search range.
 fn find_e_visual_target(
-    dummies: &Query<(Entity, &TrainingDummy, &Transform), Without<LiraEMissile>>,
+    dummies: &Query<
+        (Entity, &TrainingDummy, &Transform, Option<&RemoteLaneUnit>),
+        Without<LiraEMissile>,
+    >,
     local_player: Option<(Entity, &Transform, &Team)>,
     owner_team: Option<&Team>,
     owner: Option<Entity>,
@@ -1672,17 +1514,18 @@ fn find_e_visual_target(
 ) -> Option<Entity> {
     let dummy_target = dummies
         .iter()
-        .filter(|(target_entity, dummy, dummy_transform)| {
+        .filter(|(target_entity, dummy, dummy_transform, lane_unit)| {
             Some(*target_entity) != owner
                 && dummy.health > 0.0
+                && is_local_spell_target(*lane_unit)
                 && horizontal_distance(owner_position, dummy_transform.translation) <= search_radius
         })
-        .min_by(|(_, _, left), (_, _, right)| {
+        .min_by(|(_, _, left, _), (_, _, right, _)| {
             horizontal_distance(missile_position, left.translation)
                 .partial_cmp(&horizontal_distance(missile_position, right.translation))
                 .unwrap_or(std::cmp::Ordering::Equal)
         })
-        .map(|(target_entity, _, transform)| {
+        .map(|(target_entity, _, transform, _)| {
             (
                 target_entity,
                 horizontal_distance(missile_position, transform.translation),
@@ -1716,43 +1559,40 @@ fn find_e_visual_target(
         (None, None) => None,
     }
 }
-
-/// Description:
 /// Finds the nearest valid damage target for a local Lira E missile.
 ///
-/// Params:
 /// - `dummies`: Enemy target query used for damage-capable missiles.
 /// - `owner_position`: Current owner position used for E search range.
 /// - `missile_position`: Current missile position used to pick the nearest target.
 /// - `search_radius`: Missile search radius in world units.
 ///
-/// Returns:
 /// - Entity of the nearest target inside E search range.
 fn find_e_damage_target(
-    dummies: &Query<(Entity, &TrainingDummy, &Transform), Without<LiraEMissile>>,
+    dummies: &Query<
+        (Entity, &TrainingDummy, &Transform, Option<&RemoteLaneUnit>),
+        Without<LiraEMissile>,
+    >,
     owner_position: Vec3,
     missile_position: Vec3,
     search_radius: f32,
 ) -> Option<Entity> {
     dummies
         .iter()
-        .filter(|(_, dummy, dummy_transform)| {
+        .filter(|(_, dummy, dummy_transform, lane_unit)| {
             dummy.local_damage_enabled
                 && dummy.health > 0.0
+                && is_local_spell_target(*lane_unit)
                 && horizontal_distance(owner_position, dummy_transform.translation) <= search_radius
         })
-        .min_by(|(_, _, left), (_, _, right)| {
+        .min_by(|(_, _, left, _), (_, _, right, _)| {
             horizontal_distance(missile_position, left.translation)
                 .partial_cmp(&horizontal_distance(missile_position, right.translation))
                 .unwrap_or(std::cmp::Ordering::Equal)
         })
-        .map(|(target_entity, _, _)| target_entity)
+        .map(|(target_entity, _, _, _)| target_entity)
 }
-
-/// Description:
 /// Moves one Lira E missile toward its current target position.
 ///
-/// Params:
 /// - `time`: Frame timing used for frame-rate independent movement.
 /// - `missile_transform`: Missile transform to move.
 /// - `target_position`: World-space target position to chase.
@@ -1771,15 +1611,12 @@ fn move_e_missile_toward_target(
         missile_transform.translation += to_target.normalize() * step.min(distance);
     }
 }
-
-/// Description:
 /// Receives remote ability visual events and spawns local visual-only spell entities.
 ///
-/// Params:
 /// - `receivers`: Lightyear receivers containing remote ability visuals from the server.
 /// - `q_settings`: Q settings used to size remote Q visuals.
 /// - `w_settings`: W settings used to size remote W visuals.
-/// - `remote_players`: Remote player entities used to attach E orbit visuals.
+/// - `target_queries`: Remote-player and full Sophia spell-target queries used by visuals.
 /// - `meshes`: Mesh assets used to spawn spell visuals.
 /// - `materials`: Material assets used to spawn spell visuals.
 /// - `commands`: ECS command buffer used to spawn spell visuals.
@@ -1796,14 +1633,25 @@ pub(in crate::systems) fn receive_remote_ability_visuals(
     sophia_q_settings: Res<SophiaQSettings>,
     sophia_w_settings: Res<SophiaWSettings>,
     sophia_e_settings: Res<SophiaESettings>,
-    remote_players: Query<(Entity, &Player, &Transform), Without<PlayerControlled>>,
+    mut target_queries: ParamSet<(
+        Query<(Entity, &Player, &Transform), Without<PlayerControlled>>,
+        Query<(
+            Entity,
+            Option<&Player>,
+            &Team,
+            &Health,
+            &Transform,
+            Option<&RemoteLaneUnit>,
+        )>,
+    )>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut commands: Commands,
 ) {
     for mut receiver in &mut receivers {
         for event in receiver.receive() {
-            if event.champion == ChampionId(6607) {
+            if event.champion == ChampionId::IGNARA {
+                let remote_players = target_queries.p0();
                 super::ignara::spawn_remote_ability_visual(
                     event,
                     &ignara_q_settings,
@@ -1817,7 +1665,8 @@ pub(in crate::systems) fn receive_remote_ability_visuals(
                 continue;
             }
 
-            if event.champion == ChampionId(6608) {
+            if event.champion == ChampionId::YUNA {
+                let remote_players = target_queries.p0();
                 super::yuna::spawn_remote_ability_visual(
                     event,
                     &yuna_q_settings,
@@ -1831,13 +1680,14 @@ pub(in crate::systems) fn receive_remote_ability_visuals(
                 continue;
             }
 
-            if event.champion == ChampionId(6609) {
+            if event.champion == ChampionId::SOPHIA {
+                let sophia_targets = target_queries.p1();
                 super::sophia::spawn_remote_ability_visual(
                     event,
                     &sophia_q_settings,
                     &sophia_w_settings,
                     &sophia_e_settings,
-                    &remote_players,
+                    &sophia_targets,
                     &mut meshes,
                     &mut materials,
                     &mut commands,
@@ -1845,7 +1695,7 @@ pub(in crate::systems) fn receive_remote_ability_visuals(
                 continue;
             }
 
-            if event.champion != ChampionId(6606) {
+            if event.champion != ChampionId::LIRA {
                 continue;
             }
             match event.slot {
@@ -1887,6 +1737,7 @@ pub(in crate::systems) fn receive_remote_ability_visuals(
                     );
                 }
                 AbilitySlot::E => {
+                    let remote_players = target_queries.p0();
                     let owner = remote_players
                         .iter()
                         .find(|(_, player, _)| player.id.0 == event.caster_player_id)
@@ -1906,11 +1757,8 @@ pub(in crate::systems) fn receive_remote_ability_visuals(
         }
     }
 }
-
-/// Description:
 /// Spawns a Lira Q projectile visual.
 ///
-/// Params:
 /// - `commands`: ECS command buffer used to spawn the projectile.
 /// - `meshes`: Mesh assets used for the projectile sphere.
 /// - `materials`: Material assets used for the projectile material.
@@ -1955,11 +1803,8 @@ fn spawn_q_projectile(
         Transform::from_translation(start),
     ));
 }
-
-/// Description:
 /// Spawns a Lira W arcing projectile visual.
 ///
-/// Params:
 /// - `commands`: ECS command buffer used to spawn the projectile.
 /// - `meshes`: Mesh assets used for the projectile sphere.
 /// - `materials`: Material assets used for the projectile material.
@@ -1998,11 +1843,8 @@ fn spawn_w_projectile(
         Transform::from_translation(start),
     ));
 }
-
-/// Description:
 /// Spawns Lira E missile visuals around an owner position.
 ///
-/// Params:
 /// - `commands`: ECS command buffer used to spawn missiles.
 /// - `meshes`: Mesh assets used for missile spheres.
 /// - `materials`: Material assets used for missile materials.
@@ -2046,104 +1888,23 @@ fn spawn_e_missiles(
         ));
     }
 }
-
-/// Description:
 /// Returns server-provided visual travel seconds with a local fallback.
 ///
-/// Params:
 /// - `visual`: Visual tuning attached to an accepted server ability cast.
 /// - `fallback`: Local fallback travel duration.
 ///
-/// Returns:
 /// - Positive travel duration used by local rendering.
 fn visual_travel_seconds(visual: AbilityVisualTuning, fallback: f32) -> f32 {
     positive_or(visual.travel_seconds, fallback)
 }
-
-/// Description:
-/// Returns a positive value or a fallback when the candidate is invalid.
-///
-/// Params:
-/// - `candidate`: Candidate value read from content or network tuning.
-/// - `fallback`: Fallback value used when the candidate is not positive.
-///
-/// Returns:
-/// - Candidate value when finite and positive, otherwise the fallback.
-fn positive_or(candidate: f32, fallback: f32) -> f32 {
-    if candidate.is_finite() && candidate > 0.0 {
-        candidate
-    } else {
-        fallback
-    }
-}
-
-/// Description:
-/// Sends one authoritative ability command to the server.
-///
-/// Params:
-/// - `senders`: Lightyear message senders attached to the local client link.
-/// - `slot`: Ability slot requested by the client.
-/// - `target_position`: Optional world-space target position for the ability.
-fn send_ability_command(
-    senders: &mut Query<&mut MessageSender<PlayerCommand>, With<Client>>,
-    champion: ChampionId,
-    slot: AbilitySlot,
-    target_position: Option<Vec3>,
-) {
-    for mut sender in senders {
-        sender.send::<ReliableCommandChannel>(PlayerCommand::CastAbility {
-            champion,
-            slot,
-            target: CastTarget {
-                position: target_position.map(WorldPosition::from),
-            },
-        });
-    }
-}
-
-/// Description:
-/// Projects the current cursor position onto the map top surface.
-///
-/// Params:
-/// - `windows`: Primary window used to read cursor position.
-/// - `camera_query`: Top-down camera used to create a world-space cursor ray.
-/// - `map_transform`: Map transform used to convert between world and local space.
-/// - `map_ground`: Map bounds and top-surface data.
-///
-/// Return:
-/// - The world-space map hit point, or `None` when the cursor cannot be projected.
-fn cursor_hit_on_map(
-    windows: &Query<&Window, With<PrimaryWindow>>,
-    camera_query: &Query<(&Camera, &GlobalTransform), With<TopDownCamera>>,
-    map_transform: &GlobalTransform,
-    map_ground: MapGround,
-) -> Option<Vec3> {
-    windows
-        .single()
-        .ok()
-        .and_then(|window| window.cursor_position())
-        .and_then(|cursor| {
-            camera_query
-                .single()
-                .ok()
-                .and_then(|(camera, camera_transform)| {
-                    camera.viewport_to_world(camera_transform, cursor).ok()
-                })
-        })
-        .and_then(|ray| ray_hit_map_top(ray, map_transform, map_ground))
-}
-
-/// Description:
 /// Clamps a cast target to spell range and map bounds.
 ///
-/// Params:
 /// - `origin`: Spell origin position.
 /// - `target`: Requested target position.
 /// - `range`: Maximum allowed distance from origin to target.
 /// - `map_transform`: Map transform used to convert between world and local space.
 /// - `map_ground`: Map bounds and top-surface data.
 ///
-/// Return:
 /// - A world-space target point clamped to range and map bounds.
 fn clamp_cast_target(
     origin: Vec3,
@@ -2161,29 +1922,12 @@ fn clamp_cast_target(
 
     clamp_world_point_to_map_top(ranged_target, map_transform, map_ground)
 }
-
-/// Description:
-/// Computes horizontal distance between two world-space points on the XZ plane.
-///
-/// Params:
-/// - `a`: First world-space point.
-/// - `b`: Second world-space point.
-///
-/// Return:
-/// - Distance between the two points ignoring the Y axis.
-fn horizontal_distance(a: Vec3, b: Vec3) -> f32 {
-    Vec2::new(a.x - b.x, a.z - b.z).length()
-}
-
-/// Description:
 /// Computes the shortest distance from a point to a finite 3D line segment.
 ///
-/// Params:
 /// - `point`: Point to test.
 /// - `segment_start`: Start point of the segment.
 /// - `segment_end`: End point of the segment.
 ///
-/// Return:
 /// - The shortest distance from `point` to the segment.
 fn distance_to_segment(point: Vec3, segment_start: Vec3, segment_end: Vec3) -> f32 {
     let segment = segment_end - segment_start;
@@ -2195,15 +1939,11 @@ fn distance_to_segment(point: Vec3, segment_start: Vec3, segment_end: Vec3) -> f
     let t = ((point - segment_start).dot(segment) / segment_length_squared).clamp(0.0, 1.0);
     point.distance(segment_start + segment * t)
 }
-
-/// Description:
 /// Creates a white unlit material with configurable base and emissive opacity.
 ///
-/// Params:
 /// - `alpha`: Base color opacity.
 /// - `emissive_alpha`: Emissive color opacity.
 ///
-/// Return:
 /// - A configured white `StandardMaterial`.
 fn white_material(alpha: f32, emissive_alpha: f32) -> StandardMaterial {
     StandardMaterial {

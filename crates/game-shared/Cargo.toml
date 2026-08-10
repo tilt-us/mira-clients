@@ -8,4 +8,9 @@ description = "Shared protocol, components, and gameplay data for Mira Game"
 [dependencies]
 bevy.workspace = true
 lightyear.workspace = true
+polyanya.workspace = true
+polyanya-glam.workspace = true
 serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

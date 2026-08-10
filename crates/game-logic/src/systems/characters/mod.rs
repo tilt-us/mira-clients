@@ -1,3 +1,4 @@
+mod common;
 pub(super) mod ignara;
 pub(super) mod lira;
 pub(super) mod sophia;

@@ -7,8 +7,6 @@ use game_shared::MiraSharedPlugin;
 use super::content::ServerContentPlugin;
 use super::network::ServerNetworkPlugin;
 use super::states::ServerState;
-
-/// Description:
 /// Registers the dedicated server plugin stack.
 pub struct ServerPlugins;
 

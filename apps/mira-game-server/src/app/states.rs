@@ -1,9 +1,6 @@
 use bevy::prelude::*;
-
-/// Description:
 /// Defines the high-level lifecycle state of the dedicated server app.
 ///
-/// Fields:
 /// - `Boot`: Initial state before loading begins.
 /// - `Loading`: State used while server data is loading.
 /// - `Running`: State used while the server is actively simulating.

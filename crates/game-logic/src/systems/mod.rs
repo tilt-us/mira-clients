@@ -8,6 +8,7 @@ mod camera;
 mod characters;
 mod damage_numbers;
 mod healthbar;
+mod lane;
 mod movement;
 mod networked_players;
 mod setup;
@@ -19,27 +20,26 @@ pub use ui_state::MiraHudState;
 
 /// Registers server-safe gameplay systems shared by client and dedicated server.
 ///
-/// Description:
 /// This plugin is intentionally small during the current prototype phase. Client-only
 /// rendering, input, camera, animation, and HUD systems live in `MiraClientSystemsPlugin`.
 pub struct MiraGameplaySystemsPlugin;
 
 /// Registers the client-only gameplay presentation and input systems.
 ///
-/// Description:
 /// Used by the playable client after Bevy asset, render, and input plugins are available.
 pub struct MiraClientSystemsPlugin;
 
 /// Client-side gameplay setup flags supplied by the embedding game client.
 #[derive(Resource, Debug, Clone, Copy, Default)]
 pub struct MiraClientGameplaySettings {
-    /// Whether local development-only target dummies should be spawned.
+    /// Whether the F9 shortcut may toggle a local development-only target dummy.
+    pub allow_dev_dummy_toggle: bool,
+    /// Whether a local development-only target dummy should be spawned during setup.
     pub spawn_dev_dummy: bool,
 }
 
 /// Compatibility plugin that registers both gameplay and client systems.
 ///
-/// Description:
 /// New app code should prefer `MiraGameplaySystemsPlugin` for server-safe logic and
 /// `MiraClientSystemsPlugin` for client-only logic.
 pub struct MiraSystemsPlugin;
@@ -49,6 +49,9 @@ struct LocalSpawnSystemsPlugin;
 
 /// Registers remote player snapshot and interpolation systems.
 struct NetworkedPlayersSystemsPlugin;
+
+/// Registers replicated lane-unit presentation systems.
+struct LaneSystemsPlugin;
 
 /// Registers local champion animation systems.
 struct AnimationSystemsPlugin;
@@ -80,18 +83,25 @@ struct HudSystemsPlugin;
 /// Registers floating combat text presentation systems.
 struct DamageNumberSystemsPlugin;
 
-pub(super) const LOCAL_CHAMPION_ID: u32 = 6606;
+pub(super) const LOCAL_CHAMPION_ID: ChampionId = ChampionId::LIRA;
 pub(super) const HOLD_CURSOR_MIN_DISTANCE: f32 = 1.35;
 
-/// Description:
+pub(super) fn horizontal_distance(left: Vec3, right: Vec3) -> f32 {
+    Vec2::new(left.x - right.x, left.z - right.z).length()
+}
+
+pub(super) fn hierarchy_root(mut entity: Entity, parents: &Query<&ChildOf>) -> Entity {
+    while let Ok(parent) = parents.get(entity) {
+        entity = parent.0;
+    }
+    entity
+}
+
 /// Marks the transient click marker shown at the current movement target.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(super) struct MoveTargetMarker;
-
-/// Description:
 /// Stores combat data for enemy training targets used by ability prototypes.
 ///
-/// Fields:
 /// - `health`: Current health value for the dummy.
 /// - `hit_radius`: Collision radius used by projectile and area checks.
 #[derive(Component, Debug, Clone)]
@@ -108,8 +118,6 @@ pub(super) struct TrainingDummy {
     pending_combat_numbers: Vec<(f32, TrainingDummyHealthChangeKind)>,
     pub(super) last_health_change_kind: TrainingDummyHealthChangeKind,
 }
-
-/// Description:
 /// Describes the source of the latest dummy health change for floating combat text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(super) enum TrainingDummyHealthChangeKind {
@@ -120,7 +128,6 @@ pub(super) enum TrainingDummyHealthChangeKind {
 }
 
 impl TrainingDummy {
-    /// Runs the new step for the gameplay systems plugin registry.
     pub(super) fn new(health: f32, hit_radius: f32) -> Self {
         Self {
             health,
@@ -136,8 +143,6 @@ impl TrainingDummy {
             last_health_change_kind: TrainingDummyHealthChangeKind::AutoAttack,
         }
     }
-
-    /// Runs the remote player step for the gameplay systems plugin registry.
     pub(super) fn remote_player(health: f32, max_health: f32, hit_radius: f32) -> Self {
         Self {
             health: health.clamp(0.0, max_health.max(0.0)),
@@ -153,8 +158,6 @@ impl TrainingDummy {
             last_health_change_kind: TrainingDummyHealthChangeKind::AutoAttack,
         }
     }
-
-    /// Runs the apply damage step for the gameplay systems plugin registry.
     pub(super) fn apply_damage(&mut self, damage: f32, kind: TrainingDummyHealthChangeKind) {
         if damage <= 0.0 || (self.health <= 0.0 && self.min_health <= 0.0) {
             return;
@@ -169,8 +172,6 @@ impl TrainingDummy {
             self.total_damage_idle_seconds = 0.0;
         }
     }
-
-    /// Runs the set server health step for the gameplay systems plugin registry.
     pub(super) fn set_server_health(&mut self, health: f32, max_health: f32) {
         let max_health = max_health.max(0.0);
         let min_health = self.min_health.clamp(0.0, max_health);
@@ -179,13 +180,9 @@ impl TrainingDummy {
         self.idle_seconds = 0.0;
         self.pending_combat_numbers.clear();
     }
-
-    /// Runs the can auto heal step for the gameplay systems plugin registry.
     pub(super) fn can_auto_heal(&self) -> bool {
         self.local_damage_enabled && self.track_total_damage
     }
-
-    /// Runs the heal to full step for the gameplay systems plugin registry.
     pub(super) fn heal_to_full(&mut self) -> f32 {
         let heal = (self.max_health - self.health).max(0.0);
         if heal <= f32::EPSILON {
@@ -199,16 +196,12 @@ impl TrainingDummy {
             .push((heal, TrainingDummyHealthChangeKind::Heal));
         heal
     }
-
-    /// Runs the take pending combat numbers step for the gameplay systems plugin registry.
     pub(super) fn take_pending_combat_numbers(
         &mut self,
     ) -> Vec<(f32, TrainingDummyHealthChangeKind)> {
         std::mem::take(&mut self.pending_combat_numbers)
     }
 }
-
-/// Description:
 /// Stores server-provided temporary movement modifiers for the local player.
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub(super) struct ExternalMovementModifier {
@@ -217,11 +210,8 @@ pub(super) struct ExternalMovementModifier {
     pub(super) pull_speed: f32,
     pub(super) stunned: bool,
 }
-
-/// Description:
 /// Tracks the pulse animation state for the movement target marker.
 ///
-/// Fields:
 /// - `timer`: Animation timer for the marker pulse.
 /// - `active`: Whether the marker pulse is currently visible and animating.
 #[derive(Component, Debug, Clone)]
@@ -229,11 +219,8 @@ pub(super) struct MoveTargetMarkerFx {
     pub(super) timer: Timer,
     pub(super) active: bool,
 }
-
-/// Description:
 /// Stores the local champion animation graph and clip node indices.
 ///
-/// Fields:
 /// - `graph`: Animation graph handle assigned to spawned animation players.
 /// - `idle`: Node index for the idle animation.
 /// - `walk`: Node index for the walking animation.
@@ -243,11 +230,8 @@ pub(super) struct LocalChampionAnimations {
     pub(super) idle: AnimationNodeIndex,
     pub(super) walk: AnimationNodeIndex,
 }
-
-/// Description:
 /// Stores the currently selected local champion locomotion animation state.
 ///
-/// Fields:
 /// - `moving`: Whether the controlled champion is currently moving.
 /// - `stop_grace_seconds`: Time accumulated since movement stopped before switching to idle.
 #[derive(Resource, Debug, Clone, Copy, Default)]
@@ -255,19 +239,13 @@ pub(super) struct LocalChampionAnimationState {
     pub(super) moving: bool,
     pub(super) stop_grace_seconds: f32,
 }
-
-/// Description:
 /// Stores the last meaningful movement direction while right-click movement is held.
 ///
-/// Fields:
 /// - `0`: Normalized world-space movement direction.
 #[derive(Resource, Debug, Clone, Copy)]
 pub(super) struct HoldMoveDirection(pub(super) Vec3);
-
-/// Description:
 /// Tracks which server-assigned champion model is currently attached to an entity.
 ///
-/// Fields:
 /// - `champion`: Champion id whose scene is already attached to this entity.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(super) struct CurrentChampionVisual {
@@ -297,6 +275,7 @@ impl Plugin for MiraClientSystemsPlugin {
         app.add_plugins((
             LocalSpawnSystemsPlugin,
             NetworkedPlayersSystemsPlugin,
+            LaneSystemsPlugin,
             AnimationSystemsPlugin,
             AutoAttackSystemsPlugin,
             MovementSystemsPlugin,
@@ -359,6 +338,10 @@ impl Plugin for LocalSpawnSystemsPlugin {
                 Startup,
                 setup::spawn_local_player_and_camera.run_if(resource_exists::<AssetServer>),
             )
+            .add_systems(
+                Update,
+                setup::toggle_dev_preview_dummy.run_if(resource_exists::<AssetServer>),
+            )
             .add_systems(Update, setup::receive_champion_catalog_updates);
     }
 }
@@ -369,6 +352,12 @@ impl Plugin for NetworkedPlayersSystemsPlugin {
         app.add_systems(
             Update,
             networked_players::sync_remote_players_from_match_snapshot
+                .run_if(resource_exists::<AssetServer>),
+        )
+        .add_systems(
+            Update,
+            networked_players::reconcile_local_player_to_authoritative_snapshot
+                .after(networked_players::sync_remote_players_from_match_snapshot)
                 .run_if(resource_exists::<AssetServer>),
         )
         .add_systems(
@@ -384,6 +373,22 @@ impl Plugin for NetworkedPlayersSystemsPlugin {
         .add_systems(
             Update,
             networked_players::sync_remote_player_animations.run_if(resource_exists::<AssetServer>),
+        );
+    }
+}
+
+impl Plugin for LaneSystemsPlugin {
+    /// Registers Bevy resources, plugins, or systems for the gameplay systems plugin registry.
+    fn build(&self, app: &mut App) {
+        app.add_systems(
+            Update,
+            (
+                lane::sync_lane_units_from_snapshot,
+                lane::interpolate_lane_unit_positions,
+                lane::update_tower_attack_lines,
+            )
+                .chain()
+                .run_if(resource_exists::<AssetServer>),
         );
     }
 }
@@ -410,12 +415,18 @@ impl Plugin for MovementSystemsPlugin {
         app.add_systems(
             Update,
             movement::set_move_target_from_mouse_input
-                .after(auto_attack::handle_auto_attack_input)
+                .after(auto_attack::update_auto_attack_target)
+                .after(lane::sync_lane_units_from_snapshot)
                 .run_if(resource_exists::<AssetServer>),
         )
         .add_systems(
             FixedUpdate,
-            movement::move_controlled_player.run_if(resource_exists::<AssetServer>),
+            (
+                movement::advance_local_navigation_routes,
+                movement::move_controlled_player,
+            )
+                .chain()
+                .run_if(resource_exists::<AssetServer>),
         )
         .add_systems(
             Update,
@@ -448,8 +459,14 @@ impl Plugin for AutoAttackSystemsPlugin {
             )
             .add_systems(
                 Update,
-                auto_attack::update_auto_attack_projectiles
+                auto_attack::receive_remote_ranged_minion_auto_attack_visuals
                     .after(auto_attack::receive_remote_auto_attack_visuals)
+                    .run_if(resource_exists::<AssetServer>),
+            )
+            .add_systems(
+                Update,
+                auto_attack::update_auto_attack_projectiles
+                    .after(auto_attack::receive_remote_ranged_minion_auto_attack_visuals)
                     .run_if(resource_exists::<AssetServer>),
             );
     }
@@ -665,8 +682,13 @@ impl Plugin for DamageNumberSystemsPlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn development_dummy_is_disabled_by_default() {
+        let settings = MiraClientGameplaySettings::default();
 
-    /// Verifies local training dummy keeps one health and tracks total damage behavior for the gameplay systems plugin registry.
+        assert!(!settings.allow_dev_dummy_toggle);
+        assert!(!settings.spawn_dev_dummy);
+    }
     #[test]
     fn local_training_dummy_keeps_one_health_and_tracks_total_damage() {
         let mut dummy = TrainingDummy::new(20.0, 0.9);
@@ -680,8 +702,6 @@ mod tests {
             vec![(50.0, TrainingDummyHealthChangeKind::Spell)]
         );
     }
-
-    /// Verifies remote training dummy allows zero health without local total damage behavior for the gameplay systems plugin registry.
     #[test]
     fn remote_training_dummy_allows_zero_health_without_local_total_damage() {
         let mut dummy = TrainingDummy::remote_player(20.0, 20.0, 0.9);

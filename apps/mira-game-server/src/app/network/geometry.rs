@@ -1,6 +1,4 @@
 use bevy::prelude::*;
-
-/// Description:
 /// Clamps a cast target to a maximum range from an origin.
 pub(super) fn clamp_cast_target(origin: Vec3, target: Vec3, range: f32) -> Vec3 {
     let delta = Vec3::new(target.x - origin.x, 0.0, target.z - origin.z);
@@ -10,8 +8,6 @@ pub(super) fn clamp_cast_target(origin: Vec3, target: Vec3, range: f32) -> Vec3 
 
     origin + delta.normalize_or_zero() * range
 }
-
-/// Description:
 /// Computes the horizontal distance from a point to a segment.
 pub(super) fn distance_to_segment_xz(point: Vec3, segment_start: Vec3, segment_end: Vec3) -> f32 {
     let point = Vec2::new(point.x, point.z);
@@ -27,14 +23,10 @@ pub(super) fn distance_to_segment_xz(point: Vec3, segment_start: Vec3, segment_e
     let t = ((point - segment_start).dot(segment) / segment_length_squared).clamp(0.0, 1.0);
     point.distance(segment_start + segment * t)
 }
-
-/// Description:
 /// Computes horizontal distance between two world-space positions.
 pub(super) fn horizontal_distance(left: Vec3, right: Vec3) -> f32 {
     Vec2::new(left.x, left.z).distance(Vec2::new(right.x, right.z))
 }
-
-/// Description:
 /// Checks whether a world-space point lies inside an oriented XZ rectangle.
 pub(super) fn point_in_oriented_rect_xz(point: Vec3, start: Vec3, end: Vec3, width: f32) -> bool {
     let start_2d = Vec2::new(start.x, start.z);

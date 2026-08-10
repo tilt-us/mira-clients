@@ -1,8 +1,9 @@
 use bevy::prelude::*;
+use game_shared::game::auto_attack::{AUTO_ATTACK_COMBO_LENGTH, AutoAttackCombo};
 use game_shared::network::{
     AbilitySlot, ChampionCatalogUpdate, ChampionId, NetworkAbilityDamage, NetworkAbilityDefinition,
-    NetworkChampionAbilities, NetworkChampionBaseStats, NetworkChampionDefinition,
-    NetworkChampionStats,
+    NetworkAutoAttackDefinition, NetworkChampionAbilities, NetworkChampionBaseStats,
+    NetworkChampionDefinition, NetworkChampionStats,
 };
 use serde::Deserialize;
 use std::{
@@ -15,15 +16,10 @@ use std::{
 const DEFAULT_CHAMPION_API_ADDR: &str = "localhost:8084";
 const CHAMPION_API_BASE_PATH: &str = "/api/champions";
 const CHAMPION_API_TIMEOUT: Duration = Duration::from_secs(5);
-const DEVELOPMENT_CHAMPION_ROSTER: [ChampionId; 4] = [
-    ChampionId(6606),
-    ChampionId(6607),
-    ChampionId(6608),
-    ChampionId(6609),
-];
-
-/// Description:
-/// Registers server-authoritative champion content loaded from the champion API.
+const DEVELOPMENT_CHAMPION_CATALOG_SOURCE_ENV: &str = "MIRA_DEVELOPMENT_CHAMPION_CATALOG";
+const EMBEDDED_DEVELOPMENT_CHAMPION_CATALOG: &str =
+    include_str!("development_champion_catalog.json");
+/// Registers server-authoritative champion content for the active catalog source.
 pub struct ServerContentPlugin;
 
 impl Plugin for ServerContentPlugin {
@@ -32,11 +28,8 @@ impl Plugin for ServerContentPlugin {
         app.insert_resource(ServerChampionCatalog::load_development_catalog());
     }
 }
-
-/// Description:
 /// Stores server-authoritative champion definitions used by match simulation.
 ///
-/// Fields:
 /// - `champions`: Champion definitions keyed by their stable content id.
 #[derive(Resource, Debug, Clone)]
 pub struct ServerChampionCatalog {
@@ -44,17 +37,22 @@ pub struct ServerChampionCatalog {
 }
 
 impl ServerChampionCatalog {
-    /// Description:
-    /// Loads the development champion catalog from the champion API.
+    /// Loads the development champion catalog from the selected local snapshot or champion API.
     ///
-    /// Returns:
     /// - A catalog containing the current development champion definition.
     pub fn load_development_catalog() -> Self {
-        let api_champions = load_champion_api_catalog().unwrap_or_else(|error| {
-            panic!("Failed to load server champion catalog from API: {error}")
-        });
+        let api_champions = if uses_embedded_development_catalog() {
+            info!("Loaded embedded development champion catalog.");
+            load_embedded_development_champion_catalog().unwrap_or_else(|error| {
+                panic!("Failed to load embedded development champion catalog: {error}")
+            })
+        } else {
+            load_champion_api_catalog().unwrap_or_else(|error| {
+                panic!("Failed to load server champion catalog from API: {error}")
+            })
+        };
         let mut champions = HashMap::new();
-        for champion_id in DEVELOPMENT_CHAMPION_ROSTER {
+        for champion_id in ChampionId::PROTOTYPE_ROSTER {
             let champion =
                 load_champion_definition(champion_id, &api_champions).unwrap_or_else(|error| {
                     panic!(
@@ -76,11 +74,8 @@ impl ServerChampionCatalog {
         }
         Self { champions }
     }
-
-    /// Description:
     /// Builds a network update containing all loaded champion definitions.
     ///
-    /// Returns:
     /// - Serializable champion catalog update for connected clients.
     pub fn catalog_update(&self) -> ChampionCatalogUpdate {
         let mut champions = self
@@ -93,6 +88,7 @@ impl ServerChampionCatalog {
                     base_stats: NetworkChampionBaseStats {
                         max_health: champion.base_stats.max_health,
                     },
+                    auto_attack: (&champion.auto_attack).into(),
                     abilities: NetworkChampionAbilities {
                         q: (&champion.abilities.q).into(),
                         w: (&champion.abilities.w).into(),
@@ -105,27 +101,19 @@ impl ServerChampionCatalog {
         champions.sort_by_key(|champion| champion.id.0);
         ChampionCatalogUpdate { champions }
     }
-
-    /// Description:
     /// Returns an immutable champion definition for the requested id.
     ///
-    /// Params:
     /// - `champion_id`: Stable champion content id.
     ///
-    /// Returns:
     /// - The matching champion definition when it exists in the loaded catalog.
     pub fn champion(&self, champion_id: ChampionId) -> Option<&ServerChampionDefinition> {
         self.champions.get(&champion_id)
     }
-
-    /// Description:
     /// Returns server-authoritative tuning for one champion ability slot.
     ///
-    /// Params:
     /// - `champion_id`: Stable champion content id.
     /// - `slot`: Ability slot whose tuning should be read.
     ///
-    /// Returns:
     /// - Ability tuning for the requested champion ability when configured.
     pub fn ability(
         &self,
@@ -135,12 +123,32 @@ impl ServerChampionCatalog {
         self.champion(champion_id)
             .and_then(|champion| champion.ability(slot))
     }
-}
 
-/// Description:
+    /// Returns the authoritative basic-attack combo for one champion.
+    pub fn auto_attack_combo(&self, champion_id: ChampionId) -> Option<AutoAttackCombo> {
+        self.champion(champion_id)
+            .map(|champion| champion.auto_attack.combo())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn embedded_test_catalog() -> Self {
+        let api_champions = load_embedded_development_champion_catalog().unwrap();
+        Self::from_api_champions(&api_champions).unwrap()
+    }
+
+    #[cfg(test)]
+    fn from_api_champions(api_champions: &[ChampionApiResponse]) -> Result<Self, String> {
+        let mut champions = HashMap::new();
+        for champion_id in ChampionId::PROTOTYPE_ROSTER {
+            let champion = load_champion_definition(champion_id, api_champions)?;
+            validate_development_champion(champion_id, &champion)?;
+            champions.insert(champion_id, champion);
+        }
+        Ok(Self { champions })
+    }
+}
 /// Stores one server-authoritative champion definition.
 ///
-/// Fields:
 /// - `display_name`: Human-readable champion name used by server logs.
 /// - `base_stats`: Server-authoritative base stats for the champion.
 /// - `abilities`: Server-authoritative ability tuning for the champion.
@@ -148,17 +156,15 @@ impl ServerChampionCatalog {
 pub struct ServerChampionDefinition {
     pub display_name: String,
     pub base_stats: ServerChampionBaseStats,
+    pub auto_attack: ServerAutoAttackDefinition,
     pub abilities: ServerChampionAbilities,
 }
 
 impl ServerChampionDefinition {
-    /// Description:
     /// Returns server-authoritative tuning for one ability slot.
     ///
-    /// Params:
     /// - `slot`: Ability slot whose tuning should be read.
     ///
-    /// Returns:
     /// - Ability tuning for the requested ability when configured.
     pub fn ability(&self, slot: AbilitySlot) -> Option<&ServerAbilityDefinition> {
         match slot {
@@ -169,21 +175,34 @@ impl ServerChampionDefinition {
         }
     }
 }
-
-/// Description:
 /// Stores server-authoritative champion base stats.
 ///
-/// Fields:
 /// - `max_health`: Maximum health assigned by the match server.
 #[derive(Debug, Clone, Copy)]
 pub struct ServerChampionBaseStats {
     pub max_health: f32,
 }
 
-/// Description:
+/// Stores server-authoritative basic-attack tuning for one champion.
+#[derive(Debug, Clone, Copy)]
+pub struct ServerAutoAttackDefinition {
+    pub base_damage: f32,
+    pub attacks_per_second: f32,
+    pub combo_damage_multipliers: [f32; AUTO_ATTACK_COMBO_LENGTH],
+}
+
+impl ServerAutoAttackDefinition {
+    fn combo(self) -> AutoAttackCombo {
+        AutoAttackCombo {
+            base_damage: self.base_damage,
+            combo_length: AUTO_ATTACK_COMBO_LENGTH,
+            attacks_per_second: self.attacks_per_second,
+            damage_multipliers: self.combo_damage_multipliers,
+        }
+    }
+}
 /// Stores server-authoritative ability tuning for a champion.
 ///
-/// Fields:
 /// - `q`: Tuning for the first basic ability.
 /// - `w`: Tuning for the second basic ability.
 /// - `e`: Tuning for the third basic ability.
@@ -195,11 +214,8 @@ pub struct ServerChampionAbilities {
     pub e: ServerAbilityDefinition,
     pub r: Option<ServerAbilityDefinition>,
 }
-
-/// Description:
 /// Stores server-authoritative ability data for one slot.
 ///
-/// Fields:
 /// - `damage`: Damage values applied by this ability.
 /// - `cooldown_seconds`: Cooldown duration applied by the match server.
 /// - `range`: Maximum cast or search range in world units.
@@ -251,11 +267,8 @@ pub struct ServerAbilityDefinition {
     pub medium_damage: f32,
     pub large_damage: f32,
 }
-
-/// Description:
 /// Stores server-authoritative damage values used by ability simulations.
 ///
-/// Fields:
 /// - `direct_hit`: Damage applied by direct projectile or contact hits.
 /// - `area`: Damage applied by area explosions or impact zones.
 /// - `missile`: Damage applied by individual homing/contact missiles.
@@ -265,11 +278,8 @@ pub struct ServerAbilityDamage {
     pub area: f32,
     pub missile: f32,
 }
-
-/// Description:
 /// Represents one champion response from the champion API.
 ///
-/// Fields:
 /// - `name`: Human-readable champion name used by server logs.
 /// - `stats`: Server-authoritative champion stats and ability tuning.
 #[derive(Debug, Clone, Deserialize)]
@@ -279,13 +289,13 @@ struct ChampionApiResponse {
 }
 
 impl From<ChampionApiResponse> for ServerChampionDefinition {
-    /// Runs the from step for the server champion content catalog system.
     fn from(value: ChampionApiResponse) -> Self {
         Self {
             display_name: value.name,
             base_stats: ServerChampionBaseStats {
                 max_health: value.stats.base_stats.max_health,
             },
+            auto_attack: value.stats.auto_attack.into(),
             abilities: ServerChampionAbilities {
                 q: value.stats.abilities.q.into(),
                 w: value.stats.abilities.w.into(),
@@ -296,8 +306,27 @@ impl From<ChampionApiResponse> for ServerChampionDefinition {
     }
 }
 
+impl From<NetworkAutoAttackDefinition> for ServerAutoAttackDefinition {
+    fn from(value: NetworkAutoAttackDefinition) -> Self {
+        Self {
+            base_damage: value.base_damage,
+            attacks_per_second: value.attacks_per_second,
+            combo_damage_multipliers: value.combo_damage_multipliers,
+        }
+    }
+}
+
+impl From<&ServerAutoAttackDefinition> for NetworkAutoAttackDefinition {
+    fn from(value: &ServerAutoAttackDefinition) -> Self {
+        Self {
+            base_damage: value.base_damage,
+            attacks_per_second: value.attacks_per_second,
+            combo_damage_multipliers: value.combo_damage_multipliers,
+        }
+    }
+}
+
 impl From<NetworkAbilityDefinition> for ServerAbilityDefinition {
-    /// Runs the from step for the server champion content catalog system.
     fn from(value: NetworkAbilityDefinition) -> Self {
         Self {
             damage: value.damage.into(),
@@ -337,7 +366,6 @@ impl From<NetworkAbilityDefinition> for ServerAbilityDefinition {
 }
 
 impl From<&ServerAbilityDefinition> for NetworkAbilityDefinition {
-    /// Runs the from step for the server champion content catalog system.
     fn from(value: &ServerAbilityDefinition) -> Self {
         Self {
             damage: (&value.damage).into(),
@@ -377,7 +405,6 @@ impl From<&ServerAbilityDefinition> for NetworkAbilityDefinition {
 }
 
 impl From<NetworkAbilityDamage> for ServerAbilityDamage {
-    /// Runs the from step for the server champion content catalog system.
     fn from(value: NetworkAbilityDamage) -> Self {
         Self {
             direct_hit: value.direct_hit,
@@ -388,7 +415,6 @@ impl From<NetworkAbilityDamage> for ServerAbilityDamage {
 }
 
 impl From<&ServerAbilityDamage> for NetworkAbilityDamage {
-    /// Runs the from step for the server champion content catalog system.
     fn from(value: &ServerAbilityDamage) -> Self {
         Self {
             direct_hit: value.direct_hit,
@@ -398,19 +424,14 @@ impl From<&ServerAbilityDamage> for NetworkAbilityDamage {
     }
 }
 
-/// Description:
-/// Loads one champion definition from the champion API.
-///
-/// Params:
-/// - `champion_id`: Stable champion content id mapped to the API champion name.
-///
-/// Returns:
-/// - Parsed server champion definition or a load/parse error string.
+/// Loads a supported prototype champion from the cached API catalog or detail endpoint.
 fn load_champion_definition(
     champion_id: ChampionId,
     api_champions: &[ChampionApiResponse],
 ) -> Result<ServerChampionDefinition, String> {
-    let champion_name = champion_api_name(champion_id);
+    let champion_name = champion_id
+        .display_name()
+        .ok_or_else(|| format!("Unsupported prototype champion id {}", champion_id.0))?;
     let parsed = api_champions
         .iter()
         .find(|champion| champion.name.eq_ignore_ascii_case(champion_name))
@@ -420,11 +441,8 @@ fn load_champion_definition(
 
     Ok(parsed.into())
 }
-
-/// Description:
 /// Loads all champion definitions from the champion API list endpoint.
 ///
-/// Returns:
 /// - Parsed champion API responses or an HTTP/parse error string.
 fn load_champion_api_catalog() -> Result<Vec<ChampionApiResponse>, String> {
     let raw = http_get(CHAMPION_API_BASE_PATH)?;
@@ -432,13 +450,21 @@ fn load_champion_api_catalog() -> Result<Vec<ChampionApiResponse>, String> {
         .map_err(|error| format!("Failed to parse champion catalog API response: {error}"))
 }
 
-/// Description:
+/// Returns whether the local development catalog snapshot was explicitly selected.
+fn uses_embedded_development_catalog() -> bool {
+    std::env::var(DEVELOPMENT_CHAMPION_CATALOG_SOURCE_ENV)
+        .is_ok_and(|source| source.eq_ignore_ascii_case("embedded"))
+}
+
+/// Loads the prototype champion snapshot used by local development recipes.
+fn load_embedded_development_champion_catalog() -> Result<Vec<ChampionApiResponse>, String> {
+    serde_json::from_str(EMBEDDED_DEVELOPMENT_CHAMPION_CATALOG)
+        .map_err(|error| format!("Failed to parse embedded champion catalog: {error}"))
+}
 /// Loads one champion definition from the champion API detail endpoint.
 ///
-/// Params:
 /// - `champion_name`: Champion name appended to `/api/champions`.
 ///
-/// Returns:
 /// - Parsed champion API response or an HTTP/parse error string.
 fn load_champion_api_definition(champion_name: &str) -> Result<ChampionApiResponse, String> {
     let raw = http_get(&format!("{CHAMPION_API_BASE_PATH}/{champion_name}"))?;
@@ -446,14 +472,10 @@ fn load_champion_api_definition(champion_name: &str) -> Result<ChampionApiRespon
         format!("Failed to parse champion API response for {champion_name}: {error}")
     })
 }
-
-/// Description:
 /// Performs a simple blocking HTTP GET against the local champion API.
 ///
-/// Params:
 /// - `path`: Absolute HTTP path to request from `MIRA_CHAMPION_API_ADDR`.
 ///
-/// Returns:
 /// - Response body when the request returns a successful status.
 fn http_get(path: &str) -> Result<String, String> {
     let api_addr = champion_api_addr();
@@ -477,6 +499,11 @@ fn http_get(path: &str) -> Result<String, String> {
         .read_to_string(&mut response)
         .map_err(|error| format!("Failed to read champion API response for {path}: {error}"))?;
 
+    parse_http_response(&response, path)
+}
+
+/// Parses a successful champion API response and decodes its HTTP body.
+fn parse_http_response(response: &str, path: &str) -> Result<String, String> {
     let (headers, body) = response
         .split_once("\r\n\r\n")
         .ok_or_else(|| format!("Champion API response for {path} did not contain HTTP headers"))?;
@@ -490,25 +517,78 @@ fn http_get(path: &str) -> Result<String, String> {
         ));
     }
 
-    Ok(body.to_string())
+    if has_chunked_transfer_encoding(headers) {
+        decode_chunked_body(body).map_err(|error| {
+            format!("Failed to decode chunked champion API response for {path}: {error}")
+        })
+    } else {
+        Ok(body.to_string())
+    }
 }
 
-/// Runs the champion api addr step for the server champion content catalog system.
+/// Returns whether an HTTP response uses chunked transfer encoding.
+fn has_chunked_transfer_encoding(headers: &str) -> bool {
+    headers.lines().skip(1).any(|line| {
+        let Some((name, value)) = line.split_once(':') else {
+            return false;
+        };
+
+        name.trim().eq_ignore_ascii_case("transfer-encoding")
+            && value
+                .split(',')
+                .any(|encoding| encoding.trim().eq_ignore_ascii_case("chunked"))
+    })
+}
+
+/// Decodes an HTTP/1.1 chunked response body into its UTF-8 payload.
+fn decode_chunked_body(body: &str) -> Result<String, String> {
+    let bytes = body.as_bytes();
+    let mut offset = 0;
+    let mut decoded = Vec::with_capacity(bytes.len());
+
+    loop {
+        let line_end = bytes[offset..]
+            .windows(2)
+            .position(|window| window == b"\r\n")
+            .map(|position| offset + position)
+            .ok_or_else(|| "chunk length was not terminated".to_string())?;
+        let chunk_size_text = std::str::from_utf8(&bytes[offset..line_end])
+            .map_err(|_| "chunk length was not valid UTF-8".to_string())?;
+        let chunk_size = chunk_size_text.split(';').next().unwrap_or_default().trim();
+        let chunk_size = usize::from_str_radix(chunk_size, 16)
+            .map_err(|_| format!("invalid chunk length `{chunk_size_text}`"))?;
+        offset = line_end + 2;
+
+        if chunk_size == 0 {
+            return String::from_utf8(decoded)
+                .map_err(|_| "chunked response body was not valid UTF-8".to_string());
+        }
+
+        let chunk_end = offset
+            .checked_add(chunk_size)
+            .ok_or_else(|| "chunk length overflowed".to_string())?;
+        if chunk_end + 2 > bytes.len() {
+            return Err("chunk body was truncated".to_string());
+        }
+        if &bytes[chunk_end..chunk_end + 2] != b"\r\n" {
+            return Err("chunk body was not terminated".to_string());
+        }
+
+        decoded.extend_from_slice(&bytes[offset..chunk_end]);
+        offset = chunk_end + 2;
+    }
+}
 fn champion_api_addr() -> String {
     std::env::var("MIRA_CHAMPION_API_ADDR")
         .ok()
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| DEFAULT_CHAMPION_API_ADDR.to_string())
 }
-
-/// Description:
 /// Validates the current development champion content before the match server starts.
 ///
-/// Params:
 /// - `champion_id`: Stable champion content id used for error messages.
 /// - `champion`: Parsed server-authoritative champion definition.
 ///
-/// Returns:
 /// - `Ok(())` when the champion contains the required server-side tuning values.
 fn validate_development_champion(
     champion_id: ChampionId,
@@ -519,22 +599,41 @@ fn validate_development_champion(
         champion_id,
         "base_stats.max_health",
     )?;
+    require_positive(
+        champion.auto_attack.base_damage,
+        champion_id,
+        "auto_attack.base_damage",
+    )?;
+    require_positive(
+        champion.auto_attack.attacks_per_second,
+        champion_id,
+        "auto_attack.attacks_per_second",
+    )?;
+    for (stage, multiplier) in champion
+        .auto_attack
+        .combo_damage_multipliers
+        .iter()
+        .copied()
+        .enumerate()
+    {
+        require_positive(
+            multiplier,
+            champion_id,
+            format!("auto_attack.combo_damage_multipliers[{stage}]"),
+        )?;
+    }
     validate_basic_ability(champion_id, AbilitySlot::Q, &champion.abilities.q)?;
     validate_basic_ability(champion_id, AbilitySlot::W, &champion.abilities.w)?;
     validate_basic_ability(champion_id, AbilitySlot::E, &champion.abilities.e)?;
 
     Ok(())
 }
-
-/// Description:
 /// Validates that an ability has the minimum server-authoritative tuning.
 ///
-/// Params:
 /// - `champion_id`: Stable champion content id used for error messages.
 /// - `slot`: Ability slot used for error messages.
 /// - `ability`: Server-authoritative ability definition to validate.
 ///
-/// Returns:
 /// - `Ok(())` when the ability has valid minimum required values.
 fn validate_basic_ability(
     champion_id: ChampionId,
@@ -547,16 +646,12 @@ fn validate_basic_ability(
         slot_field(slot, "cooldown_seconds"),
     )
 }
-
-/// Description:
 /// Validates that a server content value is strictly positive.
 ///
-/// Params:
 /// - `value`: Numeric content value to validate.
 /// - `champion_id`: Stable champion content id used for error messages.
 /// - `field`: Field path used for error messages.
 ///
-/// Returns:
 /// - `Ok(())` when the value is finite and greater than zero.
 fn require_positive(
     value: f32,
@@ -574,34 +669,80 @@ fn require_positive(
         value
     ))
 }
-
-/// Description:
 /// Builds an ability field path for validation errors.
 ///
-/// Params:
 /// - `slot`: Ability slot used as the path prefix.
 /// - `field`: Ability field name.
 ///
-/// Returns:
 /// - Human-readable ability field path.
 fn slot_field(slot: AbilitySlot, field: &str) -> String {
     format!("{:?}.{}", slot, field)
 }
 
-/// Description:
-/// Maps a champion content id to its champion API name.
-///
-/// Params:
-/// - `champion_id`: Stable champion content id.
-///
-/// Returns:
-/// - Champion API name for the known development roster.
-fn champion_api_name(champion_id: ChampionId) -> &'static str {
-    match champion_id.0 {
-        6606 => "Lira",
-        6607 => "Ignara",
-        6608 => "Yuna",
-        6609 => "Sophia",
-        _ => "Lira",
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decodes_chunked_champion_api_responses() {
+        let response = concat!(
+            "HTTP/1.1 200 OK\r\n",
+            "Content-Type: application/json\r\n",
+            "Transfer-Encoding: chunked\r\n",
+            "\r\n",
+            "2\r\n[1\r\n",
+            "3\r\n,2]\r\n",
+            "0\r\n\r\n",
+        );
+
+        assert_eq!(
+            parse_http_response(response, CHAMPION_API_BASE_PATH).unwrap(),
+            "[1,2]"
+        );
+    }
+
+    #[test]
+    fn keeps_content_length_champion_api_responses_unchanged() {
+        let response = concat!(
+            "HTTP/1.1 200 OK\r\n",
+            "Content-Type: application/json\r\n",
+            "Content-Length: 5\r\n",
+            "\r\n",
+            "[1,2]",
+        );
+
+        assert_eq!(
+            parse_http_response(response, CHAMPION_API_BASE_PATH).unwrap(),
+            "[1,2]"
+        );
+    }
+
+    #[test]
+    fn rejects_truncated_chunked_champion_api_responses() {
+        let response = concat!(
+            "HTTP/1.1 200 OK\r\n",
+            "Transfer-Encoding: chunked\r\n",
+            "\r\n",
+            "4\r\n[1]",
+        );
+
+        assert!(parse_http_response(response, CHAMPION_API_BASE_PATH).is_err());
+    }
+
+    #[test]
+    fn rejects_unsupported_champion_ids() {
+        let error = load_champion_definition(ChampionId(9_999), &[]).unwrap_err();
+
+        assert_eq!(error, "Unsupported prototype champion id 9999");
+    }
+
+    #[test]
+    fn loads_every_prototype_champion_from_the_embedded_development_catalog() {
+        let champions = load_embedded_development_champion_catalog().unwrap();
+
+        for champion_id in ChampionId::PROTOTYPE_ROSTER {
+            let champion = load_champion_definition(champion_id, &champions).unwrap();
+            validate_development_champion(champion_id, &champion).unwrap();
+        }
     }
 }

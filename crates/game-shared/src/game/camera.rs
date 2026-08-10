@@ -1,19 +1,9 @@
 use bevy::prelude::*;
 
-/// Description:
 /// Marks the active top-down gameplay camera.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct TopDownCamera;
-
-/// Description:
-/// Stores the static tuning values used to position the top-down camera.
-///
-/// Fields:
-/// - `height`: Vertical camera offset above the look target.
-/// - `pitch_radians`: Camera pitch angle in radians.
-/// - `yaw_radians`: Camera yaw angle in radians.
-/// - `follow_lerp`: Follow interpolation speed.
-/// - `look_ahead_ground`: Ground-plane look-ahead distance when not centered.
+/// Stores static tuning values for the top-down camera.
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub struct TopDownCameraSettings {
     pub height: f32,
@@ -24,7 +14,6 @@ pub struct TopDownCameraSettings {
 }
 
 impl Default for TopDownCameraSettings {
-    /// Returns the default configuration used by the shared camera component system.
     fn default() -> Self {
         Self {
             height: 2.4,
@@ -35,15 +24,7 @@ impl Default for TopDownCameraSettings {
         }
     }
 }
-
-/// Description:
-/// Stores zoom state and zoom limits for the top-down camera.
-///
-/// Fields:
-/// - `current`: Current camera zoom distance.
-/// - `min`: Minimum allowed zoom distance.
-/// - `max`: Maximum allowed zoom distance.
-/// - `speed`: Zoom step multiplier applied to scroll input.
+/// Stores zoom state and limits for the top-down camera.
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub struct CameraZoom {
     pub current: f32,
@@ -53,19 +34,13 @@ pub struct CameraZoom {
 }
 
 impl CameraZoom {
-    /// Description:
-    /// Applies a signed zoom delta and clamps the result to configured limits.
-    ///
-    /// Params:
-    /// - `self`: Mutable camera zoom state.
-    /// - `delta`: Signed zoom delta to apply.
+    /// Applies a signed zoom delta within the configured limits.
     pub fn zoom_by(&mut self, delta: f32) {
         self.current = (self.current + delta * self.speed).clamp(self.min, self.max);
     }
 }
 
 impl Default for CameraZoom {
-    /// Returns the default configuration used by the shared camera component system.
     fn default() -> Self {
         Self {
             current: 12.0,
@@ -75,13 +50,7 @@ impl Default for CameraZoom {
         }
     }
 }
-
-/// Description:
 /// Stores the world-space focus point followed by the top-down camera.
-///
-/// Fields:
-/// - `target`: World-space position the camera should look at.
-/// - `centered`: Whether the camera should stay centered on the controlled player.
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub struct CameraFocus {
     pub target: Vec3,
@@ -89,7 +58,6 @@ pub struct CameraFocus {
 }
 
 impl Default for CameraFocus {
-    /// Returns the default configuration used by the shared camera component system.
     fn default() -> Self {
         Self {
             target: Vec3::ZERO,
@@ -97,15 +65,7 @@ impl Default for CameraFocus {
         }
     }
 }
-
-/// Description:
-/// Bundles all components required to create a top-down gameplay camera.
-///
-/// Fields:
-/// - `marker`: Marker component identifying the top-down camera.
-/// - `settings`: Static camera positioning settings.
-/// - `zoom`: Runtime zoom state.
-/// - `focus`: Runtime camera focus state.
+/// Bundles the components required for a top-down gameplay camera.
 #[derive(Bundle, Debug, Clone)]
 pub struct TopDownCameraBundle {
     pub marker: TopDownCamera,
@@ -115,7 +75,6 @@ pub struct TopDownCameraBundle {
 }
 
 impl Default for TopDownCameraBundle {
-    /// Returns the default configuration used by the shared camera component system.
     fn default() -> Self {
         Self {
             marker: TopDownCamera,

@@ -1,3 +1,5 @@
+//! Provides the client loading screen, including readiness tracking, player data, and UI synchronization.
+
 use super::settings::{ClientAppSettings, ClientLaunchSettings};
 use bevy::asset::RenderAssetUsages;
 use bevy::ecs::spawn::SpawnIter;
@@ -5,40 +7,34 @@ use bevy::image::{CompressedImageFormats, ImageSampler, ImageType};
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use game_logic::OverheadPlayerProfiles;
+use game_shared::game::player::{non_empty_string, public_display_name};
 use game_shared::game::team::TeamSpec;
 use game_shared::network::{
-    ChampionId, DisplayReady, LoadingScreenPlayer, LoadingScreenStatus, ReliableCommandChannel,
+    ChampionId, DisplayReady, LauncherMatchManifest, LoadingScreenPlayer, LoadingScreenStatus,
+    ReliableCommandChannel,
 };
 use lightyear::prelude::*;
-use serde::Deserialize;
 use std::collections::HashMap;
+use std::sync::Mutex;
 use std::sync::mpsc::{Receiver, channel};
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::network::{NetworkPingState, ping_color, ping_text};
 
 const MINIMUM_CLIENT_LOADING_DURATION: Duration = Duration::from_secs(5);
-const LOADING_SCREEN_WALLPAPERS: [&str; 4] = [
-    "wallpapers/lira-loading.jpg",
-    "wallpapers/ignara-loading.jpg",
-    "wallpapers/yuna-loading.jpg",
-    "wallpapers/sophia-loading.jpg",
-];
+const INITIAL_CONNECTION_RETRY_DELAY: Duration = Duration::from_secs(1);
+const MAXIMUM_INITIAL_CONNECTION_RETRIES: u8 = 2;
 const LOADING_TEAM_SIZE: usize = 5;
 const PROGRESS_BADGE_WIDTH: u32 = 112;
 const PROGRESS_BADGE_HEIGHT: u32 = 30;
 const MATCH_MANIFEST_ENV: &str = "MIRA_MATCH_MANIFEST_JSON";
 
-#[derive(Resource, Clone)]
+/// Tracks the current loading-screen progress, readiness, and player data.
+#[derive(Resource, Debug)]
 pub struct LoadingScreenState {
-    shared: Arc<Mutex<LoadingScreenSnapshot>>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-struct LoadingScreenSnapshot {
     active: bool,
     complete: bool,
+    connection_error: Option<String>,
     wallpaper_assets_ready: bool,
     status_text: String,
     client_progress_percent: f32,
@@ -60,6 +56,7 @@ struct LoadingPlayer {
     ready: bool,
 }
 
+/// Stores player profile metadata parsed from the client match manifest.
 #[derive(Resource, Debug, Clone)]
 struct ClientLoadingMatchManifest {
     players: HashMap<u64, ClientLoadingMatchPlayer>,
@@ -67,31 +64,61 @@ struct ClientLoadingMatchManifest {
 
 #[derive(Debug, Clone)]
 struct ClientLoadingMatchPlayer {
+    team: TeamSpec,
+    champion: ChampionId,
     display_name: Option<String>,
     avatar_url: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ClientLoadingMatchManifestFile {
-    players: Vec<ClientLoadingMatchPlayerFile>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ClientLoadingMatchPlayerFile {
-    player_public_id: u64,
-    #[serde(default, alias = "display_name")]
-    display_name: Option<String>,
-    #[serde(default, alias = "avatar_url")]
-    avatar_url: Option<String>,
-}
-
+/// Tracks the minimum local loading duration before the client reports readiness.
 #[derive(Resource, Debug)]
 struct LoadingScreenReadyGate {
     minimum_timer: Timer,
 }
 
+/// Tracks whether the loading-screen client has completed its first game-server connection.
+#[derive(Resource, Debug, Default)]
+struct LoadingScreenConnectionState {
+    has_connected: bool,
+    initial_retry_count: u8,
+    retry_timer: Option<Timer>,
+}
+
+impl LoadingScreenConnectionState {
+    fn mark_connected(&mut self) {
+        self.has_connected = true;
+        self.initial_retry_count = 0;
+        self.retry_timer = None;
+    }
+
+    fn schedule_initial_retry(&mut self) -> bool {
+        if self.has_connected
+            || self.retry_timer.is_some()
+            || self.initial_retry_count >= MAXIMUM_INITIAL_CONNECTION_RETRIES
+        {
+            return false;
+        }
+
+        self.initial_retry_count += 1;
+        self.retry_timer = Some(Timer::new(INITIAL_CONNECTION_RETRY_DELAY, TimerMode::Once));
+        true
+    }
+
+    fn retry_is_ready(&mut self, elapsed: Duration) -> bool {
+        let Some(retry_timer) = self.retry_timer.as_mut() else {
+            return false;
+        };
+
+        retry_timer.tick(elapsed);
+        retry_timer.is_finished()
+    }
+
+    fn clear_pending_retry(&mut self) {
+        self.retry_timer = None;
+    }
+}
+
+/// Tracks wallpaper assets while they are being preloaded.
 #[derive(Resource, Debug, Default)]
 struct LoadingScreenWallpaperPreload {
     handles: Vec<Handle<Image>>,
@@ -100,10 +127,35 @@ struct LoadingScreenWallpaperPreload {
 
 #[derive(Resource)]
 struct LoadingScreenImages {
-    lira: Handle<Image>,
-    ignara: Handle<Image>,
-    yuna: Handle<Image>,
-    sophia: Handle<Image>,
+    wallpapers: HashMap<ChampionId, Handle<Image>>,
+}
+
+impl LoadingScreenImages {
+    fn load(asset_server: &AssetServer) -> Self {
+        let wallpapers = ChampionId::PROTOTYPE_ROSTER
+            .into_iter()
+            .map(|champion| {
+                let asset_slug = champion
+                    .asset_slug()
+                    .expect("prototype champions must have asset slugs");
+                let path = format!("wallpapers/{asset_slug}-loading.jpg");
+                (champion, asset_server.load(path))
+            })
+            .collect();
+
+        Self { wallpapers }
+    }
+
+    fn wallpaper(&self, champion: ChampionId) -> &Handle<Image> {
+        self.wallpapers
+            .get(&champion)
+            .or_else(|| self.wallpapers.get(&ChampionId::LIRA))
+            .expect("prototype roster must include Lira")
+    }
+
+    fn wallpaper_handles(&self) -> impl Iterator<Item = &Handle<Image>> {
+        self.wallpapers.values()
+    }
 }
 
 #[derive(Resource)]
@@ -111,13 +163,15 @@ struct LoadingProgressBadgeImage {
     handle: Handle<Image>,
 }
 
+/// Caches the loading state and image handles for player avatars.
 #[derive(Resource, Default)]
 struct LoadingAvatarCache {
     entries: HashMap<String, LoadingAvatarEntry>,
 }
 
+/// Represents a pending, ready, or failed avatar cache entry.
 enum LoadingAvatarEntry {
-    Loading(Arc<Mutex<Receiver<Result<DownloadedAvatar, String>>>>),
+    Loading(Mutex<Receiver<Result<DownloadedAvatar, String>>>),
     Ready(Handle<Image>),
     Failed,
 }
@@ -130,24 +184,28 @@ struct DownloadedAvatar {
 impl FromWorld for ClientLoadingMatchManifest {
     fn from_world(_world: &mut World) -> Self {
         let Ok(raw_manifest) = std::env::var(MATCH_MANIFEST_ENV) else {
-            return Self {
-                players: HashMap::new(),
-            };
+            return Self::empty();
         };
 
-        let manifest = serde_json::from_str::<ClientLoadingMatchManifestFile>(&raw_manifest)
-            .map_err(|error| {
-                warn!(
-                    "Failed to parse client loading match manifest from {}: {}",
-                    MATCH_MANIFEST_ENV, error
-                );
-            });
-        let Ok(manifest) = manifest else {
-            return Self {
-                players: HashMap::new(),
-            };
-        };
+        Self::from_json(&raw_manifest).unwrap_or_else(|error| {
+            warn!(
+                "Failed to parse client loading match manifest from {}: {}",
+                MATCH_MANIFEST_ENV, error
+            );
+            Self::empty()
+        })
+    }
+}
 
+impl ClientLoadingMatchManifest {
+    fn empty() -> Self {
+        Self {
+            players: HashMap::new(),
+        }
+    }
+
+    fn from_json(raw_manifest: &str) -> Result<Self, serde_json::Error> {
+        let manifest = serde_json::from_str::<LauncherMatchManifest>(raw_manifest)?;
         let players = manifest
             .players
             .into_iter()
@@ -155,6 +213,8 @@ impl FromWorld for ClientLoadingMatchManifest {
                 (
                     player.player_public_id,
                     ClientLoadingMatchPlayer {
+                        team: player.team,
+                        champion: player.champion_id,
                         display_name: player.display_name.as_deref().and_then(public_display_name),
                         avatar_url: player.avatar_url.as_deref().and_then(non_empty_string),
                     },
@@ -162,30 +222,69 @@ impl FromWorld for ClientLoadingMatchManifest {
             })
             .collect::<HashMap<_, _>>();
 
-        Self { players }
+        Ok(Self { players })
     }
 }
 
-/// Mirrors the loading-screen state into the Bevy UI loading component.
+/// Registers the resources and systems that manage the client loading screen.
 pub struct LoadingScreenPlugin;
 
 impl Plugin for LoadingScreenPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<LoadingScreenReadyGate>()
+            .init_resource::<LoadingScreenConnectionState>()
             .init_resource::<LoadingScreenWallpaperPreload>()
             .init_resource::<LoadingAvatarCache>()
             .init_resource::<ClientLoadingMatchManifest>()
-            .add_systems(Startup, seed_overhead_profiles_from_manifest)
-            .add_systems(Startup, spawn_loading_screen_ui)
+            .add_systems(
+                Startup,
+                (
+                    seed_loading_screen_players_from_manifest,
+                    seed_overhead_profiles_from_manifest,
+                    spawn_loading_screen_ui,
+                )
+                    .chain(),
+            )
             .add_systems(PreStartup, preload_loading_screen_wallpapers)
-            .add_systems(Update, update_loading_screen_wallpaper_status)
-            .add_systems(Update, update_loading_screen_ready_gate)
-            .add_systems(Update, send_display_ready)
-            .add_systems(Update, receive_loading_screen_status)
-            .add_systems(Update, sync_loading_screen_ui);
+            .add_systems(
+                Update,
+                (
+                    record_loading_screen_connection,
+                    record_loading_screen_disconnect,
+                    retry_initial_game_server_connection,
+                    update_loading_screen_wallpaper_status,
+                    update_loading_screen_ready_gate,
+                    send_display_ready,
+                    receive_loading_screen_status,
+                    sync_loading_screen_ui,
+                )
+                    .chain(),
+            );
     }
 }
 
+/// Seeds loading-screen player cards from the launcher-provided match manifest.
+fn seed_loading_screen_players_from_manifest(
+    mut state: ResMut<LoadingScreenState>,
+    manifest: Res<ClientLoadingMatchManifest>,
+) {
+    if !state.active || manifest.players.is_empty() {
+        return;
+    }
+
+    let (light_players, dark_players) = loading_players_from_manifest(&manifest);
+    let total_players = light_players.len() + dark_players.len();
+    if total_players == 0 {
+        return;
+    }
+
+    state.ready_players = 0;
+    state.total_players = total_players;
+    state.light_players = light_players;
+    state.dark_players = dark_players;
+}
+
+/// Seeds in-world player profile names from match-manifest metadata.
 fn seed_overhead_profiles_from_manifest(
     manifest: Res<ClientLoadingMatchManifest>,
     mut overhead_profiles: ResMut<OverheadPlayerProfiles>,
@@ -200,33 +299,19 @@ fn seed_overhead_profiles_from_manifest(
 fn preload_loading_screen_wallpapers(
     asset_server: Res<AssetServer>,
     mut preload: ResMut<LoadingScreenWallpaperPreload>,
-    state: Res<LoadingScreenState>,
+    mut state: ResMut<LoadingScreenState>,
     mut commands: Commands,
 ) {
-    preload.expected_count = LOADING_SCREEN_WALLPAPERS.len();
-
-    let images = LoadingScreenImages {
-        lira: asset_server.load("wallpapers/lira-loading.jpg"),
-        ignara: asset_server.load("wallpapers/ignara-loading.jpg"),
-        yuna: asset_server.load("wallpapers/yuna-loading.jpg"),
-        sophia: asset_server.load("wallpapers/sophia-loading.jpg"),
-    };
-
-    preload.handles = vec![
-        images.lira.clone(),
-        images.ignara.clone(),
-        images.yuna.clone(),
-        images.sophia.clone(),
-    ];
+    let images = LoadingScreenImages::load(&asset_server);
+    preload.handles = images.wallpaper_handles().cloned().collect();
+    preload.expected_count = preload.handles.len();
     commands.insert_resource(images);
 
-    update_snapshot(&state.shared, |snapshot| {
-        snapshot.wallpaper_assets_ready = !snapshot.active;
-    });
+    state.wallpaper_assets_ready = !state.active;
 }
 
 fn update_loading_screen_wallpaper_status(
-    state: Res<LoadingScreenState>,
+    mut state: ResMut<LoadingScreenState>,
     preload: Res<LoadingScreenWallpaperPreload>,
     images: Res<Assets<Image>>,
 ) {
@@ -235,16 +320,14 @@ fn update_loading_screen_wallpaper_status(
     }
 
     let wallpapers_ready = wallpaper_handles_ready(&preload, &images);
-    if wallpapers_ready == state.snapshot().wallpaper_assets_ready {
+    if wallpapers_ready == state.wallpaper_assets_ready {
         return;
     }
 
-    update_snapshot(&state.shared, |snapshot| {
-        snapshot.wallpaper_assets_ready = wallpapers_ready;
-        if wallpapers_ready && snapshot.status_text == "Loading match art" {
-            snapshot.status_text = "Loading local arena".to_string();
-        }
-    });
+    state.wallpaper_assets_ready = wallpapers_ready;
+    if wallpapers_ready && state.status_text == "Loading match art" {
+        state.status_text = "Loading local arena".to_string();
+    }
 }
 
 fn wallpaper_handles_ready(
@@ -258,11 +341,13 @@ fn wallpaper_handles_ready(
             .all(|handle| images.get(handle.id()).is_some())
 }
 
+/// Creates loading-screen state from the supplied launch settings.
 pub fn loading_screen_state(settings: &ClientLaunchSettings) -> LoadingScreenState {
     let enabled = loading_screen_enabled(settings);
-    let snapshot = LoadingScreenSnapshot {
+    LoadingScreenState {
         active: enabled,
         complete: !enabled,
+        connection_error: None,
         wallpaper_assets_ready: !enabled,
         status_text: if enabled {
             "Loading local arena".to_string()
@@ -276,29 +361,24 @@ pub fn loading_screen_state(settings: &ClientLaunchSettings) -> LoadingScreenSta
         total_players: 0,
         dark_players: Vec::new(),
         light_players: Vec::new(),
-    };
-    let state = LoadingScreenState {
-        shared: Arc::new(Mutex::new(snapshot)),
-    };
-
-    state
+    }
 }
 
 fn loading_screen_enabled(settings: &ClientLaunchSettings) -> bool {
     settings.match_id.is_some() && settings.player_public_id.is_some()
 }
 
+/// Advances local loading progress and reports readiness after assets and the minimum delay complete.
 fn update_loading_screen_ready_gate(
     time: Res<Time>,
     mut gate: ResMut<LoadingScreenReadyGate>,
-    state: Res<LoadingScreenState>,
+    mut state: ResMut<LoadingScreenState>,
     asset_server: Option<Res<AssetServer>>,
     preload: Res<LoadingScreenWallpaperPreload>,
     images: Option<Res<Assets<Image>>>,
     scene_roots: Query<&WorldAssetRoot>,
 ) {
-    let snapshot = state.snapshot();
-    if !snapshot.active || snapshot.client_ready {
+    if !state.active || state.client_ready || state.connection_error.is_some() {
         return;
     }
 
@@ -326,11 +406,9 @@ fn update_loading_screen_ready_gate(
     let render_ready = scene_assets_ready && wallpaper_assets_ready;
 
     if minimum_done && render_ready {
-        update_snapshot(&state.shared, |snapshot| {
-            snapshot.client_ready = true;
-            snapshot.client_progress_percent = 100.0;
-            snapshot.status_text = "Local arena ready".to_string();
-        });
+        state.client_ready = true;
+        state.client_progress_percent = 100.0;
+        state.status_text = "Local arena ready".to_string();
         return;
     }
 
@@ -356,33 +434,36 @@ fn update_loading_screen_ready_gate(
         }
     };
 
-    update_snapshot(&state.shared, |snapshot| {
-        snapshot.client_progress_percent = local_progress;
-        snapshot.status_text = status_text;
-    });
+    state.client_progress_percent = local_progress;
+    state.status_text = status_text;
 }
 
 fn send_display_ready(
-    state: Res<LoadingScreenState>,
+    mut state: ResMut<LoadingScreenState>,
+    connection: Res<LoadingScreenConnectionState>,
     mut senders: Query<&mut MessageSender<DisplayReady>, With<Client>>,
 ) {
-    let snapshot = state.snapshot();
-    if !snapshot.active || !snapshot.client_ready || snapshot.ready_sent {
+    if !state.active || !state.client_ready || state.ready_sent || state.connection_error.is_some()
+    {
+        return;
+    }
+
+    if !connection.has_connected {
+        state.status_text = "Connecting to game server".to_string();
         return;
     }
 
     for mut sender in &mut senders {
         sender.send::<ReliableCommandChannel>(DisplayReady);
     }
-    update_snapshot(&state.shared, |snapshot| {
-        snapshot.ready_sent = true;
-        snapshot.client_progress_percent = 100.0;
-        snapshot.status_text = "Waiting for players".to_string();
-    });
+    state.ready_sent = true;
+    state.client_progress_percent = 100.0;
+    state.status_text = "Waiting for players".to_string();
 }
 
+/// Applies the latest server loading status to local state and player profiles.
 fn receive_loading_screen_status(
-    state: Res<LoadingScreenState>,
+    mut state: ResMut<LoadingScreenState>,
     manifest: Res<ClientLoadingMatchManifest>,
     mut overhead_profiles: ResMut<OverheadPlayerProfiles>,
     mut receivers: Query<&mut MessageReceiver<LoadingScreenStatus>, With<Client>>,
@@ -404,24 +485,108 @@ fn receive_loading_screen_status(
         }
     }
 
-    update_snapshot(&state.shared, |snapshot| {
-        snapshot.ready_players = status.ready_players;
-        snapshot.total_players = status.total_players.max(1);
-        if status.can_close {
-            snapshot.status_text = "Entering arena".to_string();
-            snapshot.complete = true;
-        } else if !snapshot.complete && snapshot.ready_sent {
-            snapshot.status_text = "Waiting for players".to_string();
+    if state.connection_error.is_some() {
+        return;
+    }
+
+    state.ready_players = status.ready_players;
+    state.total_players = status.total_players.max(1);
+    if status.can_close {
+        state.status_text = "Entering arena".to_string();
+        state.complete = true;
+    } else if !state.complete && state.ready_sent {
+        state.status_text = "Waiting for players".to_string();
+    }
+    if status.players.is_empty() {
+        mark_ready_players(&mut state, &status.ready_player_ids, status.ready_players);
+    } else {
+        let (light_players, dark_players) = loading_players_from_status(&status.players, &manifest);
+        state.light_players = light_players;
+        state.dark_players = dark_players;
+    }
+}
+
+/// Records the first successful game-server connection during loading.
+fn record_loading_screen_connection(
+    connected_clients: Query<Entity, (With<Client>, Added<Connected>)>,
+    mut connection: ResMut<LoadingScreenConnectionState>,
+) {
+    if connected_clients.is_empty() {
+        return;
+    }
+
+    connection.mark_connected();
+}
+
+/// Records a failed game-server connection while keeping the loading screen visible.
+fn record_loading_screen_disconnect(
+    disconnected_clients: Query<&Disconnected, (With<Client>, Added<Disconnected>)>,
+    mut state: ResMut<LoadingScreenState>,
+    mut connection: ResMut<LoadingScreenConnectionState>,
+) {
+    if !state.active || state.complete || state.connection_error.is_some() {
+        return;
+    }
+
+    for disconnected in &disconnected_clients {
+        let Some(reason) = disconnected.reason.as_deref() else {
+            continue;
+        };
+        if reason == "Client trigger" {
+            continue;
         }
-        if status.players.is_empty() {
-            mark_ready_players(snapshot, &status.ready_player_ids, status.ready_players);
-        } else {
-            let (light_players, dark_players) =
-                loading_players_from_status(&status.players, &manifest);
-            snapshot.light_players = light_players;
-            snapshot.dark_players = dark_players;
+
+        if connection.schedule_initial_retry() {
+            info!(
+                retry = connection.initial_retry_count,
+                "Game-server connection ended before the initial handshake; retrying."
+            );
+            state.status_text = "Connecting to game server".to_string();
+            return;
         }
+
+        warn!("Game server connection failed: {reason}");
+        let status_text = loading_connection_error_text(reason);
+        state.connection_error = Some(status_text.to_string());
+        state.client_ready = true;
+        state.client_progress_percent = 100.0;
+        state.status_text = status_text.to_string();
+        return;
+    }
+}
+
+/// Retries a transient disconnect that occurs before the first successful connection.
+fn retry_initial_game_server_connection(
+    time: Res<Time>,
+    state: Res<LoadingScreenState>,
+    mut connection: ResMut<LoadingScreenConnectionState>,
+    disconnected_clients: Query<Entity, (With<Client>, With<Disconnected>)>,
+    mut commands: Commands,
+) {
+    if !state.active || state.complete || state.connection_error.is_some() {
+        return;
+    }
+    if !connection.retry_is_ready(time.delta()) {
+        return;
+    }
+
+    let Some(client_entity) = disconnected_clients.iter().next() else {
+        connection.clear_pending_retry();
+        return;
+    };
+
+    connection.clear_pending_retry();
+    commands.trigger(Connect {
+        entity: client_entity,
     });
+}
+
+fn loading_connection_error_text(reason: &str) -> &'static str {
+    if reason.contains("ConnectionRequestTimedOut") {
+        "Connection to game server timed out"
+    } else {
+        "Connection to game server lost"
+    }
 }
 
 #[derive(Component)]
@@ -432,6 +597,9 @@ struct LoadingProgressFill;
 
 #[derive(Component)]
 struct LoadingProgressBadgeText;
+
+#[derive(Component)]
+struct LoadingStatusText;
 
 #[derive(Component)]
 struct LoadingPingText;
@@ -491,14 +659,14 @@ fn spawn_loading_screen_ui(
     mut commands: Commands,
     settings: Res<ClientAppSettings>,
     launch_settings: Res<ClientLaunchSettings>,
-    asset_server: Res<AssetServer>,
+    loading_images: Res<LoadingScreenImages>,
     mut ui_images: ResMut<Assets<Image>>,
 ) {
     if !settings.ui_enabled {
         return;
     }
 
-    let fallback_wallpaper = asset_server.load("wallpapers/lira-loading.jpg");
+    let fallback_wallpaper = loading_images.wallpaper(ChampionId::LIRA).clone();
     let progress_badge_image = ui_images.add(progress_badge_shape_image(
         launch_settings.accent_color_bevy(),
     ));
@@ -795,6 +963,7 @@ fn loading_progress_panel(progress_badge_image: Handle<Image>) -> impl Bundle {
             flex_direction: FlexDirection::Column,
             justify_content: JustifyContent::Center,
             align_items: AlignItems::Center,
+            row_gap: px(4),
             ..default()
         },
         children![
@@ -856,10 +1025,18 @@ fn loading_progress_panel(progress_badge_image: Handle<Image>) -> impl Bundle {
                     ),
                 ],
             ),
+            (
+                LoadingStatusText,
+                Text::new("Loading local arena"),
+                TextFont::from_font_size(15.0),
+                TextColor(Color::srgba(0.78, 0.82, 0.88, 1.0)),
+                TextLayout::justify(Justify::Center),
+            ),
         ],
     )
 }
 
+/// Synchronizes loading-screen UI nodes with state, assets, and network ping.
 fn sync_loading_screen_ui(
     time: Res<Time>,
     state: Res<LoadingScreenState>,
@@ -883,6 +1060,7 @@ fn sync_loading_screen_ui(
     mut text_queries: ParamSet<(
         Query<(&LoadingCardAccentText, &mut Text, &mut TextColor)>,
         Query<(&mut Text, &mut TextColor), With<LoadingProgressBadgeText>>,
+        Query<(&mut Text, &mut TextColor), With<LoadingStatusText>>,
         Query<(&mut Text, &mut TextColor), With<LoadingPingText>>,
     )>,
     mut ping_spinners: Query<
@@ -890,8 +1068,7 @@ fn sync_loading_screen_ui(
         (With<LoadingPingSpinner>, Without<LoadingCard>),
     >,
 ) {
-    let snapshot = state.snapshot();
-    let visible = snapshot.active && !snapshot.complete;
+    let visible = state.is_visible();
     for mut root in &mut layout_nodes.p0() {
         root.display = if visible {
             Display::Flex
@@ -906,21 +1083,21 @@ fn sync_loading_screen_ui(
         .as_deref()
         .and_then(|public_id| public_id.parse::<u64>().ok());
     if last_progress_accent.as_ref() != Some(&accent) {
-        if let Some(progress_badge_image) = progress_badge_image.as_deref() {
-            if let Some(mut image) = ui_images.get_mut(progress_badge_image.handle.id()) {
-                *image = progress_badge_shape_image(accent);
-            }
+        if let Some(progress_badge_image) = progress_badge_image.as_deref()
+            && let Some(mut image) = ui_images.get_mut(progress_badge_image.handle.id())
+        {
+            *image = progress_badge_shape_image(accent);
         }
         *last_progress_accent = Some(accent);
     }
 
     for (mut node, mut background) in &mut layout_nodes.p1() {
-        node.width = percent(snapshot.progress_percent());
+        node.width = percent(state.progress_percent());
         *background = BackgroundColor(accent);
     }
 
     for (card, mut node, mut border) in &mut layout_nodes.p2() {
-        let player = loading_card_player(&snapshot, card.team, card.index);
+        let player = loading_card_player(&state, card.team, card.index);
         let is_local_player =
             player.is_some_and(|player| Some(player.public_id) == local_player_public_id);
         node.display = if player.is_some() {
@@ -935,28 +1112,23 @@ fn sync_loading_screen_ui(
     for (card_image, mut image_node) in &mut layout_nodes.p4() {
         if let (Some(images), Some(player)) = (
             images.as_deref(),
-            loading_card_player(&snapshot, card_image.team, card_image.index),
+            loading_card_player(&state, card_image.team, card_image.index),
         ) {
-            image_node.image = loading_wallpaper(images, player.champion).clone();
+            image_node.image = images.wallpaper(player.champion).clone();
         }
     }
 
     for (avatar, mut background) in &mut layout_nodes.p3() {
-        if loading_card_player(&snapshot, avatar.team, avatar.index).is_some() {
+        if loading_card_player(&state, avatar.team, avatar.index).is_some() {
             *background = BackgroundColor(accent);
         }
     }
 
     for (avatar, mut node, mut image_node) in &mut layout_nodes.p5() {
-        let avatar_handle = loading_card_player(&snapshot, avatar.team, avatar.index)
+        let avatar_handle = loading_card_player(&state, avatar.team, avatar.index)
             .and_then(|player| player.avatar_url.as_deref())
             .and_then(|avatar_url| {
-                loading_avatar_handle(
-                    avatar_url,
-                    &asset_server,
-                    &mut *avatar_cache,
-                    &mut *ui_images,
-                )
+                loading_avatar_handle(avatar_url, &asset_server, &mut avatar_cache, &mut ui_images)
             });
 
         if let Some(handle) = avatar_handle {
@@ -967,15 +1139,25 @@ fn sync_loading_screen_ui(
         }
     }
 
-    let progress = snapshot.progress_percent().round().clamp(0.0, 100.0) as u32;
+    let progress = state.progress_percent().round().clamp(0.0, 100.0) as u32;
     for (mut text, mut color) in &mut text_queries.p1() {
         text.0 = format!("{progress}%");
         *color = TextColor(accent_foreground_for(accent));
     }
 
+    let status_color = if state.connection_error.is_some() {
+        Color::srgb_u8(0xED, 0x5C, 0x5C)
+    } else {
+        Color::srgba(0.78, 0.82, 0.88, 1.0)
+    };
+    for (mut text, mut color) in &mut text_queries.p2() {
+        text.0 = state.status_text.clone();
+        *color = TextColor(status_color);
+    }
+
     let ping_color = ping_color(&network_ping);
     let ping_text = ping_text(&network_ping);
-    for (mut text, mut color) in &mut text_queries.p2() {
+    for (mut text, mut color) in &mut text_queries.p3() {
         text.0 = ping_text.clone();
         *color = TextColor(ping_color);
     }
@@ -988,7 +1170,7 @@ fn sync_loading_screen_ui(
     }
 
     for (text_marker, mut text, mut color) in &mut text_queries.p0() {
-        if let Some(player) = loading_card_player(&snapshot, text_marker.team, text_marker.index) {
+        if let Some(player) = loading_card_player(&state, text_marker.team, text_marker.index) {
             text.0 = match text_marker.kind {
                 LoadingCardTextKind::Initial => {
                     if player
@@ -1020,6 +1202,7 @@ fn sync_loading_screen_ui(
     }
 }
 
+/// Returns a cached avatar image handle or begins loading the avatar.
 fn loading_avatar_handle(
     source: &str,
     asset_server: &AssetServer,
@@ -1032,12 +1215,12 @@ fn loading_avatar_handle(
     }
 
     if let Some(entry) = cache.entries.get_mut(source) {
-        match entry {
-            LoadingAvatarEntry::Ready(handle) => return Some(handle.clone()),
-            LoadingAvatarEntry::Failed => return None,
+        return match entry {
+            LoadingAvatarEntry::Ready(handle) => Some(handle.clone()),
+            LoadingAvatarEntry::Failed => None,
             LoadingAvatarEntry::Loading(receiver) => {
                 let received = receiver
-                    .lock()
+                    .get_mut()
                     .unwrap_or_else(|error| error.into_inner())
                     .try_recv();
 
@@ -1055,7 +1238,7 @@ fn loading_avatar_handle(
 
                         warn!("Failed to decode loading-screen avatar from '{}'.", source);
                         *entry = LoadingAvatarEntry::Failed;
-                        return None;
+                        None
                     }
                     Ok(Err(error)) => {
                         warn!(
@@ -1063,16 +1246,16 @@ fn loading_avatar_handle(
                             source, error
                         );
                         *entry = LoadingAvatarEntry::Failed;
-                        return None;
+                        None
                     }
-                    Err(std::sync::mpsc::TryRecvError::Empty) => return None,
+                    Err(std::sync::mpsc::TryRecvError::Empty) => None,
                     Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                         *entry = LoadingAvatarEntry::Failed;
-                        return None;
+                        None
                     }
                 }
             }
-        }
+        };
     }
 
     if source.starts_with("http://") || source.starts_with("https://") {
@@ -1083,7 +1266,7 @@ fn loading_avatar_handle(
         });
         cache.entries.insert(
             source.to_string(),
-            LoadingAvatarEntry::Loading(Arc::new(Mutex::new(receiver))),
+            LoadingAvatarEntry::Loading(Mutex::new(receiver)),
         );
         return None;
     }
@@ -1138,16 +1321,16 @@ fn avatar_image_from_download(
     bytes: &[u8],
     content_type: Option<&str>,
 ) -> Option<Image> {
-    if let Some(content_type) = content_type {
-        if let Ok(image) = avatar_image_from_buffer(bytes, ImageType::MimeType(content_type)) {
-            return Some(image);
-        }
+    if let Some(content_type) = content_type
+        && let Ok(image) = avatar_image_from_buffer(bytes, ImageType::MimeType(content_type))
+    {
+        return Some(image);
     }
 
-    if let Some(extension) = image_extension(source) {
-        if let Ok(image) = avatar_image_from_buffer(bytes, ImageType::Extension(extension)) {
-            return Some(image);
-        }
+    if let Some(extension) = image_extension(source)
+        && let Ok(image) = avatar_image_from_buffer(bytes, ImageType::Extension(extension))
+    {
+        return Some(image);
     }
 
     ["png", "jpg", "jpeg", "webp"]
@@ -1155,10 +1338,7 @@ fn avatar_image_from_download(
         .find_map(|extension| avatar_image_from_buffer(bytes, ImageType::Extension(extension)).ok())
 }
 
-fn avatar_image_from_buffer(
-    bytes: &[u8],
-    image_type: ImageType,
-) -> Result<Image, bevy::image::TextureError> {
+fn avatar_image_from_buffer(bytes: &[u8], image_type: ImageType) -> Result<Image, TextureError> {
     Image::from_buffer(
         bytes,
         image_type,
@@ -1178,35 +1358,26 @@ fn image_extension(source: &str) -> Option<&str> {
 }
 
 fn loading_card_player(
-    snapshot: &LoadingScreenSnapshot,
+    state: &LoadingScreenState,
     team: LoadingTeam,
     index: usize,
 ) -> Option<&LoadingPlayer> {
     match team {
-        LoadingTeam::Light => snapshot.light_players.get(index),
-        LoadingTeam::Dark => snapshot.dark_players.get(index),
-    }
-}
-
-fn loading_wallpaper(images: &LoadingScreenImages, champion: ChampionId) -> &Handle<Image> {
-    match champion.0 {
-        6607 => &images.ignara,
-        6608 => &images.yuna,
-        6609 => &images.sophia,
-        _ => &images.lira,
+        LoadingTeam::Light => state.light_players.get(index),
+        LoadingTeam::Dark => state.dark_players.get(index),
     }
 }
 
 fn mark_ready_players(
-    snapshot: &mut LoadingScreenSnapshot,
+    state: &mut LoadingScreenState,
     ready_player_ids: &[u64],
     ready_players: usize,
 ) {
     if !ready_player_ids.is_empty() {
-        for player in snapshot
+        for player in state
             .dark_players
             .iter_mut()
-            .chain(snapshot.light_players.iter_mut())
+            .chain(state.light_players.iter_mut())
         {
             player.ready = ready_player_ids.contains(&player.public_id);
         }
@@ -1214,46 +1385,78 @@ fn mark_ready_players(
     }
 
     let mut remaining = ready_players;
-    for player in snapshot
+    for player in state
         .dark_players
         .iter_mut()
-        .chain(snapshot.light_players.iter_mut())
+        .chain(state.light_players.iter_mut())
     {
         player.ready = remaining > 0;
         remaining = remaining.saturating_sub(1);
     }
 }
 
+/// Builds team-specific loading-screen players from launcher match-manifest data.
+fn loading_players_from_manifest(
+    manifest: &ClientLoadingMatchManifest,
+) -> (Vec<LoadingPlayer>, Vec<LoadingPlayer>) {
+    split_loading_players_by_team(manifest.players.iter().map(|(&player_id, player)| {
+        (
+            player.team,
+            LoadingPlayer {
+                public_id: player_id,
+                name: player
+                    .display_name
+                    .clone()
+                    .unwrap_or_else(|| "Player".to_string()),
+                avatar_url: player.avatar_url.clone(),
+                champion: player.champion,
+                champion_name: champion_name(player.champion).to_string(),
+                ready: false,
+            },
+        )
+    }))
+}
+
+/// Builds team-specific loading-screen players from the server status.
 fn loading_players_from_status(
     status_players: &[LoadingScreenPlayer],
     manifest: &ClientLoadingMatchManifest,
 ) -> (Vec<LoadingPlayer>, Vec<LoadingPlayer>) {
+    split_loading_players_by_team(status_players.iter().map(|player| {
+        let manifest_player = manifest.players.get(&player.player_id);
+        (
+            player.team,
+            LoadingPlayer {
+                public_id: player.player_id,
+                name: loading_player_display_name(player, manifest),
+                avatar_url: player
+                    .avatar_url
+                    .as_deref()
+                    .and_then(non_empty_string)
+                    .or_else(|| {
+                        manifest_player
+                            .and_then(|player| player.avatar_url.as_deref())
+                            .and_then(non_empty_string)
+                    }),
+                champion: player.champion,
+                champion_name: champion_name(player.champion).to_string(),
+                ready: player.ready,
+            },
+        )
+    }))
+}
+
+fn split_loading_players_by_team(
+    players: impl IntoIterator<Item = (TeamSpec, LoadingPlayer)>,
+) -> (Vec<LoadingPlayer>, Vec<LoadingPlayer>) {
     let mut light_players = Vec::new();
     let mut dark_players = Vec::new();
 
-    for player in status_players {
-        let manifest_player = manifest.players.get(&player.player_id);
-        let loading_player = LoadingPlayer {
-            public_id: player.player_id,
-            name: loading_player_display_name(player, manifest),
-            avatar_url: player
-                .avatar_url
-                .as_deref()
-                .and_then(non_empty_string)
-                .or_else(|| {
-                    manifest_player
-                        .and_then(|player| player.avatar_url.as_deref())
-                        .and_then(non_empty_string)
-                }),
-            champion: player.champion,
-            champion_name: champion_name(player.champion).to_string(),
-            ready: player.ready,
-        };
-
-        match player.team {
-            TeamSpec::Light => light_players.push(loading_player),
-            TeamSpec::Dark => dark_players.push(loading_player),
-            TeamSpec::Neutral => light_players.push(loading_player),
+    for (team, player) in players {
+        match team {
+            TeamSpec::Light => light_players.push(player),
+            TeamSpec::Dark => dark_players.push(player),
+            TeamSpec::Neutral => light_players.push(player),
         }
     }
 
@@ -1262,6 +1465,7 @@ fn loading_players_from_status(
     (light_players, dark_players)
 }
 
+/// Resolves the display name from server and manifest player data.
 fn loading_player_display_name(
     player: &LoadingScreenPlayer,
     manifest: &ClientLoadingMatchManifest,
@@ -1281,32 +1485,7 @@ fn loading_player_display_name(
 }
 
 fn champion_name(champion: ChampionId) -> &'static str {
-    match champion.0 {
-        6607 => "Ignara",
-        6608 => "Yuna",
-        6609 => "Sophia",
-        _ => "Lira",
-    }
-}
-
-fn public_display_name(value: &str) -> Option<String> {
-    let without_email_domain = value.trim().split('@').next().unwrap_or("").trim();
-    let public_name = without_email_domain
-        .split(|character: char| character.is_whitespace() || matches!(character, '.' | '_' | '-'))
-        .find(|part| !part.trim().is_empty())?
-        .trim();
-
-    non_empty_string(public_name)
-}
-
-fn non_empty_string(value: &str) -> Option<String> {
-    let value = value.trim();
-
-    if value.is_empty() {
-        None
-    } else {
-        Some(value.to_string())
-    }
+    champion.display_name().unwrap_or("Lira")
 }
 
 fn initials(name: &str) -> String {
@@ -1326,8 +1505,10 @@ fn progress_badge_shape_image(accent: Color) -> Image {
     let width = PROGRESS_BADGE_WIDTH;
     let height = PROGRESS_BADGE_HEIGHT;
     let mut data = vec![0; (width * height * 4) as usize];
-    let fill = rgba_bytes(Color::srgba(0.027, 0.035, 0.055, 0.94));
-    let border = rgba_bytes(accent);
+    let fill = Color::srgba(0.027, 0.035, 0.055, 0.94)
+        .to_srgba()
+        .to_u8_array();
+    let border = accent.to_srgba().to_u8_array();
 
     for y in 0..height {
         let t = y as f32 / height.saturating_sub(1) as f32;
@@ -1381,43 +1562,13 @@ fn accent_foreground_for(color: Color) -> Color {
     }
 }
 
-fn rgba_bytes(color: Color) -> [u8; 4] {
-    let srgba = color.to_srgba();
-    [
-        channel_to_byte(srgba.red),
-        channel_to_byte(srgba.green),
-        channel_to_byte(srgba.blue),
-        channel_to_byte(srgba.alpha),
-    ]
-}
-
-fn channel_to_byte(value: f32) -> u8 {
-    (value.clamp(0.0, 1.0) * 255.0).round() as u8
-}
-
-fn update_snapshot(
-    shared: &Arc<Mutex<LoadingScreenSnapshot>>,
-    update: impl FnOnce(&mut LoadingScreenSnapshot),
-) {
-    let mut snapshot = shared.lock().unwrap_or_else(|error| error.into_inner());
-    update(&mut snapshot);
-}
-
 impl LoadingScreenState {
-    fn snapshot(&self) -> LoadingScreenSnapshot {
-        self.shared
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .clone()
-    }
-
+    /// Returns whether the loading screen is currently visible.
     pub fn is_visible(&self) -> bool {
-        let snapshot = self.snapshot();
-        snapshot.active && !snapshot.complete
+        self.active && !self.complete
     }
-}
 
-impl LoadingScreenSnapshot {
+    /// Returns the progress percentage shown by the loading screen.
     fn progress_percent(&self) -> f32 {
         if !self.ready_sent {
             return self.client_progress_percent.clamp(0.0, 100.0);
@@ -1444,11 +1595,11 @@ impl Default for LoadingScreenReadyGate {
 mod tests {
     use super::*;
 
-    #[test]
-    fn calculates_progress_per_player() {
-        let snapshot = LoadingScreenSnapshot {
+    fn loading_screen_state_for_test() -> LoadingScreenState {
+        LoadingScreenState {
             active: true,
             complete: false,
+            connection_error: None,
             wallpaper_assets_ready: true,
             status_text: String::new(),
             client_progress_percent: 100.0,
@@ -1458,44 +1609,184 @@ mod tests {
             total_players: 2,
             dark_players: Vec::new(),
             light_players: Vec::new(),
-        };
+        }
+    }
+
+    #[test]
+    fn calculates_progress_per_player() {
+        let snapshot = loading_screen_state_for_test();
 
         assert_eq!(snapshot.progress_percent(), 50.0);
     }
 
     #[test]
     fn uses_local_progress_before_display_ready_is_sent() {
-        let snapshot = LoadingScreenSnapshot {
-            active: true,
-            complete: false,
-            wallpaper_assets_ready: true,
-            status_text: String::new(),
-            client_progress_percent: 42.0,
-            client_ready: false,
-            ready_sent: false,
-            ready_players: 2,
-            total_players: 2,
-            dark_players: Vec::new(),
-            light_players: Vec::new(),
-        };
+        let mut snapshot = loading_screen_state_for_test();
+        snapshot.client_progress_percent = 42.0;
+        snapshot.client_ready = false;
+        snapshot.ready_sent = false;
+        snapshot.ready_players = 2;
 
         assert_eq!(snapshot.progress_percent(), 42.0);
     }
 
     #[test]
-    fn trims_loading_display_names_to_public_first_part() {
+    fn initial_disconnect_schedules_a_retry_without_showing_an_error() {
+        let mut app = App::new();
+        app.insert_resource(loading_screen_state_for_test())
+            .init_resource::<LoadingScreenConnectionState>()
+            .add_systems(Update, record_loading_screen_disconnect);
+        app.world_mut().spawn((
+            Client::default(),
+            Disconnected {
+                reason: Some("Client disconnected: ConnectionRequestTimedOut".to_string()),
+            },
+        ));
+
+        app.update();
+
+        let state = app.world().resource::<LoadingScreenState>();
+        let connection = app.world().resource::<LoadingScreenConnectionState>();
+        assert_eq!(state.connection_error, None);
+        assert_eq!(state.status_text, "Connecting to game server");
+        assert_eq!(connection.initial_retry_count, 1);
+        assert!(connection.retry_timer.is_some());
+    }
+
+    #[test]
+    fn exhausted_initial_retries_show_the_connection_error() {
+        let mut connection = LoadingScreenConnectionState::default();
+        connection.initial_retry_count = MAXIMUM_INITIAL_CONNECTION_RETRIES;
+
+        let mut app = App::new();
+        app.insert_resource(loading_screen_state_for_test())
+            .insert_resource(connection)
+            .add_systems(Update, record_loading_screen_disconnect);
+        app.world_mut().spawn((
+            Client::default(),
+            Disconnected {
+                reason: Some("Client disconnected: ConnectionRequestTimedOut".to_string()),
+            },
+        ));
+
+        app.update();
+
         assert_eq!(
-            public_display_name("Exepta Mustermann").as_deref(),
-            Some("Exepta")
+            app.world()
+                .resource::<LoadingScreenState>()
+                .connection_error
+                .as_deref(),
+            Some("Connection to game server timed out")
         );
+    }
+
+    #[test]
+    fn established_connection_disconnect_blocks_display_ready_in_the_same_update() {
+        let mut state = loading_screen_state_for_test();
+        state.ready_sent = false;
+
+        let mut app = App::new();
+        app.insert_resource(state)
+            .insert_resource(LoadingScreenConnectionState {
+                has_connected: true,
+                ..default()
+            })
+            .add_systems(
+                Update,
+                (record_loading_screen_disconnect, send_display_ready).chain(),
+            );
+        app.world_mut().spawn((
+            Client::default(),
+            Disconnected {
+                reason: Some("Client disconnected: ConnectionRequestTimedOut".to_string()),
+            },
+        ));
+
+        app.update();
+
+        let state = app.world().resource::<LoadingScreenState>();
         assert_eq!(
-            public_display_name("exepta.profile").as_deref(),
-            Some("exepta")
+            state.connection_error.as_deref(),
+            Some("Connection to game server timed out")
         );
+        assert!(!state.ready_sent);
+        assert!(state.is_visible());
+    }
+
+    #[test]
+    fn display_ready_waits_for_the_first_server_connection() {
+        let mut state = loading_screen_state_for_test();
+        state.ready_sent = false;
+
+        let mut app = App::new();
+        app.insert_resource(state)
+            .init_resource::<LoadingScreenConnectionState>()
+            .add_systems(Update, send_display_ready);
+
+        app.update();
+
+        let state = app.world().resource::<LoadingScreenState>();
+        assert!(!state.ready_sent);
+        assert_eq!(state.status_text, "Connecting to game server");
+    }
+
+    #[test]
+    fn builds_loading_players_from_launcher_manifest() {
+        let manifest = ClientLoadingMatchManifest::from_json(
+            r#"{
+                "matchId": "match-1",
+                "players": [
+                    {
+                        "playerPublicId": 8,
+                        "team": "Dark",
+                        "championId": 6607,
+                        "displayName": "Dark Player",
+                        "avatarUrl": ""
+                    },
+                    {
+                        "playerPublicId": 7,
+                        "team": "Light",
+                        "championId": 6609,
+                        "displayName": "Second Light"
+                    },
+                    {
+                        "playerPublicId": 4,
+                        "team": "Light",
+                        "championId": 6606,
+                        "display_name": "First Light",
+                        "avatar_url": "avatars/first.png"
+                    }
+                ]
+            }"#,
+        )
+        .expect("launcher manifest should parse");
+
+        let (light_players, dark_players) = loading_players_from_manifest(&manifest);
+
         assert_eq!(
-            public_display_name("exepta@example.com").as_deref(),
-            Some("exepta")
+            light_players
+                .iter()
+                .map(|player| player.public_id)
+                .collect::<Vec<_>>(),
+            vec![4, 7]
         );
-        assert_eq!(public_display_name("   ").as_deref(), None);
+        assert_eq!(light_players[0].name, "First");
+        assert_eq!(light_players[0].champion, ChampionId::LIRA);
+        assert_eq!(
+            light_players[0].avatar_url.as_deref(),
+            Some("avatars/first.png")
+        );
+        assert!(!light_players[0].ready);
+        assert_eq!(dark_players[0].name, "Dark");
+        assert_eq!(dark_players[0].champion_name, "Ignara");
+        assert_eq!(dark_players[0].avatar_url, None);
+    }
+
+    #[test]
+    fn describes_connection_request_timeouts() {
+        assert_eq!(
+            loading_connection_error_text("Client disconnected: ConnectionRequestTimedOut"),
+            "Connection to game server timed out"
+        );
     }
 }

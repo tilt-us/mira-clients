@@ -10,12 +10,9 @@ use super::{
 use bevy::prelude::*;
 use game_shared::game::player::{Health, PlayerControlled};
 use game_shared::network::ChampionId;
-
-/// Description:
 /// Stores gameplay values that the client HUD can render without depending on
 /// private gameplay resources.
 ///
-/// Fields:
 /// - `health_current`: Current health of the locally controlled player.
 /// - `health_max`: Maximum health of the locally controlled player.
 /// - `health_percent`: Current health ratio in percent.
@@ -105,20 +102,15 @@ impl Default for MiraHudState {
 }
 
 impl MiraHudState {
-    /// Description:
     /// Updates the server-provided respawn timer while preserving other HUD values.
     ///
-    /// Params:
     /// - `respawn_seconds`: Remaining respawn time reported by the server.
     pub(in crate::systems) fn set_respawn_seconds(&mut self, respawn_seconds: f32) {
         self.respawn_seconds = respawn_seconds.max(0.0);
     }
 }
-
-/// Description:
 /// Mirrors local gameplay state into a compact HUD resource.
 ///
-/// Params:
 /// - `player_query`: Locally controlled player health used for the HUD health block.
 /// - `q_state`: Local Q cooldown state.
 /// - `w_state`: Local W cooldown state.
@@ -147,7 +139,7 @@ pub(super) fn update_mira_hud_state(
         hud_state.alive = health.current > 0;
 
         match visual.champion {
-            Some(ChampionId(6607)) => {
+            Some(ChampionId::IGNARA) => {
                 hud_state.champion_name = "Ignara".to_string();
                 hud_state.champion_initial = "I".to_string();
                 hud_state.q_name = "Burning Ground".to_string();
@@ -165,7 +157,7 @@ pub(super) fn update_mira_hud_state(
                 hud_state.e_cooldown_total = ignara_e_state.total_seconds();
                 hud_state.e_ready_percent = ignara_e_state.ready_percent();
             }
-            Some(ChampionId(6608)) => {
+            Some(ChampionId::YUNA) => {
                 hud_state.champion_name = "Yuna".to_string();
                 hud_state.champion_initial = "Y".to_string();
                 hud_state.q_name = "Gravity Orb".to_string();
@@ -183,7 +175,7 @@ pub(super) fn update_mira_hud_state(
                 hud_state.e_cooldown_total = yuna_e_state.total_seconds();
                 hud_state.e_ready_percent = yuna_e_state.ready_percent();
             }
-            Some(ChampionId(6609)) => {
+            Some(ChampionId::SOPHIA) => {
                 hud_state.champion_name = "Sophia".to_string();
                 hud_state.champion_initial = "S".to_string();
                 hud_state.q_name = "Head Star".to_string();

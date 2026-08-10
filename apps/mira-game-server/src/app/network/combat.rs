@@ -8,8 +8,6 @@ use lightyear::prelude::server::ClientOf;
 use lightyear::prelude::*;
 
 const COMBAT_NUMBER_FLUSH_SECONDS: f32 = 0.15;
-
-/// Description:
 /// Queues server-authoritative combat numbers until they are broadcast to clients.
 #[derive(Resource, Debug)]
 pub(super) struct ServerCombatNumberEvents {
@@ -26,8 +24,6 @@ impl Default for ServerCombatNumberEvents {
         }
     }
 }
-
-/// Description:
 /// Broadcasts server-authoritative combat numbers to all connected clients.
 pub(super) fn broadcast_combat_number_events(
     mut clients: Query<
@@ -53,8 +49,6 @@ pub(super) fn broadcast_combat_number_events(
         }
     }
 }
-
-/// Description:
 /// Applies area damage to all valid enemy players in radius.
 pub(super) fn apply_area_damage(
     combat_events: &mut ServerCombatNumberEvents,
@@ -89,8 +83,6 @@ pub(super) fn apply_area_damage(
         }
     }
 }
-
-/// Description:
 /// Applies damage to one server-side player state.
 pub(super) fn apply_damage(
     combat_events: &mut ServerCombatNumberEvents,
@@ -116,8 +108,6 @@ pub(super) fn apply_damage(
         target.respawn_timer = Some(RESPAWN_SECONDS);
     }
 }
-
-/// Description:
 /// Applies capped healing to one server-side player state.
 pub(super) fn apply_heal(
     combat_events: &mut ServerCombatNumberEvents,
@@ -139,8 +129,6 @@ pub(super) fn apply_heal(
         NetworkCombatNumberKind::Heal,
     );
 }
-
-/// Runs the push combat number step for the dedicated server lobby simulation system.
 fn push_combat_number(
     combat_events: &mut ServerCombatNumberEvents,
     target_player_id: u64,
