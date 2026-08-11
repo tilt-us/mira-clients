@@ -37,6 +37,12 @@ application:
 - `GARAGE_REGION`
 - `GARAGE_BUCKET`
 
+Deployment branches are explicit: pushes to `development` publish a `dev`
+build under `dev/`; pushes to `master` publish a `staging` build under
+`staging/`. Production is a manual workflow dispatch from `master` only and
+requires `confirm=PROD`; it publishes at the bucket root and is the only flow
+that creates or updates GitHub Releases.
+
 ## Development Start
 
 Install the desktop client dependencies first:

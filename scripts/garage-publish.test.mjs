@@ -7,6 +7,7 @@ test("maps environments to stable Garage prefixes", () => {
   assert.deepEqual(garageEnvironment("staging"), { environment: "staging", prefix: "staging/" });
   assert.deepEqual(garageEnvironment("prod"), { environment: "prod", prefix: "" });
   assert.throws(() => garageEnvironment("preview"));
+  assert.throws(() => garageEnvironment(""));
   assert.equal(garageObjectUrl("prod", "latest.json"), "https://downloads.tilt-us.com/latest.json");
 });
 
