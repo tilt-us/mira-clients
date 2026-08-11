@@ -90,7 +90,7 @@ jobs:
         id: mira-game-api-token
         uses: actions/create-github-app-token@v3
         with:
-          client-id: ${{ vars.MIRA_CI_APP_CLIENT_ID }}
+          client-id: ${{ secrets.MIRA_CI_APP_CLIENT_ID }}
           private-key: ${{ secrets.MIRA_CI_APP_PRIVATE_KEY }}
           owner: tilt-us
           repositories: mira-game-api
