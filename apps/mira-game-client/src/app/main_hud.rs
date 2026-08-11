@@ -78,10 +78,10 @@ fn spawn_main_hud(
     mut ui_images: ResMut<Assets<Image>>,
 ) {
     let images = HudImages {
-        lira: asset_server.load("characters/lira.png"),
-        ignara: asset_server.load("characters/ignara.png"),
-        yuna: asset_server.load("characters/yuna.png"),
-        sophia: asset_server.load("characters/sophia.png"),
+        lira: asset_server.load("ui/characters/lira.png"),
+        ignara: asset_server.load("ui/characters/ignara.png"),
+        yuna: asset_server.load("ui/characters/yuna.png"),
+        sophia: asset_server.load("ui/characters/sophia.png"),
     };
     let top_bar_shape = TopBarShapeImage {
         handle: ui_images.add(top_bar_shape_image(accent_fallback())),

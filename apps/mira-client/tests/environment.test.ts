@@ -32,6 +32,7 @@ describe("environment configuration", () => {
         servicesApiUrl,
         websiteUrl,
       });
+      expect(getServiceUrl(config, "auth")).toBe(servicesApiUrl);
       expect(getServiceUrl(config, "match")).toBe(`${servicesApiUrl}/match`);
     },
   );

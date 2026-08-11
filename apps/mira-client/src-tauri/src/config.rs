@@ -7,24 +7,6 @@ pub(crate) struct ClientConfig {
     environment: Environment,
 }
 
-#[derive(serde::Deserialize)]
-struct EnvironmentDefinitions {
-    dev: WebsiteEnvironmentConfig,
-    staging: WebsiteEnvironmentConfig,
-    prod: WebsiteEnvironmentConfig,
-}
-
-#[derive(serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct WebsiteEnvironmentConfig {
-    website_url: String,
-}
-
-const ENVIRONMENT_DEFINITIONS: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../../mira-environments.json"
-));
-
 /// Returns the environment selected when this desktop client was built.
 pub(crate) fn build_environment() -> Result<Environment, String> {
     option_env!("MIRA_ENV")
@@ -33,20 +15,6 @@ pub(crate) fn build_environment() -> Result<Environment, String> {
                 .to_string()
         })?
         .parse()
-}
-
-/// Returns the configured public website host for OAuth error callbacks.
-pub(crate) fn website_url() -> Result<String, String> {
-    let definitions = serde_json::from_str::<EnvironmentDefinitions>(ENVIRONMENT_DEFINITIONS)
-        .map_err(|error| format!("Zentrale Environment-Konfiguration ist ungültig: {error}"))?;
-
-    let config = match build_environment()? {
-        Environment::Dev => definitions.dev,
-        Environment::Staging => definitions.staging,
-        Environment::Prod => definitions.prod,
-    };
-
-    Ok(config.website_url)
 }
 
 /// Returns the centrally selected environment to the React client.

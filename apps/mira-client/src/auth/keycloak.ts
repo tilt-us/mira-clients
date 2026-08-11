@@ -1,11 +1,12 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
   KEYCLOAK_AUTH_URL,
   KEYCLOAK_CLIENT_ID,
+  KEYCLOAK_ENVIRONMENT,
   KEYCLOAK_ISSUER_URL,
   KEYCLOAK_PASSWORD_CLIENT_ID,
   KEYCLOAK_TOKEN_URL,
+  NATIVE_LOOPBACK_REDIRECT_BASE,
   WEBSITE_URL,
   getRedirectUri,
 } from "./config";
@@ -30,7 +31,6 @@ type TokenResponse = {
 };
 
 const accessTokenRefreshMarginMs = 60_000;
-const keycloakLogoutTimeoutMs = 15_000;
 export const passwordResetSentParam = "mira_password_reset";
 
 let refreshPromise: Promise<AuthTokens | undefined> | undefined;
@@ -157,23 +157,62 @@ async function requestToken(
   fallbackRefreshToken?: string,
   fallbackIdToken?: string,
 ) {
-  const response = await apiFetch(KEYCLOAK_TOKEN_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body,
-  });
+  if (body.get("grant_type") === "authorization_code") {
+    const redirectUri = body.get("redirect_uri") ?? "missing";
+    if (
+      isTauri() &&
+      (!nativeOAuthAttempt || nativeOAuthAttempt.redirectUri !== redirectUri)
+    ) {
+      throw new Error("Native OAuth token exchange redirect URI does not match its login attempt.");
+    }
+
+    if (nativeOAuthAttempt) {
+      nativeOAuthAttempt.phase = "exchangingToken";
+    }
+    console.info(
+      `[mira-client][oauth] attempt=${nativeOAuthAttempt?.attemptId ?? "browser"} tokenExchange=start method=POST url=${KEYCLOAK_TOKEN_URL} redirectUri=${redirectUri}`,
+    );
+  }
+
+  let response: Response;
+  try {
+    response = await apiFetch(KEYCLOAK_TOKEN_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body,
+    });
+  } catch (error) {
+    if (body.get("grant_type") === "authorization_code") {
+      console.error(
+        `[mira-client][oauth] attempt=${nativeOAuthAttempt?.attemptId ?? "browser"} stage=tokenExchange method=POST url=${KEYCLOAK_TOKEN_URL} status=network-error`,
+      );
+    }
+    throw error;
+  }
 
   const responseText = await response.text();
-  const parsedResponse = responseText
-    ? (JSON.parse(responseText) as Partial<TokenResponse> & {
-        error?: string;
-        error_description?: string;
-      })
-    : {};
+  let parsedResponse: Partial<TokenResponse> & {
+    error?: string;
+    error_description?: string;
+  } = {};
+
+  if (responseText) {
+    try {
+      parsedResponse = JSON.parse(responseText) as typeof parsedResponse;
+    } catch {
+      // Proxies commonly return HTML for a 404. Keep the HTTP status available
+      // for the safe OAuth diagnostic below instead of masking it as JSON parsing.
+    }
+  }
 
   if (!response.ok || !parsedResponse.access_token) {
+    if (body.get("grant_type") === "authorization_code") {
+      console.error(
+        `[mira-client][oauth] attempt=${nativeOAuthAttempt?.attemptId ?? "browser"} stage=tokenExchange method=POST url=${KEYCLOAK_TOKEN_URL} status=${response.status}`,
+      );
+    }
     throw new Error(
       normalizeKeycloakError(
         parsedResponse.error_description ??
@@ -183,12 +222,20 @@ async function requestToken(
     );
   }
 
-  return toAuthTokens(
+  const tokens = toAuthTokens(
     parsedResponse as TokenResponse,
     clientId,
     fallbackRefreshToken,
     fallbackIdToken,
   );
+
+  if (body.get("grant_type") === "authorization_code") {
+    console.info(
+      `[mira-client][oauth] attempt=${nativeOAuthAttempt?.attemptId ?? "browser"} tokenExchange=success status=${response.status}`,
+    );
+  }
+
+  return tokens;
 }
 
 function normalizeKeycloakError(error: string) {
@@ -232,9 +279,99 @@ type KeycloakThemeOptions = {
 };
 
 export type OAuthStartResult = {
+  ignored?: boolean;
   modal?: boolean;
   redirectUri?: string;
 };
+
+type NativeOAuthPreparation = {
+  attemptId: number;
+  redirectUri: string;
+};
+
+type NativeOAuthAttempt = NativeOAuthPreparation & {
+  phase: "starting" | "waitingForCallback" | "exchangingToken";
+  provider: string;
+};
+
+let nativeOAuthAttempt: NativeOAuthAttempt | undefined;
+
+export function isNativeOAuthInFlight() {
+  return Boolean(nativeOAuthAttempt);
+}
+
+function isNativeLoopbackRedirectUri(value: string) {
+  return /^http:\/\/127\.0\.0\.1:[1-9]\d*$/.test(value);
+}
+
+async function beginNativeOAuthAttempt(provider: string) {
+  if (!isTauri()) {
+    return undefined;
+  }
+
+  if (nativeOAuthAttempt) {
+    console.warn(
+      `[mira-client][oauth] attempt=${nativeOAuthAttempt.attemptId || "pending"} provider=${provider} ignored=activeAttempt`,
+    );
+    return undefined;
+  }
+
+  // Claim the single-flight slot before awaiting the Tauri command so two
+  // click handlers cannot allocate two listeners or overwrite PKCE state.
+  nativeOAuthAttempt = {
+    attemptId: 0,
+    phase: "starting",
+    provider,
+    redirectUri: "",
+  };
+
+  let preparation: NativeOAuthPreparation | undefined;
+  try {
+    preparation = await invoke<NativeOAuthPreparation>("prepare_oauth_redirect_uri", {
+      request: { provider },
+    });
+    if (!isNativeLoopbackRedirectUri(preparation.redirectUri)) {
+      throw new Error(
+        `Native OAuth callback must be an ephemeral slash-free loopback URI, received ${preparation.redirectUri}.`,
+      );
+    }
+
+    nativeOAuthAttempt = {
+      ...preparation,
+      phase: "starting",
+      provider,
+    };
+    console.info(
+      `[mira-client][oauth] attempt=${preparation.attemptId} provider=${provider} state=starting redirectUri=${preparation.redirectUri}`,
+    );
+    return preparation;
+  } catch (error) {
+    if (preparation?.attemptId) {
+      await invoke("cancel_oauth_attempt", {
+        request: { attemptId: preparation.attemptId },
+      }).catch(() => undefined);
+    }
+    nativeOAuthAttempt = undefined;
+    throw error;
+  }
+}
+
+async function cancelNativeOAuthAttempt(preparation?: NativeOAuthPreparation) {
+  if (preparation?.attemptId) {
+    await invoke("cancel_oauth_attempt", {
+      request: { attemptId: preparation.attemptId },
+    }).catch(() => undefined);
+  }
+
+  nativeOAuthAttempt = undefined;
+}
+
+export function completeNativeOAuthAttempt() {
+  if (nativeOAuthAttempt) {
+    console.info(`[mira-client][oauth] attempt=${nativeOAuthAttempt.attemptId} complete`);
+  }
+  nativeOAuthAttempt = undefined;
+}
 
 function addKeycloakThemeParams(
   searchParams: URLSearchParams,
@@ -258,12 +395,6 @@ function addKeycloakThemeParams(
   searchParams.set("ui_locales", localeCode);
 }
 
-async function getNativeRedirectUri() {
-  return isTauri()
-    ? invoke<string>("prepare_oauth_redirect_uri")
-    : getRedirectUri();
-}
-
 function getPasswordResetRedirectUri(redirectUri: string) {
   const redirectUrl = new URL(redirectUri);
   redirectUrl.searchParams.set(passwordResetSentParam, "sent");
@@ -271,6 +402,13 @@ function getPasswordResetRedirectUri(redirectUri: string) {
 }
 
 function getProviderErrorRedirectUri(redirectUri: string) {
+  if (isTauri()) {
+    // Keycloak validates this auxiliary redirect as well. Native OAuth has one
+    // registered callback URI; adding a query parameter here would create a
+    // second, unregistered redirect contract.
+    return redirectUri;
+  }
+
   const callbackUrl = new URL(redirectUri);
   const redirectUrl = new URL("/", WEBSITE_URL);
 
@@ -289,65 +427,78 @@ async function startProviderLogin(
   provider: OAuthProvider,
   options?: KeycloakThemeOptions,
 ) {
-  const state = createRandomString(24);
-  const codeVerifier = createRandomString(64);
-  const codeChallenge = await createCodeChallenge(codeVerifier);
-  const redirectUri = await getNativeRedirectUri();
-  const errorRedirectUri = getProviderErrorRedirectUri(redirectUri);
-  const searchParams = new URLSearchParams({
-    client_id: KEYCLOAK_CLIENT_ID,
-    code_challenge: codeChallenge,
-    code_challenge_method: "S256",
-    kc_idp_hint: provider.idpHint,
-    redirect_uri: redirectUri,
-    kc_error_redirect_uri: errorRedirectUri,
-    error_redirect_uri: errorRedirectUri,
-    fallback_uri: errorRedirectUri,
-    returnTo: errorRedirectUri,
-    response_type: "code",
-    scope: "openid email profile",
-    state,
-  });
-
-  if (provider.prompt) {
-    searchParams.set("prompt", provider.prompt);
+  const preparation = await beginNativeOAuthAttempt(provider.idpHint);
+  if (isTauri() && !preparation) {
+    return { ignored: true, modal: false } satisfies OAuthStartResult;
   }
 
-  addKeycloakThemeParams(searchParams, options);
+  const redirectUri = preparation?.redirectUri ?? getRedirectUri();
 
-  if (provider.googleLanguage && options) {
-    searchParams.set("hl", options.locale === "de" ? "de" : "en");
-  }
-
-  saveOAuthRequest(state, codeVerifier, redirectUri);
-  const authUrl = `${KEYCLOAK_AUTH_URL}?${searchParams.toString()}`;
-  console.info("[mira-client] Starting native OAuth login", {
-    environment: new URL(WEBSITE_URL).hostname,
-    provider: provider.idpHint,
-    keycloakIssuer: KEYCLOAK_ISSUER_URL,
-    keycloakClientId: KEYCLOAK_CLIENT_ID,
-    redirectUri,
-    expectedBrokerEndpoint: `${KEYCLOAK_ISSUER_URL}/broker/${provider.idpHint}/endpoint`,
-  });
-
-  if (isTauri()) {
-    const result = await invoke<OAuthStartResult>("start_oauth_window", {
-      request: {
-        authUrl,
-        clearSessionBeforeLogin: true,
-        idTokenHint: readTokens()?.idToken,
-        redirectUri,
-      },
+  try {
+    const state = createRandomString(24);
+    const codeVerifier = createRandomString(64);
+    const codeChallenge = await createCodeChallenge(codeVerifier);
+    const errorRedirectUri = getProviderErrorRedirectUri(redirectUri);
+    const searchParams = new URLSearchParams({
+      client_id: KEYCLOAK_CLIENT_ID,
+      code_challenge: codeChallenge,
+      code_challenge_method: "S256",
+      kc_idp_hint: provider.idpHint,
+      redirect_uri: redirectUri,
+      kc_error_redirect_uri: errorRedirectUri,
+      error_redirect_uri: errorRedirectUri,
+      fallback_uri: errorRedirectUri,
+      returnTo: errorRedirectUri,
+      response_type: "code",
+      scope: "openid email profile",
+      state,
     });
 
-    if (result.redirectUri) {
-      saveOAuthRequest(state, codeVerifier, result.redirectUri);
+    if (provider.prompt) {
+      searchParams.set("prompt", provider.prompt);
     }
 
-    return result;
-  }
+    addKeycloakThemeParams(searchParams, options);
 
-  window.location.assign(authUrl);
+    if (provider.googleLanguage && options) {
+      searchParams.set("hl", options.locale === "de" ? "de" : "en");
+    }
+
+    saveOAuthRequest(state, codeVerifier, redirectUri);
+    const authUrl = `${KEYCLOAK_AUTH_URL}?${searchParams.toString()}`;
+    console.info(
+      `[mira-client][oauth] attempt=${preparation?.attemptId ?? "browser"} environment=${KEYCLOAK_ENVIRONMENT} provider=${provider.idpHint} clientId=${KEYCLOAK_CLIENT_ID} issuer=${KEYCLOAK_ISSUER_URL} redirectUri=${redirectUri} brokerEndpoint=${KEYCLOAK_ISSUER_URL}/broker/${provider.idpHint}/endpoint`,
+    );
+
+    if (preparation) {
+      const result = await invoke<OAuthStartResult>("start_oauth_window", {
+        request: {
+          attemptId: preparation.attemptId,
+          authUrl,
+          redirectUri,
+        },
+      });
+
+      if (result.redirectUri !== redirectUri) {
+        clearOAuthRequest();
+        throw new Error(
+          `Native OAuth callback mismatch. Expected ${redirectUri}, received ${result.redirectUri ?? "missing"}.`,
+        );
+      }
+
+      if (nativeOAuthAttempt) {
+        nativeOAuthAttempt.phase = "waitingForCallback";
+      }
+      return result;
+    }
+
+    window.location.assign(authUrl);
+    return undefined;
+  } catch (error) {
+    clearOAuthRequest();
+    await cancelNativeOAuthAttempt(preparation);
+    throw error;
+  }
 }
 
 export function startGoogleLogin(options?: KeycloakThemeOptions) {
@@ -367,7 +518,6 @@ export function startGithubLogin(options?: KeycloakThemeOptions) {
     {
       idpHint: "github",
       name: "GitHub",
-      prompt: "select_account",
     },
     options,
   );
@@ -384,97 +534,53 @@ export function startDiscordLogin(options?: KeycloakThemeOptions) {
 }
 
 export async function startPasswordReset(options?: KeycloakThemeOptions) {
-  const redirectUri = await getNativeRedirectUri();
-  const passwordResetRedirectUri = isTauri()
+  const preparation = await beginNativeOAuthAttempt("password-reset");
+  if (isTauri() && !preparation) {
+    return { ignored: true, modal: false } satisfies OAuthStartResult;
+  }
+
+  const redirectUri = preparation?.redirectUri ?? getRedirectUri();
+  const passwordResetRedirectUri = preparation
     ? redirectUri
     : getPasswordResetRedirectUri(redirectUri);
-  const searchParams = new URLSearchParams({
-    client_id: KEYCLOAK_CLIENT_ID,
-    redirect_uri: passwordResetRedirectUri,
-  });
-
-  addKeycloakThemeParams(searchParams, options);
-
-  const resetUrl = `${KEYCLOAK_ISSUER_URL}/login-actions/reset-credentials?${searchParams.toString()}`;
-
-  console.info("[mira-client] Starting password reset", {
-    keycloakClientRedirectUri: passwordResetRedirectUri,
-    resetUrl,
-  });
-
-  if (isTauri()) {
-    return invoke<OAuthStartResult>("start_oauth_window", {
-      request: {
-        authUrl: resetUrl,
-        passwordReset: true,
-        redirectUri,
-      },
-    });
-  }
-
-  window.location.assign(resetUrl);
-}
-
-type OAuthCallbackPayload = {
-  url: string;
-};
-
-async function createTauriOAuthCallbackWaiter() {
-  const unlisteners: UnlistenFn[] = [];
-  let completed = false;
-  let timeoutId: number | undefined;
-  let finish: (error?: Error) => void = () => undefined;
-
-  const promise = new Promise<void>((resolve, reject) => {
-    finish = (error?: Error) => {
-      if (completed) {
-        return;
-      }
-
-      completed = true;
-
-      if (timeoutId !== undefined) {
-        clearTimeout(timeoutId);
-      }
-
-      for (const unlisten of unlisteners) {
-        unlisten();
-      }
-
-      if (error) {
-        reject(error);
-        return;
-      }
-
-      resolve();
-    };
-
-    timeoutId = window.setTimeout(() => {
-      finish(new Error("Keycloak-Logout hat keinen Redirect zurück zur App geliefert."));
-    }, keycloakLogoutTimeoutMs);
-  });
 
   try {
-    unlisteners.push(
-      await listen<OAuthCallbackPayload>("mira-oauth-callback", () => {
-        finish();
-      }),
+    const searchParams = new URLSearchParams({
+      client_id: KEYCLOAK_CLIENT_ID,
+      redirect_uri: passwordResetRedirectUri,
+    });
+
+    addKeycloakThemeParams(searchParams, options);
+
+    const resetUrl = `${KEYCLOAK_ISSUER_URL}/login-actions/reset-credentials?${searchParams.toString()}`;
+    console.info(
+      `[mira-client][oauth] attempt=${preparation?.attemptId ?? "browser"} passwordReset redirectUri=${passwordResetRedirectUri}`,
     );
 
-  } catch (caughtError) {
-    finish(
-      caughtError instanceof Error
-        ? caughtError
-        : new Error("Keycloak-Logout konnte nicht überwacht werden."),
-    );
+    if (preparation) {
+      const result = await invoke<OAuthStartResult>("start_oauth_window", {
+        request: {
+          attemptId: preparation.attemptId,
+          authUrl: resetUrl,
+          passwordReset: true,
+          redirectUri,
+        },
+      });
+      if (result.redirectUri !== redirectUri) {
+        throw new Error("Native password-reset redirect URI does not match its login attempt.");
+      }
+      if (nativeOAuthAttempt) {
+        nativeOAuthAttempt.phase = "waitingForCallback";
+      }
+      return result;
+    }
+
+    window.location.assign(resetUrl);
+    return undefined;
+  } catch (error) {
+    await cancelNativeOAuthAttempt(preparation);
+    throw error;
   }
-
-  return {
-    cancel() {
-      finish(new Error("Keycloak-Logout wurde abgebrochen."));
-    },
-    wait: promise,
-  };
 }
 
 async function getLogoutIdToken() {
@@ -494,11 +600,9 @@ async function getLogoutIdToken() {
 }
 
 export async function startKeycloakLogout() {
-  const redirectUri = await getNativeRedirectUri();
   const idToken = await getLogoutIdToken();
   const searchParams = new URLSearchParams({
     client_id: KEYCLOAK_CLIENT_ID,
-    post_logout_redirect_uri: redirectUri,
   });
 
   if (idToken) {
@@ -507,30 +611,12 @@ export async function startKeycloakLogout() {
 
   const logoutUrl = `${KEYCLOAK_ISSUER_URL}/protocol/openid-connect/logout?${searchParams.toString()}`;
 
-  console.info("[mira-client] Starting Keycloak logout", {
-    hasIdTokenHint: Boolean(idToken),
-    logoutUrl,
-    postLogoutRedirectUri: redirectUri,
-  });
+  console.info(`[mira-client][oauth] logout systemBrowser=${isTauri()}`);
 
   if (isTauri()) {
-    const logoutCompleted = await createTauriOAuthCallbackWaiter();
-
-    const result = await invoke<OAuthStartResult>("start_oauth_window", {
-      request: {
-        authUrl: logoutUrl,
-        redirectUri,
-        visible: false,
-      },
+    await invoke("open_system_browser", {
+      request: { url: logoutUrl },
     });
-
-    if (result.modal === false && !result.redirectUri) {
-      logoutCompleted.cancel();
-      await logoutCompleted.wait.catch(() => undefined);
-      return;
-    }
-
-    await logoutCompleted.wait;
     return;
   }
 
@@ -542,9 +628,15 @@ export async function completeRedirectLogin(callbackUrl?: string) {
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
   const error = url.searchParams.get("error_description") ?? url.searchParams.get("error");
+  const savedRequest = readOAuthRequest();
 
   if (error) {
     clearOAuthRequest();
+    if (isTauri() && error.toLowerCase().includes("redirect_uri")) {
+      console.error(
+        `[mira-client][oauth] Keycloak rejected redirect URI: ${savedRequest.redirectUri ?? "missing"}. Expected Keycloak Valid Redirect URI: ${NATIVE_LOOPBACK_REDIRECT_BASE}`,
+      );
+    }
     if (!callbackUrl) {
       window.history.replaceState({}, document.title, getRedirectUri());
     }
@@ -555,9 +647,13 @@ export async function completeRedirectLogin(callbackUrl?: string) {
     return undefined;
   }
 
-  const savedRequest = readOAuthRequest();
-
+  console.info(
+    `[mira-client][oauth] attempt=${nativeOAuthAttempt?.attemptId ?? "browser"} stateValidation=start`,
+  );
   if (state !== savedRequest.state || !savedRequest.codeVerifier) {
+    console.error(
+      `[mira-client][oauth] attempt=${nativeOAuthAttempt?.attemptId ?? "browser"} stage=stateValidation result=failed`,
+    );
     clearOAuthRequest();
     if (!callbackUrl) {
       window.history.replaceState({}, document.title, getRedirectUri());
@@ -565,7 +661,15 @@ export async function completeRedirectLogin(callbackUrl?: string) {
     throw new Error("OAuth-Antwort konnte nicht validiert werden.");
   }
 
+  console.info(
+    `[mira-client][oauth] attempt=${nativeOAuthAttempt?.attemptId ?? "browser"} stateValidation=success`,
+  );
+
   const redirectUri = savedRequest.redirectUri ?? getRedirectUri();
+  if (isTauri() && !isNativeLoopbackRedirectUri(redirectUri)) {
+    clearOAuthRequest();
+    throw new Error("Native OAuth callback redirect URI is missing or invalid.");
+  }
   const tokens = await requestToken(
     new URLSearchParams({
       client_id: KEYCLOAK_CLIENT_ID,

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Check, KeyRound, LogIn, UserPlus } from "lucide-react";
+import { Check, KeyRound, LoaderCircle, LogIn, UserPlus } from "lucide-react";
 import {
   confirmAvatarRights,
   getClientSettings,
@@ -15,10 +15,11 @@ import {
   updateUsername,
   type UserProfileResponse,
 } from "../api/client";
-import { API_BASE_URL, LIVE_API_BASE_URL } from "../api/config";
+import { API_BASE_URL, API_ENVIRONMENT, LIVE_API_BASE_URL } from "../api/config";
 import { apiFetch } from "../api/http";
 import {
   assertAccessTokenIssuer,
+  completeNativeOAuthAttempt,
   completeRedirectLogin,
   getValidDesktopApiToken,
   getValidAccessToken,
@@ -66,11 +67,13 @@ type OAuthCallbackPayload = {
 
 class ProfileLoadError extends Error {
   readonly status?: number;
+  readonly url?: string;
 
-  constructor(message: string, status?: number) {
+  constructor(message: string, status?: number, url?: string) {
     super(message);
     this.name = "ProfileLoadError";
     this.status = status;
+    this.url = url;
   }
 }
 
@@ -599,9 +602,14 @@ function Authentication() {
    */
   async function loadProfile(accessToken: string, options: LoadProfileOptions = {}) {
     const validAccessToken = (await getValidAccessToken()) ?? accessToken;
+    const profileUrl = `${API_BASE_URL}/api/me`;
 
     assertAccessTokenIssuer(validAccessToken);
     setApiAccessToken(validAccessToken);
+    console.info(
+      `[mira-client][api] environment=${API_ENVIRONMENT} authApiBaseUrl=${API_BASE_URL}`,
+    );
+    console.info(`[mira-client][oauth] profileRequest=start method=GET url=${profileUrl}`);
     let result = await me();
 
     if (result.error && result.response?.status === 409 && options.recoverDesktopConflict) {
@@ -611,6 +619,10 @@ function Authentication() {
     }
 
     if (result.error) {
+      const requestUrl = result.request?.url ?? profileUrl;
+      console.error(
+        `[mira-client][oauth] stage=profileRequest method=GET url=${requestUrl} status=${result.response?.status ?? "network-error"}`,
+      );
       if (result.response?.status === 401) {
         clearTokens();
         setApiAccessToken(undefined);
@@ -630,6 +642,7 @@ function Authentication() {
           t("auth-profile-load-error"),
         ),
         result.response?.status,
+        requestUrl,
       );
     }
 
@@ -637,6 +650,9 @@ function Authentication() {
       throw new Error(t("auth-profile-empty-error"));
     }
 
+    console.info(
+      `[mira-client][oauth] profileRequest=success status=${result.response?.status ?? 200} url=${result.request?.url ?? profileUrl}`,
+    );
     await loadRemoteClientSettings(result.data);
     setProfile(result.data);
     return result.data;
@@ -802,8 +818,10 @@ function Authentication() {
           });
         }
       } catch (caughtError) {
-        clearTokens();
-        setApiAccessToken(undefined);
+        if (!(caughtError instanceof ProfileLoadError)) {
+          clearTokens();
+          setApiAccessToken(undefined);
+        }
 
         if (hasOAuthResponse && !cancelled) {
           notify({
@@ -862,13 +880,20 @@ function Authentication() {
         }
       } catch (caughtError) {
         if (!cancelled) {
-          cleanupRejectedLoginSession();
+          if (!(caughtError instanceof ProfileLoadError)) {
+            cleanupRejectedLoginSession();
+          } else {
+            console.error(
+              `[mira-client][oauth] profileInitialization=failed status=${caughtError.status ?? "network-error"} url=${caughtError.url ?? "unknown"}`,
+            );
+          }
           notify({
             type: "error",
             message: getOAuthErrorMessage(caughtError, t),
           });
         }
       } finally {
+        completeNativeOAuthAttempt();
         if (!cancelled) {
           setLoadState("idle");
           setOauthModalOpen(false);
@@ -880,19 +905,13 @@ function Authentication() {
       unlisteners.push(
         await listen<OAuthCallbackPayload>("mira-oauth-callback", (event) => {
           if (!event.payload.url) {
+            completeNativeOAuthAttempt();
             setLoadState("idle");
             setOauthModalOpen(false);
             return;
           }
 
           void completeOAuthWindowLogin(event.payload.url);
-        }),
-      );
-
-      unlisteners.push(
-        await listen("mira-oauth-closed", () => {
-          setLoadState("idle");
-          setOauthModalOpen(false);
         }),
       );
     }
@@ -1160,12 +1179,8 @@ function Authentication() {
       setClientSettingsRemoteReady(false);
       const result = await startGoogleLogin({ accentColor, locale });
 
-      if (isTauri()) {
-        if (result?.modal === false) {
-          setLoadState("idle");
-        } else {
-          setOauthModalOpen(true);
-        }
+      if (isTauri() && !result?.ignored) {
+        setOauthModalOpen(true);
       }
     } catch (caughtError) {
       setLoadState("idle");
@@ -1190,12 +1205,8 @@ function Authentication() {
       setClientSettingsRemoteReady(false);
       const result = await startGithubLogin({ accentColor, locale });
 
-      if (isTauri()) {
-        if (result?.modal === false) {
-          setLoadState("idle");
-        } else {
-          setOauthModalOpen(true);
-        }
+      if (isTauri() && !result?.ignored) {
+        setOauthModalOpen(true);
       }
     } catch (caughtError) {
       setLoadState("idle");
@@ -1220,12 +1231,8 @@ function Authentication() {
       setClientSettingsRemoteReady(false);
       const result = await startDiscordLogin({ accentColor, locale });
 
-      if (isTauri()) {
-        if (result?.modal === false) {
-          setLoadState("idle");
-        } else {
-          setOauthModalOpen(true);
-        }
+      if (isTauri() && !result?.ignored) {
+        setOauthModalOpen(true);
       }
     } catch (caughtError) {
       setLoadState("idle");
@@ -1243,12 +1250,8 @@ function Authentication() {
     try {
       const result = await startPasswordReset({ accentColor, locale });
 
-      if (isTauri()) {
-        if (result?.modal === false) {
-          setLoadState("idle");
-        } else {
-          setOauthModalOpen(true);
-        }
+      if (isTauri() && !result?.ignored) {
+        setOauthModalOpen(true);
       }
     } catch (caughtError) {
       setLoadState("idle");
@@ -1347,7 +1350,23 @@ function Authentication() {
 
   return (
     <main className={profile ? "app-shell app-shell-authenticated" : "app-shell"}>
-      {oauthModalOpen ? <div className="oauth-modal-backdrop" aria-hidden="true" /> : null}
+      {oauthModalOpen ? (
+        <div
+          aria-labelledby="oauth-waiting-title"
+          aria-modal="true"
+          className="oauth-modal-backdrop"
+          role="dialog"
+        >
+          <div className="oauth-waiting-modal">
+            <span className="brand-mark" aria-hidden="true">M</span>
+            <LoaderCircle className="oauth-waiting-spinner" aria-hidden="true" size={26} />
+            <div>
+              <h2 id="oauth-waiting-title">{t("auth-oauth-wait-title")}</h2>
+              <p>{t("auth-oauth-wait-description")}</p>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {oauthProfileSetup ? (
         <div className="oauth-profile-setup-backdrop">
           <form
