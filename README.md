@@ -5,9 +5,8 @@ dedicated game server.
 
 ## Download
 
-Latest download manifest:
-
-- https://api.tilt-us.com/downloads/game-sources/latest.json
+Release artifacts are published on the
+[GitHub Releases page](https://github.com/tilt-us/mira-client/releases).
 
 ## Development Start
 
@@ -40,6 +39,19 @@ cargo run -p mira-game-client -- --dev-preview
 `--dev-preview` is only meant for development builds. It starts the local map
 and mechanics preview with Lira spawned locally, without connecting to a match
 server.
+
+## CI Access to Private Dependencies
+
+The `mira-game-client` CI job reads `tilt-us/mira-game-api` through a GitHub
+App. Configure the following organization-level values and grant them to each
+repository that consumes the dependency:
+
+- Secret `MIRA_CI_APP_CLIENT_ID`: the GitHub App client ID.
+- Secret `MIRA_CI_APP_PRIVATE_KEY`: the complete PEM private key for the app.
+
+Install the app for `tilt-us/mira-game-api` with access limited to that
+repository and `Contents: Read` permission. The workflow creates a short-lived
+token scoped to that repository for each job.
 
 ## Keycloak URL Parameters
 

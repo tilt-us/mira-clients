@@ -4,6 +4,7 @@ pub mod main_hud;
 pub mod plugins;
 pub mod settings;
 pub mod states;
+mod world;
 
 use bevy::prelude::*;
 use loading_screen::loading_screen_state;

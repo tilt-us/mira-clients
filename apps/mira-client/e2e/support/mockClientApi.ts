@@ -1,8 +1,13 @@
 import type { Page, Route } from "@playwright/test";
+import { getEnvironmentConfig, getMiraEnvironment } from "../../scripts/environment.mjs";
 import { createUnsignedJwt, getKeycloakIssuerUrl } from "./auth";
 
-const apiRequestPattern =
-  /^(https:\/\/api\.tilt-us\.com|http:\/\/localhost:808[0-5])\//;
+const environment = getEnvironmentConfig(
+  getMiraEnvironment(process.env.MIRA_ENV, "dev"),
+);
+const apiRequestPattern = new RegExp(
+  `^${escapeRegExp(new URL(environment.servicesApiUrl).origin)}/`,
+);
 
 const now = new Date("2026-06-25T10:00:00.000Z").toISOString();
 
@@ -13,6 +18,10 @@ type MockClientSettingsFolder = {
 };
 
 let mockClientSettingsFolders: MockClientSettingsFolder[] = [];
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 export async function mockAuthenticatedClientApi(page: Page) {
   mockClientSettingsFolders = [];

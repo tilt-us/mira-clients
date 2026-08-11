@@ -6,10 +6,9 @@ use bevy::ecs::spawn::SpawnIter;
 use bevy::image::{CompressedImageFormats, ImageSampler, ImageType};
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
-use game_logic::OverheadPlayerProfiles;
-use game_shared::game::player::{non_empty_string, public_display_name};
-use game_shared::game::team::TeamSpec;
-use game_shared::network::{
+use mira_game_api::game::player::{non_empty_string, public_display_name};
+use mira_game_api::game::team::TeamSpec;
+use mira_game_api::network::{
     ChampionId, DisplayReady, LauncherMatchManifest, LoadingScreenPlayer, LoadingScreenStatus,
     ReliableCommandChannel,
 };
@@ -19,6 +18,7 @@ use std::sync::Mutex;
 use std::sync::mpsc::{Receiver, channel};
 use std::time::Duration;
 
+use crate::OverheadPlayerProfiles;
 use crate::network::{NetworkPingState, ping_color, ping_text};
 
 const MINIMUM_CLIENT_LOADING_DURATION: Duration = Duration::from_secs(5);

@@ -4,8 +4,8 @@ use bevy::asset::RenderAssetUsages;
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
-use game_logic::MiraHudState;
 
+use crate::MiraHudState;
 use crate::network::{NetworkPingState, ping_color, ping_text};
 
 const TOP_BAR_WIDTH: u32 = 820;

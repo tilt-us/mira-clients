@@ -86,6 +86,24 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Create mira-game-api access token
+        id: mira-game-api-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ secrets.MIRA_CI_APP_CLIENT_ID }}
+          private-key: ${{ secrets.MIRA_CI_APP_PRIVATE_KEY }}
+          owner: tilt-us
+          repositories: mira-game-api
+          permission-contents: read
+
+      - name: Configure Git access to mira-game-api
+        env:
+          MIRA_GAME_API_TOKEN: ${{ steps.mira-game-api-token.outputs.token }}
+        run: |
+          git config --global \
+            url."https://x-access-token:${MIRA_GAME_API_TOKEN}@github.com/".insteadOf \
+            "ssh://git@github.com/"
+
       - name: Install Linux dependencies
         run: |
           sudo apt-get update
@@ -111,22 +129,16 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
-            . -> target
+            . -> target/llvm-cov-target
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
 
-      - name: Unit tests
-        run: cargo test -p mira-game-client
-
-      - name: Coverage lcov
-        env:
-          CARGO_BUILD_JOBS: 1
+      - name: Unit tests and coverage lcov
         run: |
           mkdir -p tests-results/mira-game-client/coverage
           cargo llvm-cov -p mira-game-client \
-            --jobs 1 \
-            --ignore-filename-regex 'apps/mira-game-client/src/(app|main\.rs|network/plugin\.rs)' \
+            --ignore-filename-regex 'apps/mira-game-client/src/(app|main\.rs|network/plugin\.rs|systems)' \
             --fail-under-lines 90 \
             --lcov \
             --output-path tests-results/mira-game-client/coverage/lcov.info
@@ -134,7 +146,7 @@ jobs:
       - name: Coverage cobertura
         run: |
           cargo llvm-cov report -p mira-game-client \
-            --ignore-filename-regex 'apps/mira-game-client/src/(app|main\.rs|network/plugin\.rs)' \
+            --ignore-filename-regex 'apps/mira-game-client/src/(app|main\.rs|network/plugin\.rs|systems)' \
             --cobertura \
             --output-path tests-results/mira-game-client/coverage/cobertura.xml
 

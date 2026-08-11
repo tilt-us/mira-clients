@@ -1,7 +1,11 @@
 import { expect, test, type Page } from "@playwright/test";
+import { getEnvironmentConfig, getMiraEnvironment } from "../scripts/environment.mjs";
 
-const keycloakAuthPattern =
-  /^(?:https:\/\/api\.tilt-us\.com\/keycloak|http:\/\/localhost:8081)\/.*$/;
+const keycloakAuthPattern = new RegExp(
+  `^${escapeRegExp(
+    getEnvironmentConfig(getMiraEnvironment(process.env.MIRA_ENV, "dev")).authIssuerUrl,
+  )}/.*$`,
+);
 
 async function mockKeycloakAuth(page: Page) {
   await page.route(keycloakAuthPattern, async (route) => {
@@ -10,6 +14,10 @@ async function mockKeycloakAuth(page: Page) {
       body: "<!doctype html><title>Keycloak</title>",
     });
   });
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 test.beforeEach(async ({ page }) => {

@@ -434,12 +434,19 @@ fn is_mira_public_oauth_error_url(target_url: &str) -> bool {
         return false;
     };
 
-    let is_mira_public_host = matches!(
-        host.as_str(),
-        "tilt-us.com" | "www.tilt-us.com" | "mira.tilt-us.com"
-    );
+    let Ok(website_url) = crate::config::website_url() else {
+        return false;
+    };
+    let Ok(website_url) = website_url.parse::<tauri::Url>() else {
+        return false;
+    };
 
-    if !is_mira_public_host {
+    if website_url
+        .host_str()
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+        != Some(host.as_str())
+    {
         return false;
     }
 

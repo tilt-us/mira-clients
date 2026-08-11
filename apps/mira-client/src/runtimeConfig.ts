@@ -1,5 +1,8 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import { applyApiRuntimeConfig, type ApiRuntimeConfig } from "./api/config";
+import {
+  applyApiRuntimeConfig,
+  type EnvironmentRuntimeConfig,
+} from "./api/config";
 import {
   applyKeycloakRuntimeConfig,
   type KeycloakRuntimeConfig,
@@ -9,7 +12,7 @@ import {
   type AuthStorageRuntimeConfig,
 } from "./auth/storage";
 
-export type ClientRuntimeConfig = ApiRuntimeConfig &
+export type ClientRuntimeConfig = EnvironmentRuntimeConfig &
   KeycloakRuntimeConfig &
   AuthStorageRuntimeConfig;
 
