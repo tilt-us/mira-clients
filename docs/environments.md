@@ -21,10 +21,10 @@ back to production:
 | `staging` | `https://downloads.tilt-us.com/staging/latest.json` |
 | `prod` | `https://downloads.tilt-us.com/latest.json` |
 
-The installer reads `runtimeManifestUrl` from this pointer. The desktop client
-reads `contentManifestUrl`, installs the verified content archive atomically in
-its application-data directory, and blocks game launch unless
-`assets/index.html` is current.
+The installer reads the runtime and content manifests, then installs the
+desktop client, game executable, and `assets/ui` at the installation root. The
+desktop client reads the same content manifest and atomically installs or
+updates `assets/game`; it blocks game launch until that directory is current.
 
 Local debug builds default to `MIRA_ENV=dev`. Release builds require an explicit
 valid value and fail for a missing or invalid `MIRA_ENV`.

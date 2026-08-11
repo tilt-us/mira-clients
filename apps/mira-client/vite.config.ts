@@ -1,6 +1,7 @@
 import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath, URL } from "node:url";
+import { resolve } from "node:path";
 import packageJson from "./package.json" with { type: "json" };
 import { getMiraEnvironment } from "./scripts/environment.mjs";
 
@@ -21,6 +22,7 @@ export default defineConfig(({ command, mode }) => {
     define: {
       __CLIENT_VERSION__: JSON.stringify(packageJson.version),
       __MIRA_ENV__: JSON.stringify(environment),
+      __MIRA_UI_ASSET_DEV_ROOT__: JSON.stringify(`/@fs/${resolve(repoRoot, "assets/ui")}`),
     },
 
     // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`

@@ -258,14 +258,20 @@ function addKeycloakThemeParams(
   searchParams.set("ui_locales", localeCode);
 }
 
-function getPasswordResetRedirectUri() {
-  const redirectUrl = new URL(getRedirectUri());
+async function getNativeRedirectUri() {
+  return isTauri()
+    ? invoke<string>("prepare_oauth_redirect_uri")
+    : getRedirectUri();
+}
+
+function getPasswordResetRedirectUri(redirectUri: string) {
+  const redirectUrl = new URL(redirectUri);
   redirectUrl.searchParams.set(passwordResetSentParam, "sent");
   return redirectUrl.toString();
 }
 
-function getProviderErrorRedirectUri() {
-  const callbackUrl = new URL(getRedirectUri());
+function getProviderErrorRedirectUri(redirectUri: string) {
+  const callbackUrl = new URL(redirectUri);
   const redirectUrl = new URL("/", WEBSITE_URL);
 
   if (callbackUrl.hostname === "localhost" || callbackUrl.hostname === "127.0.0.1") {
@@ -286,8 +292,8 @@ async function startProviderLogin(
   const state = createRandomString(24);
   const codeVerifier = createRandomString(64);
   const codeChallenge = await createCodeChallenge(codeVerifier);
-  const redirectUri = getRedirectUri();
-  const errorRedirectUri = getProviderErrorRedirectUri();
+  const redirectUri = await getNativeRedirectUri();
+  const errorRedirectUri = getProviderErrorRedirectUri(redirectUri);
   const searchParams = new URLSearchParams({
     client_id: KEYCLOAK_CLIENT_ID,
     code_challenge: codeChallenge,
@@ -315,10 +321,13 @@ async function startProviderLogin(
 
   saveOAuthRequest(state, codeVerifier, redirectUri);
   const authUrl = `${KEYCLOAK_AUTH_URL}?${searchParams.toString()}`;
-  console.info(`[mira-client] Starting ${provider.name} login`, {
-    authUrl,
-    keycloakClientRedirectUri: redirectUri,
-    expectedProviderRedirectUri: `${KEYCLOAK_ISSUER_URL}/broker/${provider.idpHint}/endpoint`,
+  console.info("[mira-client] Starting native OAuth login", {
+    environment: new URL(WEBSITE_URL).hostname,
+    provider: provider.idpHint,
+    keycloakIssuer: KEYCLOAK_ISSUER_URL,
+    keycloakClientId: KEYCLOAK_CLIENT_ID,
+    redirectUri,
+    expectedBrokerEndpoint: `${KEYCLOAK_ISSUER_URL}/broker/${provider.idpHint}/endpoint`,
   });
 
   if (isTauri()) {
@@ -375,8 +384,10 @@ export function startDiscordLogin(options?: KeycloakThemeOptions) {
 }
 
 export async function startPasswordReset(options?: KeycloakThemeOptions) {
-  const redirectUri = getRedirectUri();
-  const passwordResetRedirectUri = getPasswordResetRedirectUri();
+  const redirectUri = await getNativeRedirectUri();
+  const passwordResetRedirectUri = isTauri()
+    ? redirectUri
+    : getPasswordResetRedirectUri(redirectUri);
   const searchParams = new URLSearchParams({
     client_id: KEYCLOAK_CLIENT_ID,
     redirect_uri: passwordResetRedirectUri,
@@ -483,7 +494,7 @@ async function getLogoutIdToken() {
 }
 
 export async function startKeycloakLogout() {
-  const redirectUri = getRedirectUri();
+  const redirectUri = await getNativeRedirectUri();
   const idToken = await getLogoutIdToken();
   const searchParams = new URLSearchParams({
     client_id: KEYCLOAK_CLIENT_ID,

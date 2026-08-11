@@ -1,14 +1,16 @@
-use mira_downloads::{Artifact, Environment, LatestManifest, RuntimeManifest};
+use mira_downloads::{
+    download_artifact, download_client, Artifact, ContentManifest, Environment,
+    LatestManifest, RuntimeManifest,
+};
 use reqwest::blocking::Client;
 use serde::Serialize;
-use sha2::{Digest, Sha256};
 use std::fs::{self, File};
-use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant};
 use tauri::{Emitter, LogicalSize, Manager, Size};
+use zip::ZipArchive;
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -226,10 +228,7 @@ fn install_game_blocking(
     let environment = build_environment()?;
 
     emit_progress(&app, "install-status-manifest", 0.08);
-    let client = Client::builder()
-        .user_agent("mira-installer")
-        .build()
-        .map_err(|error| format!("failed to create http client: {error}"))?;
+    let client = download_client()?;
 
     let latest: LatestManifest = client
         .get(environment.latest_manifest_url())
@@ -251,8 +250,19 @@ fn install_game_blocking(
         .map_err(|error| format!("failed to parse runtime manifest: {error}"))?;
     manifest.validate_for(environment)?;
 
+    let content_manifest: ContentManifest = client
+        .get(&latest.content_manifest_url)
+        .send()
+        .map_err(|error| format!("failed to download content manifest: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("content manifest request failed: {error}"))?
+        .json()
+        .map_err(|error| format!("failed to parse content manifest: {error}"))?;
+    content_manifest.validate_for(environment)?;
+
     let client_file = select_desktop_artifact(&manifest, &platform)?;
     let game_file = select_game_client_artifact(&manifest, &platform)?;
+    let ui_file = content_manifest.ui.as_artifact();
 
     let temp_dir = requested_root.join(".mira-installer");
     replace_dir(&temp_dir)?;
@@ -262,6 +272,7 @@ fn install_game_blocking(
         platform.package_extension
     ));
     let game_download = temp_dir.join(game_client_filename(&platform));
+    let ui_download = temp_dir.join("ui.zip");
 
     download_file(
         &app,
@@ -279,10 +290,19 @@ fn install_game_blocking(
         &game_download,
         "install-status-download-game",
         0.45,
-        0.72,
+        0.66,
+    )?;
+    download_file(
+        &app,
+        &client,
+        &ui_file,
+        &ui_download,
+        "install-status-download-ui",
+        0.66,
+        0.78,
     )?;
 
-    emit_progress(&app, "install-status-finalize", 0.75);
+    emit_progress(&app, "install-status-finalize", 0.80);
     let launcher_path = requested_root.join(launcher_filename(&platform));
     remove_legacy_install_entries(&requested_root)?;
 
@@ -306,16 +326,14 @@ fn install_game_blocking(
         remove_legacy_install_entries(&install_root)?;
     }
 
-    // Content now belongs to the desktop client's application-data directory.
-    // Remove only the legacy installer-owned copy so it cannot be selected later.
-    remove_if_exists(&install_root.join("assets"))?;
-
     let game_path = install_root.join(game_client_filename(&platform));
     remove_if_exists(&game_path)?;
 
     fs::copy(&game_download, &game_path)
         .map_err(|error| format!("failed to install game client: {error}"))?;
     make_executable(&game_path)?;
+
+    install_ui_archive(&ui_download, &install_root)?;
 
     let _ = fs::remove_dir_all(&temp_dir);
 
@@ -648,60 +666,87 @@ fn download_file(
     start: f32,
     end: f32,
 ) -> Result<(), String> {
-    if let Some(parent) = destination.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| format!("failed to create download folder: {error}"))?;
-    }
-
-    let temp_destination = part_path(destination)?;
-    let mut response = client
-        .get(&artifact.url)
-        .send()
-        .map_err(|error| format!("failed to download artifact: {error}"))?
-        .error_for_status()
-        .map_err(|error| format!("download request failed: {error}"))?;
-
-    let total = response
-        .content_length()
-        .filter(|length| *length > 0)
-        .unwrap_or(artifact.size);
-    let mut file = File::create(&temp_destination)
-        .map_err(|error| format!("failed to create download file: {error}"))?;
-    let mut hasher = Sha256::new();
-    let mut downloaded = 0_u64;
-    let mut buffer = [0_u8; 64 * 1024];
-
     emit_progress(app, label_key, start);
-    loop {
-        let bytes_read = response
-            .read(&mut buffer)
-            .map_err(|error| format!("failed while downloading artifact: {error}"))?;
-
-        if bytes_read == 0 {
-            break;
-        }
-
-        file.write_all(&buffer[..bytes_read])
-            .map_err(|error| format!("failed to write download file: {error}"))?;
-        hasher.update(&buffer[..bytes_read]);
-        downloaded += bytes_read as u64;
-
-        if total > 0 {
-            let fraction = (downloaded as f32 / total as f32).clamp(0.0, 1.0);
-            emit_progress(app, label_key, start + ((end - start) * fraction));
-        }
-    }
-
-    let actual_sha256 = to_hex(&hasher.finalize());
-    if let Err(error) = verify_download(artifact, downloaded, &actual_sha256) {
-        let _ = fs::remove_file(&temp_destination);
-        return Err(error);
-    }
-
-    fs::rename(&temp_destination, destination)
-        .map_err(|error| format!("failed to finalize download file: {error}"))?;
+    download_artifact(client, artifact, destination, |progress| {
+        let fraction = (progress.downloaded_bytes as f64 / progress.total_bytes.max(1) as f64)
+            .clamp(0.0, 1.0) as f32;
+        emit_progress(app, label_key, start + ((end - start) * fraction));
+    })?;
     emit_progress(app, label_key, end);
     Ok(())
+}
+
+fn install_ui_archive(archive_path: &Path, install_root: &Path) -> Result<(), String> {
+    let assets_root = install_root.join("assets");
+    let staging_root = assets_root.join(".ui-new");
+    let active_ui = assets_root.join("ui");
+    let previous_ui = assets_root.join(".ui-previous");
+    remove_if_exists(&staging_root)?;
+    fs::create_dir_all(&staging_root)
+        .map_err(|error| format!("failed to create UI staging directory: {error}"))?;
+    if let Err(error) = unzip_archive(archive_path, &staging_root) {
+        let _ = fs::remove_dir_all(&staging_root);
+        return Err(error);
+    }
+    let staged_ui = staging_root.join("ui");
+    if !has_required_ui_content(&staged_ui) {
+        let _ = fs::remove_dir_all(&staging_root);
+        return Err("UI archive does not contain assets/ui with expected directories".to_string());
+    }
+    fs::create_dir_all(&assets_root)
+        .map_err(|error| format!("failed to create assets directory: {error}"))?;
+    remove_if_exists(&previous_ui)?;
+    let had_active_ui = active_ui.exists();
+    if had_active_ui {
+        fs::rename(&active_ui, &previous_ui)
+            .map_err(|error| format!("failed to preserve current UI assets: {error}"))?;
+    }
+    if let Err(error) = fs::rename(&staged_ui, &active_ui) {
+        if had_active_ui {
+            let _ = fs::rename(&previous_ui, &active_ui);
+        }
+        return Err(format!("failed to activate UI assets: {error}"));
+    }
+    let _ = fs::remove_dir_all(&previous_ui);
+    let _ = fs::remove_dir_all(&staging_root);
+    Ok(())
+}
+
+fn unzip_archive(archive_path: &Path, destination: &Path) -> Result<(), String> {
+    let file = File::open(archive_path)
+        .map_err(|error| format!("failed to open UI archive: {error}"))?;
+    let mut archive = ZipArchive::new(file)
+        .map_err(|error| format!("failed to read UI archive: {error}"))?;
+    for index in 0..archive.len() {
+        let mut entry = archive
+            .by_index(index)
+            .map_err(|error| format!("failed to read UI archive entry: {error}"))?;
+        let name = entry
+            .enclosed_name()
+            .ok_or_else(|| "UI archive contains an unsafe path".to_string())?
+            .to_path_buf();
+        let output = destination.join(name);
+        if entry.is_dir() {
+            fs::create_dir_all(output)
+                .map_err(|error| format!("failed to create UI directory: {error}"))?;
+        } else {
+            if let Some(parent) = output.parent() {
+                fs::create_dir_all(parent)
+                    .map_err(|error| format!("failed to create UI directory: {error}"))?;
+            }
+            let mut output_file = File::create(output)
+                .map_err(|error| format!("failed to create UI asset: {error}"))?;
+            std::io::copy(&mut entry, &mut output_file)
+                .map_err(|error| format!("failed to extract UI asset: {error}"))?;
+        }
+    }
+    Ok(())
+}
+
+fn has_required_ui_content(ui_root: &Path) -> bool {
+    ["characters", "fonts", "wallpapers", "icons"]
+        .iter()
+        .all(|directory| ui_root.join(directory).is_dir())
 }
 
 /// Runs the replace dir step for the installer Tauri backend system.
@@ -746,14 +791,6 @@ fn make_executable(_path: &Path) -> Result<(), String> {
 }
 
 /// Runs the part path step for the installer Tauri backend system.
-fn part_path(destination: &Path) -> Result<PathBuf, String> {
-    let filename = destination
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| "download destination has no filename".to_string())?;
-    Ok(destination.with_file_name(format!("{filename}.part")))
-}
-
 /// Runs the emit progress step for the installer Tauri backend system.
 fn emit_progress(app: &tauri::AppHandle, label_key: &'static str, progress: f32) {
     let _ = app.emit(
@@ -765,32 +802,6 @@ fn emit_progress(app: &tauri::AppHandle, label_key: &'static str, progress: f32)
     );
 }
 
-/// Runs the to hex step for the installer Tauri backend system.
-fn to_hex(bytes: &[u8]) -> String {
-    let mut output = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        use std::fmt::Write as _;
-        let _ = write!(&mut output, "{byte:02x}");
-    }
-    output
-}
-
-fn verify_download(
-    artifact: &Artifact,
-    downloaded: u64,
-    actual_sha256: &str,
-) -> Result<(), String> {
-    if downloaded != artifact.size {
-        return Err(format!(
-            "download size mismatch: expected {} bytes, got {downloaded}",
-            artifact.size
-        ));
-    }
-    if !artifact.sha256.eq_ignore_ascii_case(actual_sha256) {
-        return Err("download checksum mismatch".to_string());
-    }
-    Ok(())
-}
 
 #[cfg(test)]
 mod tests {
@@ -873,15 +884,42 @@ mod tests {
     }
 
     #[test]
-    fn verifies_size_and_checksum() {
-        let expected = Artifact {
-            url: "https://downloads.tilt-us.com/runtime/game/linux/mira-game-client".to_string(),
-            sha256: "abc".to_string(),
-            size: 3,
-        };
-        assert!(verify_download(&expected, 3, "abc").is_ok());
-        assert!(verify_download(&expected, 2, "abc").is_err());
-        assert!(verify_download(&expected, 3, "def").is_err());
+    fn installer_ui_validation_does_not_require_game_content() {
+        let directory = tempfile::tempdir().unwrap();
+        let ui = directory.path().join("ui");
+        for child in ["characters", "fonts", "wallpapers", "icons"] {
+            std::fs::create_dir_all(ui.join(child)).unwrap();
+        }
+        assert!(has_required_ui_content(&ui));
+        assert!(!directory.path().join("game").exists());
+    }
+
+    #[test]
+    fn ui_archive_installs_only_to_assets_ui() {
+        use std::io::Write;
+        use zip::{ZipWriter, write::SimpleFileOptions};
+
+        let directory = tempfile::tempdir().unwrap();
+        let archive_path = directory.path().join("ui.zip");
+        let file = File::create(&archive_path).unwrap();
+        let mut archive = ZipWriter::new(file);
+        for entry in [
+            "ui/characters/ignara.png",
+            "ui/fonts/Roboto-Bold.ttf",
+            "ui/wallpapers/ignara-wallpaper.png",
+            "ui/icons/flags/de.svg",
+        ] {
+            archive
+                .start_file(entry, SimpleFileOptions::default())
+                .unwrap();
+            archive.write_all(b"ui").unwrap();
+        }
+        archive.finish().unwrap();
+
+        let install_root = directory.path().join("Mira Moba");
+        install_ui_archive(&archive_path, &install_root).unwrap();
+        assert!(has_required_ui_content(&install_root.join("assets/ui")));
+        assert!(!install_root.join("assets/game").exists());
     }
 
     #[test]

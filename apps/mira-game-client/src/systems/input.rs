@@ -5,9 +5,9 @@ use super::{
 };
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
+use lightyear::prelude::*;
 use mira_game_api::game::{camera::TopDownCamera, map::MapGround, player::PlayerControlled};
 use mira_game_api::network::{PlayerCommand, ReliableCommandChannel, WorldPosition};
-use lightyear::prelude::*;
 
 const MOVE_TARGET_UPDATE_EPSILON: f32 = 0.08;
 

@@ -8,6 +8,7 @@ const environment = getMiraEnvironment(process.env.MIRA_ENV, "dev");
 export default defineConfig({
   define: {
     __MIRA_ENV__: JSON.stringify(environment),
+    __MIRA_UI_ASSET_DEV_ROOT__: JSON.stringify(`/@fs/${repoRoot}/assets/ui`),
   },
   server: {
     fs: {

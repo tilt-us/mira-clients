@@ -6,13 +6,13 @@ use bevy::ecs::spawn::SpawnIter;
 use bevy::image::{CompressedImageFormats, ImageSampler, ImageType};
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+use lightyear::prelude::*;
 use mira_game_api::game::player::{non_empty_string, public_display_name};
 use mira_game_api::game::team::TeamSpec;
 use mira_game_api::network::{
     ChampionId, DisplayReady, LauncherMatchManifest, LoadingScreenPlayer, LoadingScreenStatus,
     ReliableCommandChannel,
 };
-use lightyear::prelude::*;
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::sync::mpsc::{Receiver, channel};

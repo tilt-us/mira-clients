@@ -3,6 +3,7 @@ use bevy::ecs::query::QueryFilter;
 use bevy::math::primitives::{Cone, Cuboid, Cylinder, Sphere};
 use bevy::mesh::{MeshBuilder, Meshable};
 use bevy::prelude::*;
+use lightyear::prelude::*;
 use mira_game_api::game::{
     lane::{LaneUnitKind, TOWER_ATTACK_RANGE, lane_unit_stats},
     lane_navigation::LaneNavigationObstacle,
@@ -10,7 +11,6 @@ use mira_game_api::game::{
     team::{Team, TeamSpec},
 };
 use mira_game_api::network::{LaneSnapshot, NetworkLaneUnit, NetworkTargetId};
-use lightyear::prelude::*;
 use std::collections::{HashMap, HashSet};
 
 const LANE_POSITION_SMOOTHING: f32 = 20.0;

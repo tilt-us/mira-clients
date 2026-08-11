@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { Gamepad2, MessageCircle, Monitor, Search, Users } from "lucide-react";
-import germanFlagUrl from "../../../../assets/icons/flags/de.svg";
-import unitedKingdomFlagUrl from "../../../../assets/icons/flags/gb.svg";
+import { uiAssetUrl } from "../uiAssets";
 import type { AppLocale } from "../i18n";
 import type {
   AppResolution,
@@ -44,6 +43,9 @@ type SettingsModalProps = {
 };
 
 type SettingsTab = "interface" | "game" | "social";
+
+const germanFlagUrl = uiAssetUrl("icons/flags/de.svg");
+const unitedKingdomFlagUrl = uiAssetUrl("icons/flags/gb.svg");
 
 const resolutionOptions: Array<{
   label: string;

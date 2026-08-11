@@ -26,6 +26,26 @@
   cursor: pointer;
 }
 
+.client-play-button-tooltip {
+  display: block;
+}
+
+.client-play-button:disabled {
+  cursor: wait;
+  opacity: 1;
+}
+
+.client-play-button-progress {
+  position: absolute;
+  inset: 2px auto 2px 2px;
+  z-index: 1;
+  width: var(--game-content-progress);
+  background: var(--accent-color);
+  clip-path: polygon(0 0, 100% 0, calc(100% - 8px) 100%, 0 100%);
+  pointer-events: none;
+  transition: width 160ms ease;
+}
+
 .client-play-button::before {
   position: absolute;
   inset: 0;
@@ -69,7 +89,7 @@
 
 .client-play-button span {
   position: relative;
-  z-index: 1;
+  z-index: 2;
   text-shadow: 0 1px 8px rgba(0, 0, 0, 0.28);
 }
 

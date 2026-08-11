@@ -24,7 +24,7 @@ export let KEYCLOAK_AUTH_URL = getKeycloakAuthUrl();
 
 export let KEYCLOAK_TOKEN_URL = getKeycloakTokenUrl();
 
-export const DESKTOP_REDIRECT_URI = "http://localhost:1420/";
+export const DESKTOP_REDIRECT_URI = "http://127.0.0.1/";
 
 export function getRedirectUri() {
   return isTauriLocation() ? DESKTOP_REDIRECT_URI : getBrowserRedirectUri();

@@ -871,11 +871,13 @@ jobs:
           from zipfile import ZIP_DEFLATED, ZipFile
 
           source = Path("assets")
-          destination = Path("garage-content/assets.zip")
-          with ZipFile(destination, "w", compression=ZIP_DEFLATED, allowZip64=True) as archive:
-              for path in source.rglob("*"):
-                  if path.is_file():
-                      archive.write(path, path.as_posix())
+          for name in ("ui", "game"):
+              destination = Path(f"garage-content/{name}.zip")
+              with ZipFile(destination, "w", compression=ZIP_DEFLATED, allowZip64=True) as archive:
+                  source = Path("assets") / name
+                  for path in source.rglob("*"):
+                      if path.is_file():
+                          archive.write(path, path.relative_to(Path("assets")).as_posix())
           PY
 
       - name: Prepare current download manifests
@@ -889,7 +891,8 @@ jobs:
           node scripts/garage-publish.mjs prepare \
             --environment "${MIRA_ENV}" \
             --artifacts release-artifacts \
-            --content garage-content/assets.zip \
+            --ui garage-content/ui.zip \
+            --game garage-content/game.zip \
             --output garage-publish \
             --commit "${HEAD_SHA}" \
             --tag "${TAG}" \

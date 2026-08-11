@@ -15,7 +15,7 @@ The Bevy game client uses `bevy_fontmesh` for overhead 3D text such as player
 names and level digits on health bars. Bevy 0.18 provides UI text and `Text2d`,
 but no built-in 3D mesh text; health-bar labels must be real 3D child entities
 so they stay attached to the bar transform. The font asset is Roboto Bold at
-`assets/fonts/Roboto-Bold.ttf`.
+`assets/ui/fonts/Roboto-Bold.ttf`.
 
 ## Commands
 
@@ -62,8 +62,8 @@ Email/password login uses Keycloak's password grant with
 `VITE_KEYCLOAK_PASSWORD_CLIENT_ID`. Google, GitHub, and Discord login use
 `VITE_KEYCLOAK_CLIENT_ID` with the authorization-code flow, PKCE, and the
 provider hints `kc_idp_hint=google`, `kc_idp_hint=github`, and
-`kc_idp_hint=discord`. The authorization-code client must allow the Tauri dev
-redirect URL, for example `http://localhost:1420/*`. The password client must
+`kc_idp_hint=discord`. The authorization-code client must allow the native
+loopback redirect pattern `http://127.0.0.1/*`. The password client must
 have Direct Access Grants enabled. Identity provider callbacks are derived from
 the selected environment's Keycloak issuer URL.
 

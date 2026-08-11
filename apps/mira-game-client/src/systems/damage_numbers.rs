@@ -1,11 +1,11 @@
 use bevy::prelude::*;
 use bevy_fontmesh::{JustifyText, TextAnchor, TextMesh, TextMeshStyle};
+use lightyear::prelude::*;
 use mira_game_api::game::camera::TopDownCamera;
 use mira_game_api::game::player::Player;
 use mira_game_api::network::{NetworkCombatNumberEvent, NetworkCombatNumberKind};
-use lightyear::prelude::*;
 
-const DAMAGE_NUMBER_FONT_PATH: &str = "fonts/Roboto-Bold.ttf";
+const DAMAGE_NUMBER_FONT_PATH: &str = "ui/fonts/Roboto-Bold.ttf";
 const DAMAGE_NUMBER_HOLD_SECONDS: f32 = 1.0;
 const DAMAGE_NUMBER_FALL_SECONDS: f32 = 0.45;
 const DAMAGE_NUMBER_Y_OFFSET: f32 = 1.75;

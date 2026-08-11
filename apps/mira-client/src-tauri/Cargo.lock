@@ -2115,10 +2115,8 @@ name = "mira-client"
 version = "0.1.0"
 dependencies = [
  "mira-downloads",
- "reqwest 0.12.28",
  "serde",
  "serde_json",
- "sha2",
  "tauri",
  "tauri-build",
  "tauri-plugin-http",
@@ -2133,8 +2131,10 @@ dependencies = [
 name = "mira-downloads"
 version = "0.1.0"
 dependencies = [
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]

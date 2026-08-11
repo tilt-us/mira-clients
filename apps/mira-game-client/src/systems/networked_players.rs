@@ -4,6 +4,7 @@ use super::{
 };
 use bevy::gltf::GltfAssetLabel;
 use bevy::prelude::*;
+use lightyear::prelude::*;
 use mira_game_api::game::{
     player::{
         DEFAULT_PLAYER_MANA, DEFAULT_PLAYER_MOVEMENT_SPEED, Health, Mana, MoveSpeed, Player,
@@ -14,7 +15,6 @@ use mira_game_api::game::{
 use mira_game_api::network::{
     ChampionId, MatchSnapshot, NetworkPlayer, PlayerStateChannel, PlayerStateUpdate,
 };
-use lightyear::prelude::*;
 use std::time::Duration;
 
 const REMOTE_PLAYER_HIT_RADIUS: f32 = 0.9;
