@@ -43,5 +43,7 @@ test("passes the resolved environment to every release build and isolates Garage
   assert.match(workflow, /os: windows-latest/);
   assert.match(workflow, /os: macos-15/);
   assert.match(workflow, /os: ubuntu-latest/);
+  assert.equal(workflow.split('CI: "true"').length - 1, 2);
+  assert.equal(workflow.split("--ci --verbose").length - 1, 3);
   assert.doesNotMatch(workflow, /workflow_run/);
 });

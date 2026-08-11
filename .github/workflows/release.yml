@@ -443,10 +443,13 @@ jobs:
       - name: Build
         env:
           BUNDLES: ${{ matrix.bundles }}
+          # Tauri maps CI=true to create-dmg's --skip-jenkins mode, avoiding
+          # Finder AppleScript calls that cannot run on GitHub-hosted macOS runners.
+          CI: "true"
           MIRA_ENV: ${{ needs.prepare.outputs.environment }}
           TAURI_BUNDLER_NEW_APPIMAGE_FORMAT: ${{ runner.os == 'Linux' && 'true' || 'false' }}
           NO_STRIP: ${{ runner.os == 'Linux' && '1' || '' }}
-        run: npm run tauri -- build --bundles "${BUNDLES}" --ci
+        run: npm run tauri -- build --bundles "${BUNDLES}" --ci --verbose
 
       - name: Patch Linux AppImage environment
         if: runner.os == 'Linux'
@@ -665,15 +668,18 @@ jobs:
       - name: Build
         env:
           BUNDLES: ${{ matrix.bundles }}
+          # Tauri maps CI=true to create-dmg's --skip-jenkins mode, avoiding
+          # Finder AppleScript calls that cannot run on GitHub-hosted macOS runners.
+          CI: "true"
           MIRA_ENV: ${{ needs.prepare.outputs.environment }}
           TAURI_BUNDLER_NEW_APPIMAGE_FORMAT: ${{ runner.os == 'Linux' && 'true' || 'false' }}
           NO_STRIP: ${{ runner.os == 'Linux' && '1' || '' }}
         run: |
           set -euo pipefail
           if [[ "${RUNNER_OS}" == "Windows" ]]; then
-            npm run tauri -- build --no-bundle --ci
+            npm run tauri -- build --no-bundle --ci --verbose
           else
-            npm run tauri -- build --bundles "${BUNDLES}" --ci
+            npm run tauri -- build --bundles "${BUNDLES}" --ci --verbose
           fi
 
       - name: Patch Linux AppImage environment
