@@ -30,6 +30,12 @@ export function getBuildEnvironmentConfig() {
 }
 
 export function getServiceUrl(config: EnvironmentConfig, service: string) {
+  // The public auth API is routed at the services origin (`/api/...`), while
+  // the other service names remain path-prefixed behind the shared gateway.
+  if (service === "auth") {
+    return config.servicesApiUrl.replace(/\/$/, "");
+  }
+
   return new URL(service, `${config.servicesApiUrl}/`).toString().replace(/\/$/, "");
 }
 

@@ -4,6 +4,8 @@ mod game;
 mod launcher;
 mod oauth;
 
+use tauri::Manager;
+
 /// Runs the run step for the desktop client Tauri bootstrap.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -20,10 +22,15 @@ pub fn run() {
             launcher::launcher_status,
             game::launch_game,
             oauth::prepare_oauth_redirect_uri,
+            oauth::cancel_oauth_attempt,
             oauth::start_oauth_window,
+            oauth::open_system_browser,
             game::stop_game_client
         ])
         .setup(|app| {
+            let ui_assets = content::ui_asset_root()?;
+            app.asset_protocol_scope()
+                .allow_directory(ui_assets, true)?;
             content::start_game_content_sync(app.handle().clone());
             Ok(())
         })

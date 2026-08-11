@@ -1,7 +1,7 @@
 use crate::config;
 use mira_downloads::{
-    download_artifact, download_client, ContentArtifact, ContentManifest, DownloadProgress,
-    LatestManifest,
+    ContentArtifact, ContentManifest, DownloadProgress, LatestManifest, download_artifact,
+    download_client,
 };
 use std::{
     fs::{self, File},
@@ -72,7 +72,10 @@ impl GameContentManager {
     }
 
     fn status(&self) -> GameContentStatus {
-        self.status.lock().map(|status| status.clone()).unwrap_or_default()
+        self.status
+            .lock()
+            .map(|status| status.clone())
+            .unwrap_or_default()
     }
 }
 
@@ -112,7 +115,10 @@ pub(crate) fn ready_game_asset_root(app: &tauri::AppHandle) -> Result<PathBuf, S
     let manager = app.state::<GameContentManager>();
     let status = manager.status();
     if status.state != GameContentStatusKind::Ready {
-        return Err("Game content is not ready. Finish the current installation or update first.".to_string());
+        return Err(
+            "Game content is not ready. Finish the current installation or update first."
+                .to_string(),
+        );
     }
     let assets_root = install_root()?.join("assets");
     let game_root = assets_root.join(GAME_DIRECTORY);
@@ -123,7 +129,10 @@ pub(crate) fn ready_game_asset_root(app: &tauri::AppHandle) -> Result<PathBuf, S
     }
 }
 
-fn synchronize_game_content(app: &tauri::AppHandle, manager: &GameContentManager) -> Result<(), String> {
+fn synchronize_game_content(
+    app: &tauri::AppHandle,
+    manager: &GameContentManager,
+) -> Result<(), String> {
     let environment = config::build_environment()?;
     let client = download_client()?;
     let latest: LatestManifest = client
@@ -252,7 +261,9 @@ fn install_game_archive(
     let staged_game = staging_root.join(GAME_DIRECTORY);
     if !has_required_game_content(&staged_game) {
         let _ = fs::remove_dir_all(&staging_root);
-        return Err("Game archive does not contain assets/game with expected directories.".to_string());
+        return Err(
+            "Game archive does not contain assets/game with expected directories.".to_string(),
+        );
     }
     let state = GameContentState {
         schema_version: 1,
@@ -335,14 +346,25 @@ pub(crate) fn has_required_game_content(game_root: &Path) -> bool {
 pub(crate) fn ui_asset_root() -> Result<PathBuf, String> {
     let installed = install_root()?.join("assets").join("ui");
     if installed.is_dir() {
-        return Ok(installed);
+        return canonical_ui_asset_root(installed);
     }
-    Ok(PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-        .join("..")
-        .join("assets")
-        .join("ui"))
+    canonical_ui_asset_root(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("..")
+            .join("assets")
+            .join("ui"),
+    )
+}
+
+fn canonical_ui_asset_root(path: PathBuf) -> Result<PathBuf, String> {
+    path.canonicalize().map_err(|error| {
+        format!(
+            "Could not resolve UI asset directory {}: {error}",
+            path.display()
+        )
+    })
 }
 
 #[tauri::command]
@@ -396,8 +418,8 @@ fn remove_path_if_exists(path: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zip::{ZipWriter, write::SimpleFileOptions};
     use std::io::Write;
+    use zip::{ZipWriter, write::SimpleFileOptions};
 
     fn artifact() -> ContentArtifact {
         ContentArtifact {
@@ -412,12 +434,24 @@ mod tests {
         let file = File::create(path).unwrap();
         let mut archive = ZipWriter::new(file);
         let directories = if valid {
-            ["game/audio/a", "game/champions/a", "game/maps/a", "game/materials/a"]
+            [
+                "game/audio/a",
+                "game/champions/a",
+                "game/maps/a",
+                "game/materials/a",
+            ]
         } else {
-            ["ui/characters/a", "ui/fonts/a", "ui/wallpapers/a", "ui/icons/a"]
+            [
+                "ui/characters/a",
+                "ui/fonts/a",
+                "ui/wallpapers/a",
+                "ui/icons/a",
+            ]
         };
         for entry in directories {
-            archive.start_file(entry, SimpleFileOptions::default()).unwrap();
+            archive
+                .start_file(entry, SimpleFileOptions::default())
+                .unwrap();
             archive.write_all(b"x").unwrap();
         }
         archive.finish().unwrap();
@@ -448,18 +482,34 @@ mod tests {
             .unwrap(),
         )
         .unwrap();
-        let state: GameContentState = serde_json::from_slice(
-            &fs::read(directory.path().join(GAME_STATE_FILENAME)).unwrap(),
-        )
-        .unwrap();
+        let state: GameContentState =
+            serde_json::from_slice(&fs::read(directory.path().join(GAME_STATE_FILENAME)).unwrap())
+                .unwrap();
         assert_eq!(state.content_id, artifact().content_id);
         assert_eq!(state.sha256, artifact().sha256);
-        assert!(has_required_game_content(&directory.path().join(GAME_DIRECTORY)));
+        assert!(has_required_game_content(
+            &directory.path().join(GAME_DIRECTORY)
+        ));
         assert!(!game_content_needs_update(
             directory.path(),
             &artifact(),
             mira_downloads::Environment::Dev,
         ));
+    }
+
+    #[test]
+    fn repository_ui_assets_use_the_external_ui_root() {
+        let ui_root = ui_asset_root().unwrap();
+        assert!(ui_root.is_absolute());
+        assert!(
+            !ui_root
+                .components()
+                .any(|component| component == std::path::Component::ParentDir)
+        );
+
+        for directory in ["characters", "fonts", "wallpapers", "icons"] {
+            assert!(ui_root.join(directory).is_dir(), "missing {directory}");
+        }
     }
 
     #[test]
@@ -473,7 +523,15 @@ mod tests {
         fs::write(active.join("champions/old.txt"), "old").unwrap();
         let archive = assets.join("game.zip");
         write_archive(&archive, false);
-        assert!(install_game_archive(&archive, assets, &artifact(), mira_downloads::Environment::Dev).is_err());
+        assert!(
+            install_game_archive(
+                &archive,
+                assets,
+                &artifact(),
+                mira_downloads::Environment::Dev
+            )
+            .is_err()
+        );
         assert!(active.join("champions/old.txt").is_file());
     }
 
@@ -482,7 +540,13 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let archive = directory.path().join("game.zip");
         write_archive(&archive, true);
-        install_game_archive(&archive, directory.path(), &artifact(), mira_downloads::Environment::Dev).unwrap();
+        install_game_archive(
+            &archive,
+            directory.path(),
+            &artifact(),
+            mira_downloads::Environment::Dev,
+        )
+        .unwrap();
         assert!(has_required_game_content(&directory.path().join("game")));
         assert!(!directory.path().join("ui").exists());
     }

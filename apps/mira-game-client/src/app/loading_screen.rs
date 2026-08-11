@@ -138,7 +138,7 @@ impl LoadingScreenImages {
                 let asset_slug = champion
                     .asset_slug()
                     .expect("prototype champions must have asset slugs");
-                let path = format!("wallpapers/{asset_slug}-loading.jpg");
+                let path = format!("ui/wallpapers/{asset_slug}-loading.jpg");
                 (champion, asset_server.load(path))
             })
             .collect();

@@ -52,16 +52,16 @@ cd apps/mira-client
 npm install
 ```
 
-Start the desktop client against local services:
-
-```bash
-npm run local:desktop
-```
-
-Start the desktop client against the dev API:
+Start the desktop client against the official dev API:
 
 ```bash
 npm run dev:desktop
+```
+
+Start it against the official staging API:
+
+```bash
+npm run staging:desktop
 ```
 
 Start the Bevy game client directly in development preview mode with the visible

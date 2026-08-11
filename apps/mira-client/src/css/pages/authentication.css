@@ -2,9 +2,57 @@
   position: fixed;
   inset: 0;
   z-index: 240;
+  display: grid;
+  place-items: center;
+  padding: 24px;
   background: rgba(4, 6, 10, 0.62);
   backdrop-filter: blur(6px);
-  pointer-events: none;
+}
+
+.oauth-waiting-modal {
+  display: grid;
+  width: min(390px, 100%);
+  grid-template-columns: auto auto minmax(0, 1fr);
+  align-items: center;
+  gap: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 20px;
+  background: rgba(16, 18, 22, 0.98);
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.45);
+}
+
+.oauth-waiting-modal .brand-mark {
+  width: 38px;
+  height: 38px;
+}
+
+.oauth-waiting-spinner {
+  color: var(--accent-color);
+  animation: oauth-waiting-spin 0.9s linear infinite;
+}
+
+.oauth-waiting-modal h2,
+.oauth-waiting-modal p {
+  margin: 0;
+}
+
+.oauth-waiting-modal h2 {
+  color: #f8fafc;
+  font-size: 1rem;
+}
+
+.oauth-waiting-modal p {
+  margin-top: 4px;
+  color: #aab6c3;
+  font-size: 0.88rem;
+  line-height: 1.4;
+}
+
+@keyframes oauth-waiting-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .oauth-profile-setup-backdrop {
