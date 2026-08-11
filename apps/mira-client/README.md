@@ -22,116 +22,37 @@ so they stay attached to the bar transform. The font asset is Roboto Bold at
 ```bash
 npm install
 npm run generate:api
-npm run generate:local:api
-npm run build
-npm run tauri dev
 npm run dev:desktop
-npm run local:desktop
+npm run staging:desktop
 npm run prod:desktop
 ```
 
-`npm run dev:desktop` starts the Tauri app with the built React UI and the
-`api.tilt-us.com` desktop config, without starting a Vite web server. Use
-`npm run local:desktop` for the same desktop start against localhost services.
-For testing multiple local desktop clients with different accounts on one
-machine, start each isolated instance with:
-
-```bash
-npm run local:desktop -- -no-shared
-```
-
-This keeps desktop auth tokens in per-window session storage instead of shared
-local storage.
-Use `npm run prod:desktop` for the Tauri `deb` release bundle with the
-production desktop config.
+`npm run dev:desktop` starts the desktop app with the development environment.
+Use `npm run staging:desktop` or `npm run prod:desktop` for deterministic
+release bundles. See [the environment documentation](../../docs/environments.md)
+for the available values and direct build commands.
 
 ## Backend API
 
-The desktop client reads runtime service addresses from `mira-client.toml` in
-development. Adjust this file when the services are exposed through Docker on a
-different host or port:
-
-```toml
-[services]
-api_base_url = "http://localhost:8080"
-live_api_base_url = "http://localhost:8082"
-matchmaking_api_base_url = "http://localhost:8083"
-
-[keycloak]
-base_url = "http://localhost:8081"
-realm = "mira"
-client_id = "mira-bevy"
-password_client_id = "mira-e2e"
-```
-
-The desktop client looks for the config in this order: `MIRA_CLIENT_CONFIG`, next
-to the app executable, the current working directory, the app config directory,
-and finally the repository root in development. Release bundles do not include a
-TOML config file; production desktop builds use compiled defaults:
-
-```toml
-[services]
-api_base_url = "https://api.tilt-us.com/auth"
-live_api_base_url = "https://api.tilt-us.com/live"
-matchmaking_api_base_url = "https://api.tilt-us.com/match"
-champion_api_base_url = "https://api.tilt-us.com/game"
-
-[keycloak]
-base_url = "https://api.tilt-us.com/keycloak"
-```
-
-The matching Keycloak service settings are:
-
-```bash
-KEYCLOAK_HOSTNAME=https://api.tilt-us.com/keycloak
-KEYCLOAK_ISSUER_URI=https://api.tilt-us.com/keycloak/realms/mira
-```
-
-For browser/Vite development you can still override the addresses with:
-
-```bash
-VITE_API_BASE_URL=http://localhost:8080
-VITE_LIVE_API_BASE_URL=http://localhost:8082
-VITE_MATCHMAKING_API_BASE_URL=http://localhost:8083
-VITE_CHAT_API_BASE_URL=http://localhost:8085
-VITE_KEYCLOAK_BASE_URL=http://localhost:8081
-VITE_KEYCLOAK_REALM=mira
-VITE_KEYCLOAK_CLIENT_ID=mira-bevy
-VITE_KEYCLOAK_PASSWORD_CLIENT_ID=mira-e2e
-```
+Backend, website, and Keycloak URLs are selected centrally through `MIRA_ENV`.
+Individual service URL overrides are not supported; this keeps desktop, browser,
+and game-client builds on the same environment.
 
 OpenAPI client code is generated into `src/api/generated`:
 
 ```bash
 npm run generate:api
-npm run generate:local:api
 ```
 
-By default, `npm run generate:api` reads and merges:
-
-- `https://api.tilt-us.com/auth/v3/api-docs`
-- `https://api.tilt-us.com/live/v3/api-docs`
-- `https://api.tilt-us.com/match/v3/api-docs`
-- `https://api.tilt-us.com/chat/v3/api-docs`
-
-Use `npm run generate:local:api` to generate from localhost instead:
-
-- `http://localhost:8080/v3/api-docs`
-- `http://localhost:8082/v3/api-docs`
-- `http://localhost:8083/v3/api-docs`
-- `http://localhost:8085/v3/api-docs`
+`npm run generate:api` reads and merges the selected environment's auth, live,
+matchmaking, and chat OpenAPI documents. Set `MIRA_ENV` before generating when
+the target is staging or production.
 
 The services must expose those endpoints, for example with Springdoc OpenAPI.
 If the backends are running somewhere else, override the input URLs:
 
 ```bash
 OPENAPI_INPUTS=http://localhost:8080/v3/api-docs,http://localhost:8082/v3/api-docs,http://localhost:8083/v3/api-docs,http://localhost:8085/v3/api-docs npm run generate:api
-```
-
-To generate from a single OpenAPI document, use the legacy input override:
-
-```bash
-OPENAPI_INPUT=http://localhost:8080/v3/api-docs npm run generate:api
 ```
 
 Import generated endpoints through `src/api/client.ts` so the configured base
@@ -143,13 +64,8 @@ Email/password login uses Keycloak's password grant with
 provider hints `kc_idp_hint=google`, `kc_idp_hint=github`, and
 `kc_idp_hint=discord`. The authorization-code client must allow the Tauri dev
 redirect URL, for example `http://localhost:1420/*`. The password client must
-have Direct Access Grants enabled.
-
-Local identity provider redirect URLs:
-
-- Google: `http://localhost:8081/realms/mira/broker/google/endpoint`
-- GitHub: `http://localhost:8081/realms/mira/broker/github/endpoint`
-- Discord: `http://localhost:8081/realms/mira/broker/discord/endpoint`
+have Direct Access Grants enabled. Identity provider callbacks are derived from
+the selected environment's Keycloak issuer URL.
 
 ## Linux Prerequisites
 

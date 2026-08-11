@@ -1,9 +1,14 @@
 import { defineConfig } from "vitest/config";
 import { fileURLToPath, URL } from "node:url";
+import { getMiraEnvironment } from "./scripts/environment.mjs";
 
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
+const environment = getMiraEnvironment(process.env.MIRA_ENV, "dev");
 
 export default defineConfig({
+  define: {
+    __MIRA_ENV__: JSON.stringify(environment),
+  },
   server: {
     fs: {
       allow: [repoRoot],

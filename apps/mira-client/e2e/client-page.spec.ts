@@ -1,11 +1,33 @@
 import { expect, test, type Page } from "@playwright/test";
+import {
+  getEnvironmentConfig,
+  getMiraEnvironment,
+  getServiceUrl,
+} from "../scripts/environment.mjs";
 import { getCredentials } from "./support/auth";
 import { mockAuthenticatedClientApi } from "./support/mockClientApi";
 
 const friendSidebarStorageKey = "mira-client-friend-sidebar-v2";
+const environment = getEnvironmentConfig(
+  getMiraEnvironment(process.env.MIRA_ENV, "dev"),
+);
+const authApiUrl = getServiceUrl(environment, "auth");
+const liveApiUrl = getServiceUrl(environment, "live");
+const matchmakingApiUrl = getServiceUrl(environment, "match");
+const chatApiUrl = getServiceUrl(environment, "chat");
 
 function folderButtonName(name: string) {
   return new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s+\\d+$`);
+}
+
+function serviceEndpointPattern(serviceUrls: string[], path: string) {
+  return new RegExp(
+    `^(?:${serviceUrls.map(escapeRegExp).join("|")})${path}(?:\\?.*)?$`,
+  );
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 test.beforeEach(async ({ page }) => {
@@ -138,7 +160,10 @@ test("discovers incoming private chat rooms from the room last message", async (
   const incomingCreatedAt = new Date("2026-06-25T10:01:00.000Z").toISOString();
 
   await page.route(
-    /^(https:\/\/api\.tilt-us\.com|http:\/\/localhost:8085)\/(?:chat\/)?api\/chats(?:\/private-9001-9101\/messages)?(?:\?.*)?$/,
+    serviceEndpointPattern(
+      [chatApiUrl],
+      "/api/chats(?:/private-9001-9101/messages)?",
+    ),
     async (route) => {
       const pathname = new URL(route.request().url()).pathname.replace(
         /^\/chat(?=\/api\/)/,
@@ -411,7 +436,10 @@ test("shows incoming lobby invitations with live event field aliases", async ({ 
   let invitationUpdatedAt = "2026-07-07T10:00:00.000Z";
 
   await page.route(
-    /^(https:\/\/api\.tilt-us\.com|http:\/\/localhost:8082|http:\/\/localhost:8080|http:\/\/localhost:8083)\/(?:live\/|auth\/|match\/)?api\/lobbies\/invitations(?:\?.*)?$/,
+    serviceEndpointPattern(
+      [liveApiUrl, authApiUrl, matchmakingApiUrl],
+      "/api/lobbies/invitations",
+    ),
     async (route) => {
       await route.fulfill({
         contentType: "application/json",
@@ -453,7 +481,7 @@ test("opens close dialog and logs out", async ({ page }) => {
   const statusUpdates: string[] = [];
 
   await page.route(
-    /^(https:\/\/api\.tilt-us\.com|http:\/\/localhost:8082)\/(?:live\/)?api\/user-status\/me$/,
+    serviceEndpointPattern([liveApiUrl], "/api/user-status/me"),
     async (route) => {
       if (route.request().method() === "PUT") {
         const body = route.request().postDataJSON() as { status?: string } | null;
@@ -500,7 +528,7 @@ test("opens close dialog and requests quit", async ({ page }) => {
   const statusUpdates: string[] = [];
 
   await page.route(
-    /^(https:\/\/api\.tilt-us\.com|http:\/\/localhost:8082)\/(?:live\/)?api\/user-status\/me$/,
+    serviceEndpointPattern([liveApiUrl], "/api/user-status/me"),
     async (route) => {
       if (route.request().method() === "PUT") {
         const body = route.request().postDataJSON() as { status?: string } | null;

@@ -81,7 +81,6 @@ dev port="5000" control_port="6000" player_id="1001" champion="lira" team="light
         --server-host 127.0.0.1 \
         --port {{ port }} \
         --server-control-base-url http://127.0.0.1:{{ control_port }} \
-        --stage Local \
         --screen {{ screen }}
 
 dev-server port="5000" control_port="6000":
@@ -107,7 +106,6 @@ dev-client port="5000" control_port="6000" player_id="1001" champion="lira" team
         --server-host 127.0.0.1 \
         --port {{ port }} \
         --server-control-base-url http://127.0.0.1:{{ control_port }} \
-        --stage Local \
         --screen {{ screen }}
 
 offline-preview champion="lira" team="light" screen="window":

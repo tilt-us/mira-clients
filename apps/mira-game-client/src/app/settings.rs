@@ -1,3 +1,4 @@
+use crate::environment::EnvironmentConfig;
 use bevy::prelude::{Color, Resource};
 use std::path::PathBuf;
 use std::time::Duration;
@@ -10,8 +11,6 @@ const HEX_DIGITS_PER_COLOR_CHANNEL: usize = 2;
 const RGB_HEX_COLOR_LENGTH: usize = RGB_CHANNEL_COUNT * HEX_DIGITS_PER_COLOR_CHANNEL;
 const HEX_RADIX: u32 = 16;
 const SRGB_COLOR_CHANNEL_MAX: f32 = 255.0;
-const LOCAL_AUTH_API_BASE_URL: &str = "http://localhost:8080";
-const DEVELOPMENT_AUTH_API_BASE_URL: &str = "https://api.tilt-us.com/auth";
 const AUTH_CURRENT_USER_PATH: &str = "/api/me";
 
 /// Selects the window mode for the playable client.
@@ -21,13 +20,6 @@ pub enum ClientScreenMode {
     Window,
     #[default]
     Borderless,
-}
-
-/// Selects the API environment used to validate a production launch.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ClientLaunchStage {
-    Local,
-    Dev,
 }
 
 /// Records whether the client may continue from startup into gameplay.
@@ -52,11 +44,9 @@ pub struct ClientLaunchSettings {
     pub match_id: Option<String>,
     pub player_public_id: Option<String>,
     pub champion: Option<String>,
-    pub matchmaking_api_base_url: Option<String>,
     pub server_control_base_url: Option<String>,
     pub server_host: Option<String>,
     pub server_port: Option<u16>,
-    pub stage: Option<ClientLaunchStage>,
     pub dev_preview: bool,
     pub screen_mode: ClientScreenMode,
 }
@@ -79,7 +69,7 @@ impl ClientLaunchSettings {
     }
 
     /// Returns the production launch validation result for this configuration.
-    pub fn release_launch_gate(&self) -> ClientLaunchGate {
+    pub fn release_launch_gate(&self, environment: &EnvironmentConfig) -> ClientLaunchGate {
         if cfg!(debug_assertions) {
             return ClientLaunchGate::Playable;
         }
@@ -93,21 +83,16 @@ impl ClientLaunchSettings {
             || self.player_public_id.as_deref().is_none_or(str::is_empty)
             || self.champion.as_deref().is_none_or(str::is_empty)
             || self
-                .matchmaking_api_base_url
-                .as_deref()
-                .is_none_or(str::is_empty)
-            || self
                 .server_control_base_url
                 .as_deref()
                 .is_none_or(str::is_empty)
             || self.server_host.as_deref().is_none_or(str::is_empty)
             || self.server_port.is_none()
-            || self.stage.is_none()
         {
             return blocked_launch_gate();
         }
 
-        if !access_token_is_valid(self.stage.unwrap(), self.access_token.as_deref().unwrap()) {
+        if !access_token_is_valid(environment, self.access_token.as_deref().unwrap()) {
             return blocked_launch_gate();
         }
 
@@ -186,8 +171,13 @@ fn blocked_launch_gate() -> ClientLaunchGate {
     }
 }
 
-fn access_token_is_valid(stage: ClientLaunchStage, access_token: &str) -> bool {
-    let url = format!("{}{}", auth_api_base_url(stage), AUTH_CURRENT_USER_PATH);
+fn access_token_is_valid(environment: &EnvironmentConfig, access_token: &str) -> bool {
+    let Ok(url) = environment
+        .auth_api_url()
+        .join(AUTH_CURRENT_USER_PATH.trim_start_matches('/'))
+    else {
+        return false;
+    };
     let Ok(client) = reqwest::blocking::Client::builder()
         .timeout(AUTH_VALIDATION_TIMEOUT)
         .build()
@@ -203,12 +193,6 @@ fn access_token_is_valid(stage: ClientLaunchStage, access_token: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn auth_api_base_url(stage: ClientLaunchStage) -> &'static str {
-    match stage {
-        ClientLaunchStage::Local => LOCAL_AUTH_API_BASE_URL,
-        ClientLaunchStage::Dev => DEVELOPMENT_AUTH_API_BASE_URL,
-    }
-}
 /// Finds the game asset root for development, packaged, and direct binary runs.
 fn resolve_asset_root() -> PathBuf {
     asset_root_candidates()

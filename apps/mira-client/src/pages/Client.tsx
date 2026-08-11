@@ -4391,7 +4391,6 @@ function Client({
       champion,
       matchManifestJson: JSON.stringify(createGameMatchManifest(match, match.matchId)),
       matchId: match.matchId,
-      matchmakingApiBaseUrl: MATCHMAKING_API_BASE_URL,
       playerPublicId: profilePublicId,
       serverHost,
       serverControlBaseUrl,

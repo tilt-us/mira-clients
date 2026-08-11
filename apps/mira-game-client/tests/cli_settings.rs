@@ -1,4 +1,4 @@
-use mira_game_client::app::settings::{ClientLaunchStage, ClientScreenMode};
+use mira_game_client::app::settings::ClientScreenMode;
 use mira_game_client::cli::{client_settings_from_args, usage};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
@@ -14,12 +14,8 @@ fn parses_complete_launch_settings() {
         "42",
         "--champion",
         "yuna",
-        "--matchmaking-api-base-url",
-        "https://api.test/match",
         "--server-control-base-url",
         "https://server.test",
-        "--stage",
-        "Dev",
         "--server-host",
         "8.8.8.8",
         "--screen",
@@ -38,14 +34,9 @@ fn parses_complete_launch_settings() {
     assert_eq!(launch_settings.player_public_id.as_deref(), Some("42"));
     assert_eq!(launch_settings.champion.as_deref(), Some("yuna"));
     assert_eq!(
-        launch_settings.matchmaking_api_base_url.as_deref(),
-        Some("https://api.test/match"),
-    );
-    assert_eq!(
         launch_settings.server_control_base_url.as_deref(),
         Some("https://server.test"),
     );
-    assert_eq!(launch_settings.stage, Some(ClientLaunchStage::Dev));
     assert_eq!(launch_settings.screen_mode, ClientScreenMode::Window);
     assert_eq!(network_settings.client_id, 42);
     assert_eq!(
@@ -68,14 +59,12 @@ fn parses_short_aliases_and_inline_port() {
         "red",
         "-p4242",
         "--screen=full",
-        "--stage=Local",
         "--offline-preview",
     ])
     .expect("settings should parse")
     .expect("help should not be requested");
 
     assert_eq!(launch_settings.champion.as_deref(), Some("ignara"));
-    assert_eq!(launch_settings.stage, Some(ClientLaunchStage::Local));
     assert!(launch_settings.dev_preview);
     assert_eq!(launch_settings.screen_mode, ClientScreenMode::Full);
     assert_eq!(network_settings.server_addr.port(), 4242);
@@ -103,7 +92,6 @@ fn returns_none_for_help() {
             .is_none()
     );
     assert!(usage().contains("--player-public-id"));
-    assert!(usage().contains("--stage"));
     assert!(usage().contains("--offline-preview"));
 }
 
@@ -130,10 +118,6 @@ fn rejects_invalid_arguments() {
         client_settings_from_args(["--screen", "tablet"])
             .expect_err("invalid screen modes should fail"),
         "Invalid screen mode: tablet",
-    );
-    assert_eq!(
-        client_settings_from_args(["--stage", "Prod"]).expect_err("invalid stages should fail"),
-        "Invalid stage: Prod",
     );
     assert_eq!(
         client_settings_from_args(["--player-public-id", "abc"])

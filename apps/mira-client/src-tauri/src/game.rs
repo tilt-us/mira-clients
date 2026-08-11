@@ -32,7 +32,6 @@ pub(crate) struct LaunchGameRequest {
     #[serde(default)]
     match_manifest_json: String,
     match_id: String,
-    matchmaking_api_base_url: String,
     player_public_id: u64,
     server_host: String,
     server_control_base_url: String,
@@ -73,7 +72,6 @@ pub(crate) fn launch_game(
     wait_for_game_server_ready(&request.server_control_base_url)?;
 
     let mut command = Command::new(&game_binary);
-    let launch_stage = launch_stage_for_base_url(&request.matchmaking_api_base_url);
     command
         .current_dir(game_dir)
         .env("MIRA_GAME_ASSET_ROOT", &asset_root)
@@ -85,8 +83,6 @@ pub(crate) fn launch_game(
         .arg(&request.champion)
         .arg("--match-id")
         .arg(&request.match_id)
-        .arg("--matchmaking-api-base-url")
-        .arg(&request.matchmaking_api_base_url)
         .arg("--player-public-id")
         .arg(request.player_public_id.to_string())
         .arg("--server-host")
@@ -94,9 +90,7 @@ pub(crate) fn launch_game(
         .arg("--port")
         .arg(request.port.to_string())
         .arg("--server-control-base-url")
-        .arg(&request.server_control_base_url)
-        .arg("--stage")
-        .arg(launch_stage);
+        .arg(&request.server_control_base_url);
 
     if !request.screen.trim().is_empty() {
         command.arg("--screen").arg(&request.screen);
@@ -401,9 +395,9 @@ fn request_game_server_readiness(endpoint: &tauri::Url) -> Result<bool, String> 
     let port = endpoint
         .port_or_known_default()
         .ok_or_else(|| "Game-Server-Control-Adresse enthält keinen Port.".to_string())?;
-    let addresses = (host, port)
-        .to_socket_addrs()
-        .map_err(|error| format!("Game-Server-Control-Host konnte nicht aufgelöst werden: {error}"))?;
+    let addresses = (host, port).to_socket_addrs().map_err(|error| {
+        format!("Game-Server-Control-Host konnte nicht aufgelöst werden: {error}")
+    })?;
     let mut connection_errors = Vec::new();
     let mut stream = None;
 
@@ -518,26 +512,6 @@ fn game_asset_root_candidates(app: &tauri::AppHandle, game_dir: &std::path::Path
     candidates
 }
 
-/// Runs the launch stage for base url step for the desktop game-launcher process system.
-fn launch_stage_for_base_url(base_url: &str) -> &'static str {
-    tauri::Url::parse(base_url)
-        .ok()
-        .and_then(|url| url.host_str().map(localhost_matches_stage))
-        .unwrap_or("Dev")
-}
-
-/// Runs the localhost matches stage step for the desktop game-launcher process system.
-fn localhost_matches_stage(host: &str) -> &'static str {
-    let host = host.trim().trim_matches(['[', ']']).to_ascii_lowercase();
-
-    if host == "localhost" || host == "::1" || host == "0:0:0:0:0:0:0:1" || host.starts_with("127.")
-    {
-        "Local"
-    } else {
-        "Dev"
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -551,7 +525,9 @@ mod tests {
 
     #[test]
     fn accepts_only_successful_readiness_responses() {
-        assert!(is_game_server_ready_response("HTTP/1.1 200 OK\r\n\r\n{\"ready\":true}"));
+        assert!(is_game_server_ready_response(
+            "HTTP/1.1 200 OK\r\n\r\n{\"ready\":true}"
+        ));
         assert!(!is_game_server_ready_response(
             "HTTP/1.1 503 Service Unavailable\r\n\r\n{\"ready\":false}"
         ));

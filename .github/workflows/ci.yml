@@ -116,16 +116,10 @@ jobs:
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
 
-      - name: Unit tests
-        run: cargo test -p mira-game-client
-
-      - name: Coverage lcov
-        env:
-          CARGO_BUILD_JOBS: 1
+      - name: Unit tests and coverage lcov
         run: |
           mkdir -p tests-results/mira-game-client/coverage
           cargo llvm-cov -p mira-game-client \
-            --jobs 1 \
             --ignore-filename-regex 'apps/mira-game-client/src/(app|main\.rs|network/plugin\.rs)' \
             --fail-under-lines 90 \
             --lcov \

@@ -1,0 +1,23 @@
+{
+  "dev": {
+    "websiteUrl": "https://dev.tilt-us.com",
+    "servicesApiUrl": "https://dev-api.tilt-us.com",
+    "authIssuerUrl": "https://dev-api.tilt-us.com/keycloak/realms/mira",
+    "updateManifestUrl": null,
+    "cdnBaseUrl": null
+  },
+  "staging": {
+    "websiteUrl": "https://staging.tilt-us.com",
+    "servicesApiUrl": "https://staging-api.tilt-us.com",
+    "authIssuerUrl": "https://staging-api.tilt-us.com/keycloak/realms/mira",
+    "updateManifestUrl": null,
+    "cdnBaseUrl": null
+  },
+  "prod": {
+    "websiteUrl": "https://tilt-us.com",
+    "servicesApiUrl": "https://api.tilt-us.com",
+    "authIssuerUrl": "https://api.tilt-us.com/keycloak/realms/mira",
+    "updateManifestUrl": null,
+    "cdnBaseUrl": null
+  }
+}

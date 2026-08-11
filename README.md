@@ -5,9 +5,8 @@ dedicated game server.
 
 ## Download
 
-Latest download manifest:
-
-- https://api.tilt-us.com/downloads/game-sources/latest.json
+Release artifacts are published on the
+[GitHub Releases page](https://github.com/tilt-us/mira-client/releases).
 
 ## Development Start
 

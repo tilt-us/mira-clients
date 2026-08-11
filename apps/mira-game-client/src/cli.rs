@@ -1,6 +1,4 @@
-use crate::app::settings::{
-    ClientLaunchSettings, ClientLaunchStage, ClientScreenMode, normalize_accent_color,
-};
+use crate::app::settings::{ClientLaunchSettings, ClientScreenMode, normalize_accent_color};
 use crate::network::ClientNetworkSettings;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
 /// Parses matchmaking launch parameters and networking settings from CLI args.
@@ -43,11 +41,9 @@ where
             | "--match-id"
             | "--player-public-id"
             | "--champion"
-            | "--matchmaking-api-base-url"
             | "--server-control-base-url"
             | "--server-host"
             | "--screen"
-            | "--stage"
             | "--port"
             | "-p"
             | "--char"
@@ -85,7 +81,7 @@ where
 }
 /// Returns CLI usage text for the playable client.
 pub fn usage() -> &'static str {
-    "Usage: mira-game-client [OPTIONS]\n\nOptions:\n  --access-token <TOKEN>                 Matchmaking access token\n  --accent-color <HEX>                   Mira client accent color override\n  --match-id <MATCH_ID>                  Matchmaking match id\n  --player-public-id <PLAYER_PUBLIC_ID>  Public player id\n  --champion <CHAMPION>                  Champion slug or id\n  --matchmaking-api-base-url <URL>       Matchmaking API base URL\n  --server-control-base-url <URL>        Dedicated server REST control API base URL\n  --server-host <HOST>                   Hostname or IP of the dedicated server\n  --stage <Local|Dev>                    API stage for release auth validation\n  --screen <full|window|borderless>      Game window mode\n  --dev-preview                          Development preview using the configured server\n  --offline-preview                      Development preview without server networking\n  -p, --port <PORT>                      UDP port of the dedicated server\n  -h, --help                             Print help"
+    "Usage: mira-game-client [OPTIONS]\n\nOptions:\n  --access-token <TOKEN>                 Matchmaking access token\n  --accent-color <HEX>                   Mira client accent color override\n  --match-id <MATCH_ID>                  Matchmaking match id\n  --player-public-id <PLAYER_PUBLIC_ID>  Public player id\n  --champion <CHAMPION>                  Champion slug or id\n  --server-control-base-url <URL>        Dedicated server REST control API base URL\n  --server-host <HOST>                   Hostname or IP of the dedicated server\n  --screen <full|window|borderless>      Game window mode\n  --dev-preview                          Development preview using the configured server\n  --offline-preview                      Development preview without server networking\n  -p, --port <PORT>                      UDP port of the dedicated server\n  -h, --help                             Print help"
 }
 
 fn apply_client_arg(
@@ -107,13 +103,9 @@ fn apply_client_arg(
             network_settings.client_id = parse_player_public_id(option_value)?;
         }
         "champion" | "char" | "c" => launch_settings.champion = Some(option_value.to_string()),
-        "matchmaking-api-base-url" => {
-            launch_settings.matchmaking_api_base_url = Some(option_value.to_string());
-        }
         "server-control-base-url" => {
             launch_settings.server_control_base_url = Some(option_value.to_string());
         }
-        "stage" => launch_settings.stage = Some(parse_launch_stage(option_value)?),
         "screen" => launch_settings.screen_mode = parse_screen_mode(option_value)?,
         "server-host" => {
             launch_settings.server_host = Some(option_value.to_string());
@@ -126,14 +118,6 @@ fn apply_client_arg(
     }
 
     Ok(())
-}
-
-fn parse_launch_stage(value: &str) -> Result<ClientLaunchStage, String> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "local" => Ok(ClientLaunchStage::Local),
-        "dev" => Ok(ClientLaunchStage::Dev),
-        _ => Err(format!("Invalid stage: {value}")),
-    }
 }
 
 fn parse_screen_mode(value: &str) -> Result<ClientScreenMode, String> {
@@ -242,8 +226,6 @@ mod tests {
             "5000",
             "--server-control-base-url",
             "http://127.0.0.1:6000",
-            "--stage",
-            "Local",
         ])
         .unwrap()
         .unwrap();

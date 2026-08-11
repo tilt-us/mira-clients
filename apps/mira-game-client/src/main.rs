@@ -1,3 +1,4 @@
+use mira_game_client::environment::EnvironmentConfig;
 use std::env;
 use std::process::ExitCode;
 /// Starts the playable client app.
@@ -14,7 +15,14 @@ fn main() -> ExitCode {
             }
         };
 
-    let launch_gate = launch_settings.release_launch_gate();
+    let environment = match EnvironmentConfig::from_build() {
+        Ok(environment) => environment,
+        Err(message) => {
+            eprintln!("{message}");
+            return ExitCode::from(2);
+        }
+    };
+    let launch_gate = launch_settings.release_launch_gate(&environment);
     mira_game_client::app::run(launch_settings, network_settings, launch_gate);
     ExitCode::SUCCESS
 }

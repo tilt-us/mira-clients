@@ -17,7 +17,6 @@ export type LaunchGameRequest = {
   forceRestart?: boolean;
   matchManifestJson: string;
   matchId: string;
-  matchmakingApiBaseUrl: string;
   playerPublicId: number;
   serverHost: string;
   serverControlBaseUrl: string;

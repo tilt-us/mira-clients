@@ -1,50 +1,28 @@
-const DEFAULT_API_BASE_URL = "http://localhost:8080";
-const DEFAULT_LIVE_API_BASE_URL = "http://localhost:8082";
-const DEFAULT_MATCHMAKING_API_BASE_URL = "http://localhost:8083";
-const DEFAULT_CHAMPION_API_BASE_URL = "http://localhost:8084";
-const DEFAULT_CHAT_API_BASE_URL = "http://localhost:8085";
+import {
+  getBuildEnvironmentConfig,
+  getEnvironmentConfig,
+  getServiceUrl,
+  type MiraEnvironment,
+} from "../environment";
 
-export type ApiRuntimeConfig = {
-  apiBaseUrl?: string;
-  liveApiBaseUrl?: string;
-  matchmakingApiBaseUrl?: string;
-  championApiBaseUrl?: string;
-  chatApiBaseUrl?: string;
+export type EnvironmentRuntimeConfig = {
+  environment: MiraEnvironment;
 };
 
-export let API_BASE_URL = normalizeBaseUrl(
-  import.meta.env.VITE_API_BASE_URL ?? DEFAULT_API_BASE_URL,
-);
+const defaultConfig = getBuildEnvironmentConfig();
 
-export let LIVE_API_BASE_URL = normalizeBaseUrl(
-  import.meta.env.VITE_LIVE_API_BASE_URL ?? DEFAULT_LIVE_API_BASE_URL,
-);
+export let API_BASE_URL = getServiceUrl(defaultConfig, "auth");
+export let LIVE_API_BASE_URL = getServiceUrl(defaultConfig, "live");
+export let MATCHMAKING_API_BASE_URL = getServiceUrl(defaultConfig, "match");
+export let CHAMPION_API_BASE_URL = getServiceUrl(defaultConfig, "game");
+export let CHAT_API_BASE_URL = getServiceUrl(defaultConfig, "chat");
 
-export let MATCHMAKING_API_BASE_URL = normalizeBaseUrl(
-  import.meta.env.VITE_MATCHMAKING_API_BASE_URL ??
-    DEFAULT_MATCHMAKING_API_BASE_URL,
-);
+export function applyApiRuntimeConfig(config: EnvironmentRuntimeConfig) {
+  const environment = getEnvironmentConfig(config.environment);
 
-export let CHAMPION_API_BASE_URL = normalizeBaseUrl(
-  import.meta.env.VITE_CHAMPION_API_BASE_URL ?? DEFAULT_CHAMPION_API_BASE_URL,
-);
-
-export let CHAT_API_BASE_URL = normalizeBaseUrl(
-  import.meta.env.VITE_CHAT_API_BASE_URL ?? DEFAULT_CHAT_API_BASE_URL,
-);
-
-export function applyApiRuntimeConfig(config: ApiRuntimeConfig) {
-  API_BASE_URL = normalizeBaseUrl(config.apiBaseUrl ?? API_BASE_URL);
-  LIVE_API_BASE_URL = normalizeBaseUrl(config.liveApiBaseUrl ?? LIVE_API_BASE_URL);
-  MATCHMAKING_API_BASE_URL = normalizeBaseUrl(
-    config.matchmakingApiBaseUrl ?? MATCHMAKING_API_BASE_URL,
-  );
-  CHAMPION_API_BASE_URL = normalizeBaseUrl(
-    config.championApiBaseUrl ?? CHAMPION_API_BASE_URL,
-  );
-  CHAT_API_BASE_URL = normalizeBaseUrl(config.chatApiBaseUrl ?? CHAT_API_BASE_URL);
-}
-
-function normalizeBaseUrl(baseUrl: string) {
-  return baseUrl.trim().replace(/\/$/, "");
+  API_BASE_URL = getServiceUrl(environment, "auth");
+  LIVE_API_BASE_URL = getServiceUrl(environment, "live");
+  MATCHMAKING_API_BASE_URL = getServiceUrl(environment, "match");
+  CHAMPION_API_BASE_URL = getServiceUrl(environment, "game");
+  CHAT_API_BASE_URL = getServiceUrl(environment, "chat");
 }

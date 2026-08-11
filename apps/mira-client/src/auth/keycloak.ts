@@ -6,6 +6,7 @@ import {
   KEYCLOAK_ISSUER_URL,
   KEYCLOAK_PASSWORD_CLIENT_ID,
   KEYCLOAK_TOKEN_URL,
+  WEBSITE_URL,
   getRedirectUri,
 } from "./config";
 import { apiFetch } from "../api/http";
@@ -265,13 +266,14 @@ function getPasswordResetRedirectUri() {
 
 function getProviderErrorRedirectUri() {
   const callbackUrl = new URL(getRedirectUri());
-  const errorRedirectHost = callbackUrl.hostname.toLowerCase() === "api.tilt-us.com"
-    ? "tilt-us.com"
-    : callbackUrl.hostname;
-  const redirectUrl = new URL(
-    "/",
-    `${callbackUrl.protocol}//${errorRedirectHost}${callbackUrl.port ? `:${callbackUrl.port}` : ""}`,
-  );
+  const redirectUrl = new URL("/", WEBSITE_URL);
+
+  if (callbackUrl.hostname === "localhost" || callbackUrl.hostname === "127.0.0.1") {
+    redirectUrl.protocol = callbackUrl.protocol;
+    redirectUrl.hostname = callbackUrl.hostname;
+    redirectUrl.port = callbackUrl.port;
+  }
+
   redirectUrl.searchParams.set("kc_error", "1");
 
   return redirectUrl.toString();

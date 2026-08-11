@@ -1,13 +1,18 @@
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  getEnvironmentConfig,
+  getMiraEnvironment,
+  getServiceUrl,
+} from "./environment.mjs";
 
-const DEFAULT_INPUTS = [
-  "https://api.tilt-us.com/auth/v3/api-docs",
-  "https://api.tilt-us.com/live/v3/api-docs",
-  "https://api.tilt-us.com/match/v3/api-docs",
-  "https://api.tilt-us.com/chat/v3/api-docs",
-];
+const environment = getEnvironmentConfig(
+  getMiraEnvironment(process.env.MIRA_ENV, "dev"),
+);
+const DEFAULT_INPUTS = ["auth", "live", "match", "chat"].map((service) =>
+  `${getServiceUrl(environment, service)}/v3/api-docs`,
+);
 const DEFAULT_OUTPUT = ".openapi/api-docs.json";
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 

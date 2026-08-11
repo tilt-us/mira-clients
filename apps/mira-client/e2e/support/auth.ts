@@ -1,4 +1,6 @@
-type LoginTarget = "dev" | "local";
+import { getEnvironmentConfig, getMiraEnvironment } from "../../scripts/environment.mjs";
+
+type LoginTarget = "dev";
 
 export type TestCredentials = {
   email: string;
@@ -14,14 +16,10 @@ const defaultCredentialsByTarget: Record<
     email: "test2@mira.de",
     password: "geebeeteeklee",
   },
-  local: {
-    email: "test@mira.de",
-    password: "geebeeteeklee",
-  },
 };
 
 export function getLoginTarget(): LoginTarget {
-  return process.env.E2E_TARGET === "local" ? "local" : "dev";
+  return "dev";
 }
 
 export function getCredentials(): TestCredentials {
@@ -40,14 +38,9 @@ export function shouldUseRealKeycloakLogin() {
 }
 
 export function getKeycloakIssuerUrl() {
-  const baseUrl =
-    process.env.VITE_KEYCLOAK_BASE_URL ??
-    (getLoginTarget() === "dev"
-      ? "https://api.tilt-us.com/keycloak"
-      : "http://localhost:8081");
-  const realm = process.env.VITE_KEYCLOAK_REALM ?? "mira";
-
-  return `${baseUrl.replace(/\/$/, "")}/realms/${realm}`;
+  return getEnvironmentConfig(
+    getMiraEnvironment(process.env.MIRA_ENV, "dev"),
+  ).authIssuerUrl;
 }
 
 export function createUnsignedJwt(payload: Record<string, unknown>) {

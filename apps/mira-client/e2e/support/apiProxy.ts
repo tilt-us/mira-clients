@@ -1,12 +1,21 @@
 import type { Page, Route } from "@playwright/test";
+import { getEnvironmentConfig, getMiraEnvironment } from "../../scripts/environment.mjs";
 
-const proxiedApiOrigins =
-  /^(https:\/\/api\.tilt-us\.com|http:\/\/localhost:808[0-4])\//;
+const environment = getEnvironmentConfig(
+  getMiraEnvironment(process.env.MIRA_ENV, "dev"),
+);
+const proxiedApiOrigins = new RegExp(
+  `^${escapeRegExp(new URL(environment.servicesApiUrl).origin)}/`,
+);
 
 export async function proxyApiRequests(page: Page) {
   await page.route(proxiedApiOrigins, async (route) => {
     await proxyApiRequest(route);
   });
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 async function proxyApiRequest(route: Route) {
