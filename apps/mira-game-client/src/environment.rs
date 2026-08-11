@@ -46,7 +46,11 @@ struct RawEnvironmentConfig {
 impl Environment {
     /// Returns the environment embedded by the Cargo build script.
     pub fn from_build() -> Result<Self, String> {
-        match option_env!("MIRA_ENV") {
+        Self::from_value(option_env!("MIRA_ENV"))
+    }
+
+    fn from_value(value: Option<&str>) -> Result<Self, String> {
+        match value {
             Some("dev") => Ok(Self::Dev),
             Some("staging") => Ok(Self::Staging),
             Some("prod") => Ok(Self::Prod),
@@ -122,6 +126,16 @@ fn parse_optional_url(name: &str, value: Option<&str>) -> Result<Option<Url>, St
 mod tests {
     use super::*;
 
+    fn raw_config() -> RawEnvironmentConfig {
+        RawEnvironmentConfig {
+            website_url: "https://tilt-us.com".to_string(),
+            services_api_url: "https://api.tilt-us.com".to_string(),
+            auth_issuer_url: "https://api.tilt-us.com/keycloak/realms/mira".to_string(),
+            update_manifest_url: None,
+            cdn_base_url: None,
+        }
+    }
+
     fn config(environment: Environment) -> EnvironmentConfig {
         let definitions = serde_json::from_str::<EnvironmentDefinitions>(ENVIRONMENT_DEFINITIONS)
             .expect("the checked-in environment configuration must be valid JSON");
@@ -133,6 +147,78 @@ mod tests {
 
         EnvironmentConfig::from_raw(environment, definition)
             .expect("the checked-in environment URLs must be valid")
+    }
+
+    #[test]
+    fn loads_the_environment_embedded_by_the_build_script() {
+        let environment = Environment::from_build().expect("the build script must embed MIRA_ENV");
+        let config =
+            EnvironmentConfig::from_build().expect("the embedded environment must be valid");
+
+        assert_eq!(config.environment, environment);
+    }
+
+    #[test]
+    fn parses_supported_environment_values() {
+        assert_eq!(Environment::from_value(Some("dev")), Ok(Environment::Dev));
+        assert_eq!(
+            Environment::from_value(Some("staging")),
+            Ok(Environment::Staging)
+        );
+        assert_eq!(Environment::from_value(Some("prod")), Ok(Environment::Prod));
+    }
+
+    #[test]
+    fn rejects_missing_or_invalid_environment_values() {
+        assert!(
+            Environment::from_value(None)
+                .unwrap_err()
+                .contains("MIRA_ENV was not embedded")
+        );
+        assert!(
+            Environment::from_value(Some("preview"))
+                .unwrap_err()
+                .contains("Invalid embedded MIRA_ENV")
+        );
+    }
+
+    #[test]
+    fn preserves_optional_update_endpoints() {
+        let mut definition = raw_config();
+        definition.update_manifest_url =
+            Some("https://updates.tilt-us.com/manifest.json".to_string());
+        definition.cdn_base_url = Some("https://cdn.tilt-us.com".to_string());
+
+        let config = EnvironmentConfig::from_raw(Environment::Dev, definition).unwrap();
+
+        assert_eq!(
+            config.update_manifest_url.unwrap().as_str(),
+            "https://updates.tilt-us.com/manifest.json"
+        );
+        assert_eq!(
+            config.cdn_base_url.unwrap().as_str(),
+            "https://cdn.tilt-us.com/"
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_endpoint_urls() {
+        let mut definition = raw_config();
+        definition.website_url = "not a URL".to_string();
+
+        let error = EnvironmentConfig::from_raw(Environment::Dev, definition).unwrap_err();
+
+        assert!(error.starts_with("Invalid websiteUrl"));
+    }
+
+    #[test]
+    fn rejects_services_urls_without_a_path_base() {
+        let mut definition = raw_config();
+        definition.services_api_url = "mailto:api@tilt-us.com".to_string();
+
+        let error = EnvironmentConfig::from_raw(Environment::Dev, definition).unwrap_err();
+
+        assert!(error.starts_with("Could not derive auth API URL"));
     }
 
     #[test]
