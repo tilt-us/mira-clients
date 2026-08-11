@@ -25,8 +25,8 @@ remain on [GitHub Releases](https://github.com/tilt-us/mira-clients/releases).
 
 ## Download Publishing
 
-The release workflow creates a current content archive from `assets/` and
-uploads it with the installer and runtime artifacts to the `downloads.tilt-us.com`
+The release workflow creates independent UI and game content archives from
+`assets/ui` and `assets/game` and uploads them with the installer and runtime artifacts to the `downloads.tilt-us.com`
 Garage bucket. It uploads artifacts first, manifests second, and `latest.json`
 last. The workflow requires these CI secrets and does not embed them in any
 application:

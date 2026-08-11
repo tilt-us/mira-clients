@@ -1,8 +1,19 @@
+use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
-use std::str::FromStr;
+use sha2::{Digest, Sha256};
+use std::{
+    fs::{self, File},
+    io::{BufWriter, Read, Write},
+    path::{Path, PathBuf},
+    str::FromStr,
+    time::{Duration, Instant},
+};
 
 pub const SCHEMA_VERSION: u32 = 1;
+pub const CONTENT_SCHEMA_VERSION: u32 = 2;
 pub const DOWNLOADS_BASE_URL: &str = "https://downloads.tilt-us.com";
+const DOWNLOAD_BUFFER_SIZE: usize = 1024 * 1024;
+const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -151,7 +162,8 @@ impl RuntimeManifest {
 pub struct ContentManifest {
     pub schema_version: u32,
     pub environment: Environment,
-    pub content: ContentArtifact,
+    pub ui: ContentArtifact,
+    pub game: ContentArtifact,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -160,20 +172,180 @@ pub struct ContentArtifact {
     pub url: String,
     pub sha256: String,
     pub size: u64,
-    #[serde(default)]
-    pub content_id: Option<String>,
+    pub content_id: String,
 }
 
 impl ContentManifest {
     pub fn validate_for(&self, expected_environment: Environment) -> Result<(), String> {
-        validate_manifest_header(self.schema_version, self.environment, expected_environment)?;
-        Artifact {
-            url: self.content.url.clone(),
-            sha256: self.content.sha256.clone(),
-            size: self.content.size,
+        if self.schema_version != CONTENT_SCHEMA_VERSION {
+            return Err(format!(
+                "Unsupported content manifest schemaVersion={}; expected {CONTENT_SCHEMA_VERSION}.",
+                self.schema_version
+            ));
         }
-        .validate("content")
+        if self.environment != expected_environment {
+            return Err(format!(
+                "Content manifest environment={} does not match this {} build.",
+                self.environment.as_str(),
+                expected_environment.as_str()
+            ));
+        }
+        self.ui.as_artifact().validate("content.ui")?;
+        self.game.as_artifact().validate("content.game")
     }
+}
+
+impl ContentArtifact {
+    pub fn as_artifact(&self) -> Artifact {
+        Artifact {
+            url: self.url.clone(),
+            sha256: self.sha256.clone(),
+            size: self.size,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DownloadProgress {
+    pub downloaded_bytes: u64,
+    pub total_bytes: u64,
+}
+
+impl DownloadProgress {
+    pub fn percent(self) -> u8 {
+        if self.total_bytes == 0 {
+            0
+        } else {
+            ((self.downloaded_bytes.saturating_mul(100) / self.total_bytes).min(100)) as u8
+        }
+    }
+}
+
+/// Streams an artifact to a sibling `.part` file, verifies it, then atomically
+/// replaces the requested destination. Callers own extraction and activation.
+pub fn download_artifact<F>(
+    client: &Client,
+    artifact: &Artifact,
+    destination: &Path,
+    mut on_progress: F,
+) -> Result<(), String>
+where
+    F: FnMut(DownloadProgress),
+{
+    artifact.validate("download artifact")?;
+    let parent = destination
+        .parent()
+        .ok_or_else(|| "Download destination has no parent directory".to_string())?;
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("Could not create download directory: {error}"))?;
+    let temporary = part_path(destination)?;
+    let _ = fs::remove_file(&temporary);
+
+    let mut response = client
+        .get(&artifact.url)
+        .send()
+        .map_err(|error| format!("Could not download artifact: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("Artifact request failed: {error}"))?;
+    let total_bytes = artifact.size;
+    let file = File::create(&temporary)
+        .map_err(|error| format!("Could not create download file: {error}"))?;
+    let mut file = BufWriter::with_capacity(DOWNLOAD_BUFFER_SIZE, file);
+    let mut hasher = Sha256::new();
+    let mut downloaded_bytes = 0_u64;
+    let mut buffer = vec![0_u8; DOWNLOAD_BUFFER_SIZE];
+    let mut last_progress = Instant::now() - PROGRESS_INTERVAL;
+    on_progress(DownloadProgress {
+        downloaded_bytes,
+        total_bytes,
+    });
+
+    let result = (|| -> Result<(), String> {
+        loop {
+            let bytes = response
+                .read(&mut buffer)
+                .map_err(|error| format!("Could not read artifact download: {error}"))?;
+            if bytes == 0 {
+                break;
+            }
+            file.write_all(&buffer[..bytes])
+                .map_err(|error| format!("Could not write artifact download: {error}"))?;
+            hasher.update(&buffer[..bytes]);
+            downloaded_bytes += bytes as u64;
+            if last_progress.elapsed() >= PROGRESS_INTERVAL {
+                on_progress(DownloadProgress {
+                    downloaded_bytes,
+                    total_bytes,
+                });
+                last_progress = Instant::now();
+            }
+        }
+        file.flush()
+            .map_err(|error| format!("Could not flush artifact download: {error}"))?;
+        verify_download(artifact, downloaded_bytes, &to_hex(&hasher.finalize()))?;
+        on_progress(DownloadProgress {
+            downloaded_bytes,
+            total_bytes,
+        });
+        replace_file(&temporary, destination)
+    })();
+
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
+}
+
+pub fn download_client() -> Result<Client, String> {
+    Client::builder()
+        .user_agent("mira-downloads")
+        .connect_timeout(Duration::from_secs(30))
+        .timeout(Duration::from_secs(6 * 60 * 60))
+        .build()
+        .map_err(|error| format!("Could not create download HTTP client: {error}"))
+}
+
+pub fn verify_download(
+    artifact: &Artifact,
+    downloaded: u64,
+    actual_sha256: &str,
+) -> Result<(), String> {
+    if downloaded != artifact.size {
+        return Err(format!(
+            "Download size mismatch: expected {} bytes, got {downloaded}",
+            artifact.size
+        ));
+    }
+    if !artifact.sha256.eq_ignore_ascii_case(actual_sha256) {
+        return Err("Download checksum mismatch".to_string());
+    }
+    Ok(())
+}
+
+pub fn part_path(destination: &Path) -> Result<PathBuf, String> {
+    let filename = destination
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| "Download destination has no filename".to_string())?;
+    Ok(destination.with_file_name(format!("{filename}.part")))
+}
+
+fn replace_file(temporary: &Path, destination: &Path) -> Result<(), String> {
+    if destination.exists() {
+        fs::remove_file(destination)
+            .map_err(|error| format!("Could not replace previous download: {error}"))?;
+    }
+    fs::rename(temporary, destination)
+        .map_err(|error| format!("Could not finalize artifact download: {error}"))
+}
+
+fn to_hex(bytes: &[u8]) -> String {
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        use std::fmt::Write as _;
+        let _ = write!(&mut output, "{byte:02x}");
+    }
+    output
 }
 
 fn validate_manifest_header(
@@ -224,5 +396,22 @@ mod tests {
         );
         assert!("preview".parse::<Environment>().is_err());
         assert!("".parse::<Environment>().is_err());
+    }
+
+    #[test]
+    fn requires_independent_v2_ui_and_game_content() {
+        let manifest: ContentManifest = serde_json::from_str(
+            r#"{"schemaVersion":2,"environment":"dev","ui":{"url":"https://downloads.tilt-us.com/dev/content/ui.zip","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","size":1,"contentId":"ui"},"game":{"url":"https://downloads.tilt-us.com/dev/content/game.zip","sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","size":2,"contentId":"game"}}"#,
+        )
+        .unwrap();
+        manifest.validate_for(Environment::Dev).unwrap();
+        assert_eq!(manifest.ui.content_id, "ui");
+        assert_eq!(manifest.game.content_id, "game");
+        assert!(
+            serde_json::from_str::<ContentManifest>(
+                r#"{"schemaVersion":1,"environment":"dev","content":{}}"#,
+            )
+            .is_err()
+        );
     }
 }

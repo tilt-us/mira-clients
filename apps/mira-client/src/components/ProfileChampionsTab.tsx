@@ -8,10 +8,7 @@ import {
   type MouseEvent,
 } from "react";
 import { Flame, Sword } from "lucide-react";
-import ignaraWallpaper from "../../../../assets/wallpapers/ignara-wallpaper.png";
-import liraWallpaper from "../../../../assets/wallpapers/lira-wallpaper.png";
-import sophiaWallpaper from "../../../../assets/wallpapers/sophia-wallpaper.png";
-import yunaWallpaper from "../../../../assets/wallpapers/yuna-wallpaper.png";
+import { uiWallpaperUrl } from "../uiAssets";
 import { getChampionCatalog, setOwnedChampion } from "../api/client";
 import type { Translate } from "../types/ui";
 
@@ -161,7 +158,7 @@ const fallbackUserPageChampions: UserPageChampion[] = [
       radar: { damage: 86, utility: 44, control: 68, mobility: 72, defense: 52 },
       resistance: 31,
     },
-    wallpaper: ignaraWallpaper,
+    wallpaper: uiWallpaperUrl("ignara"),
   },
   {
     categories: ["assassin"],
@@ -212,7 +209,7 @@ const fallbackUserPageChampions: UserPageChampion[] = [
       radar: { damage: 82, utility: 56, control: 42, mobility: 78, defense: 38 },
       resistance: 26,
     },
-    wallpaper: liraWallpaper,
+    wallpaper: uiWallpaperUrl("lira"),
   },
   {
     categories: ["mage"],
@@ -263,7 +260,7 @@ const fallbackUserPageChampions: UserPageChampion[] = [
       radar: { damage: 76, utility: 88, control: 58, mobility: 38, defense: 46 },
       resistance: 34,
     },
-    wallpaper: sophiaWallpaper,
+    wallpaper: uiWallpaperUrl("sophia"),
   },
   {
     categories: ["guardian"],
@@ -314,7 +311,7 @@ const fallbackUserPageChampions: UserPageChampion[] = [
       radar: { damage: 52, utility: 70, control: 76, mobility: 54, defense: 86 },
       resistance: 38,
     },
-    wallpaper: yunaWallpaper,
+    wallpaper: uiWallpaperUrl("yuna"),
   },
 ];
 

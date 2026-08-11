@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { hasDesktopSessionClaims } from "../src/auth/keycloak";
+import { DESKTOP_REDIRECT_URI, applyKeycloakRuntimeConfig, WEBSITE_URL } from "../src/auth/config";
 
 function createUnsignedJwt(payload: Record<string, unknown>) {
   return [
@@ -37,5 +38,21 @@ describe("Keycloak token helpers", () => {
     });
 
     expect(hasDesktopSessionClaims(token)).toBe(true);
+  });
+});
+
+describe("OAuth redirect configuration", () => {
+  test("keeps browser environment redirects on their website origins", () => {
+    applyKeycloakRuntimeConfig({ environment: "dev" });
+    expect(WEBSITE_URL).toBe("https://dev.tilt-us.com");
+    applyKeycloakRuntimeConfig({ environment: "staging" });
+    expect(WEBSITE_URL).toBe("https://staging.tilt-us.com");
+    applyKeycloakRuntimeConfig({ environment: "prod" });
+    expect(WEBSITE_URL).toBe("https://tilt-us.com");
+  });
+
+  test("uses 127.0.0.1 as the native loopback base URI", () => {
+    expect(DESKTOP_REDIRECT_URI).toBe("http://127.0.0.1/");
+    expect(DESKTOP_REDIRECT_URI).not.toContain("localhost");
   });
 });

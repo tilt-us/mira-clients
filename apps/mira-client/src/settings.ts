@@ -11,16 +11,7 @@ export const defaultFriendRequestPolicy = "allow";
 export const defaultChatPosition = "right";
 export const defaultShowEmailPublic = false;
 
-const characterAssetModules = import.meta.glob("../../../assets/characters/*.png", {
-  eager: true,
-  import: "default",
-  query: "?url",
-});
-
-export const backgroundChampionNames = Object.keys(characterAssetModules)
-  .map((path) => path.match(/\/([^/]+)\.png$/)?.[1])
-  .filter((name): name is string => Boolean(name))
-  .sort((left, right) => left.localeCompare(right));
+export const backgroundChampionNames = ["ignara", "lira", "sophia", "yuna"] as const;
 export const defaultBackgroundChampion = backgroundChampionNames.includes("yuna")
   ? "yuna"
   : (backgroundChampionNames[0] ?? "yuna");
@@ -246,7 +237,7 @@ export function isGameScreenMode(value: unknown): value is GameScreenMode {
 }
 
 export function isBackgroundChampion(value: unknown): value is BackgroundChampion {
-  return typeof value === "string" && backgroundChampionNames.includes(value);
+  return typeof value === "string" && (backgroundChampionNames as readonly string[]).includes(value);
 }
 
 export function isFriendRequestPolicy(value: unknown): value is FriendRequestPolicy {

@@ -1,9 +1,11 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { loadRuntimeConfig } from "./runtimeConfig";
+import { initializeUiAssets } from "./uiAssets";
 
 async function bootstrap() {
   await loadRuntimeConfig();
+  await initializeUiAssets();
   const { default: App } = await import("./App");
 
   ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(

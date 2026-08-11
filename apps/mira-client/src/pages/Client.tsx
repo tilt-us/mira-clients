@@ -9,6 +9,7 @@ import {
   type PointerEvent,
 } from "react";
 import { invoke, isTauri } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   ArrowLeft,
@@ -88,7 +89,13 @@ import ProfileChampionsTab from "../components/ProfileChampionsTab";
 import MatchFoundDialog from "../components/MatchFoundDialog";
 import SettingsModal from "../components/SettingsModal";
 import Sidebar from "../components/Sidebar";
-import liraWallpaper from "../../../../assets/wallpapers/lira-wallpaper.png";
+import { uiWallpaperUrl } from "../uiAssets";
+import {
+  gameContentProgressPercent,
+  initialGameContentStatus,
+  isGameContentBusy,
+  type GameContentStatus,
+} from "../gameContent";
 import type { AppLocale } from "../i18n";
 import { useNotifications } from "../notifications";
 import type {
@@ -358,6 +365,9 @@ function Client({
     useState<GameLaunchParameters>();
   const [gameClientRunning, setGameClientRunning] = useState(false);
   const [gameClientClosedByClient, setGameClientClosedByClient] = useState(false);
+  const [gameContentStatus, setGameContentStatus] = useState<GameContentStatus>(() =>
+    isTauri() ? initialGameContentStatus : { ...initialGameContentStatus, state: "ready" },
+  );
   const [gameReconnectBusy, setGameReconnectBusy] = useState(false);
   const [matchDecisionBusy, setMatchDecisionBusy] = useState<MatchDecision>();
   const [matchFoundStartedAt, setMatchFoundStartedAt] = useState<number>();
@@ -389,6 +399,39 @@ function Client({
     clientAnimation === "all" || clientAnimation === "ui-elements";
   const lobbyLeaveColor = getLobbyLeaveColor(accentColor);
   const { notify } = useNotifications();
+  const gameContentBusy = isGameContentBusy(gameContentStatus);
+  const gameContentProgress = gameContentProgressPercent(gameContentStatus);
+
+  useEffect(() => {
+    if (!isTauri()) {
+      return;
+    }
+
+    let active = true;
+    let unlisten: (() => void) | undefined;
+    void Promise.all([
+      invoke<GameContentStatus>("game_content_status"),
+      listen<GameContentStatus>("game-content-status", (event) => {
+        if (active) {
+          setGameContentStatus(event.payload);
+        }
+      }),
+    ]).then(([status, unsubscribe]) => {
+      unlisten = unsubscribe;
+      if (active) {
+        setGameContentStatus(status);
+      }
+    }).catch((error) => {
+      if (active) {
+        setGameContentStatus({ ...initialGameContentStatus, state: "error", error: String(error) });
+      }
+    });
+
+    return () => {
+      active = false;
+      unlisten?.();
+    };
+  }, []);
 
   function getClientChatRoomId(room: ChatRoomResponse) {
     const runtimeRoom = room as ChatRoomResponse & { id?: unknown };
@@ -3042,6 +3085,9 @@ function Client({
   }
 
   function handlePlayButtonClick() {
+    if (gameContentBusy || gameContentStatus.state === "error") {
+      return;
+    }
     setUserPageOpen(false);
 
     if (activeLobby) {
@@ -3063,6 +3109,9 @@ function Client({
   }
 
   function handleGameModePrimaryAction() {
+    if (gameContentBusy || gameContentStatus.state === "error") {
+      return;
+    }
     if (activeLobby) {
       setGameSelectorOpen(false);
       setLobbyPageBackTarget("gameSelector");
@@ -4437,6 +4486,9 @@ function Client({
   }
 
   async function launchGameClient(parameters: GameLaunchParameters, forceRestart = false) {
+    if (gameContentStatus.state !== "ready") {
+      throw new Error("Game content is not ready.");
+    }
     if (!isTauri()) {
       throw new Error("Game Client kann nur in der Desktop-App gestartet werden.");
     }
@@ -4605,27 +4657,40 @@ function Client({
               : "client-top-action"
           }
         >
-          <button
-            aria-pressed={gameSelectorOpen}
-            className="client-play-button"
-            data-animated={playButtonAnimated}
-            type="button"
-            onClick={(event) => {
-              if (consumeTopActionDragClick(event)) {
-                return;
-              }
-
-              handlePlayButtonClick();
-            }}
-            onPointerCancel={handleTopActionPointerEnd}
-            onPointerDown={handleTopActionPointerDown}
-            onPointerUp={handleTopActionPointerEnd}
+          <span
+            className="client-play-button-tooltip"
+            title={gameContentBusy ? t("client-content-update-progress") : undefined}
           >
-            <span>{activeLobby ? t("client-lobby") : t("client-play")}</span>
-            {activeLobby ? (
-              <span className="client-play-button-timer">{lobbySearchTime}</span>
-            ) : null}
-          </button>
+            <button
+              aria-pressed={gameSelectorOpen}
+              className="client-play-button"
+              data-animated={playButtonAnimated && !gameContentBusy}
+              disabled={gameContentBusy || gameContentStatus.state === "error"}
+              type="button"
+              onClick={(event) => {
+                if (consumeTopActionDragClick(event)) {
+                  return;
+                }
+
+                handlePlayButtonClick();
+              }}
+              onPointerCancel={handleTopActionPointerEnd}
+              onPointerDown={handleTopActionPointerDown}
+              onPointerUp={handleTopActionPointerEnd}
+            >
+              {gameContentBusy ? (
+                <span
+                  aria-hidden="true"
+                  className="client-play-button-progress"
+                  style={{ "--game-content-progress": `${gameContentProgress}%` } as CSSProperties}
+                />
+              ) : null}
+              <span>{gameContentBusy ? `${gameContentProgress}%` : activeLobby ? t("client-lobby") : t("client-play")}</span>
+              {activeLobby && !gameContentBusy ? (
+                <span className="client-play-button-timer">{lobbySearchTime}</span>
+              ) : null}
+            </button>
+          </span>
           {activeLobby ? (
             <button
               aria-expanded={lobbyRosterOpen}
@@ -4875,7 +4940,7 @@ function Client({
         >
           <div
             className="user-page-wallpaper"
-            style={{ "--user-page-wallpaper": `url(${liraWallpaper})` } as CSSProperties}
+            style={{ "--user-page-wallpaper": `url(${uiWallpaperUrl("lira")})` } as CSSProperties}
           >
             <div className="user-page-wallpaper-content">
               <div className="user-page-profile-banner" aria-label="Profile summary">

@@ -45,8 +45,9 @@ export function orderedPublishPlan(entries) {
     if (key.startsWith("installer/")) return 0;
     if (key.startsWith("runtime/desktop/")) return 1;
     if (key.startsWith("runtime/game/")) return 2;
-    if (key.startsWith("content/")) return 3;
-    return 4;
+    if (key === "content/ui.zip") return 3;
+    if (key === "content/game.zip") return 4;
+    return 5;
   };
   const artifacts = entries
     .filter((entry) => entry.phase === "artifact")
@@ -138,7 +139,8 @@ async function writeJson(path, value) {
 export async function prepareGaragePublish({
   environment,
   artifactsDirectory,
-  contentArchive,
+  uiArchive,
+  gameArchive,
   outputDirectory,
   commit,
   tag,
@@ -152,8 +154,9 @@ export async function prepareGaragePublish({
     const key = expectedArtifactKey(group, source);
     if (key) releaseArtifacts.push(await describeArtifact(config.environment, key, source));
   }
-  const content = await describeArtifact(config.environment, "content/assets.zip", contentArchive);
-  const allArtifacts = [...releaseArtifacts, content];
+  const ui = await describeArtifact(config.environment, "content/ui.zip", uiArchive);
+  const game = await describeArtifact(config.environment, "content/game.zip", gameArchive);
+  const allArtifacts = [...releaseArtifacts, ui, game];
 
   const installerManifest = {
     schemaVersion: 1,
@@ -187,11 +190,15 @@ export async function prepareGaragePublish({
     },
   };
   const contentManifest = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     environment: config.environment,
-    content: {
-      ...byKey(allArtifacts, "content/assets.zip"),
-      contentId: content.sha256,
+    ui: {
+      ...byKey(allArtifacts, "content/ui.zip"),
+      contentId: ui.sha256,
+    },
+    game: {
+      ...byKey(allArtifacts, "content/game.zip"),
+      contentId: game.sha256,
     },
   };
   const latest = {
@@ -282,7 +289,8 @@ async function main() {
     const result = await prepareGaragePublish({
       environment: argument("environment"),
       artifactsDirectory: resolve(argument("artifacts")),
-      contentArchive: resolve(argument("content")),
+      uiArchive: resolve(argument("ui")),
+      gameArchive: resolve(argument("game")),
       outputDirectory: resolve(argument("output")),
       commit: argument("commit"),
       tag: argument("tag"),
@@ -295,7 +303,7 @@ async function main() {
     await uploadGaragePlan(resolve(argument("plan")));
     return;
   }
-  throw new Error("Usage: garage-publish.mjs prepare|upload ...");
+  throw new Error("Usage: garage-publish.mjs prepare --ui <archive> --game <archive>|upload ...");
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

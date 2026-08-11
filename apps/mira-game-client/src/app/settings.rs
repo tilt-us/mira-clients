@@ -197,7 +197,7 @@ fn access_token_is_valid(environment: &EnvironmentConfig, access_token: &str) ->
 fn resolve_asset_root() -> PathBuf {
     asset_root_candidates()
         .into_iter()
-        .find(|candidate| candidate.join("index.html").is_file())
+        .find(|candidate| has_required_game_content(candidate))
         .and_then(|candidate| candidate.canonicalize().ok())
         .unwrap_or_else(|| {
             PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -235,6 +235,12 @@ fn asset_root_candidates() -> Vec<PathBuf> {
     );
 
     candidates
+}
+
+fn has_required_game_content(asset_root: &std::path::Path) -> bool {
+    ["audio", "champions", "maps", "materials"]
+        .iter()
+        .all(|directory| asset_root.join("game").join(directory).is_dir())
 }
 
 #[cfg(test)]

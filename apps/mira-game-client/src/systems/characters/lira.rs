@@ -14,6 +14,7 @@ use crate::systems::{
 use bevy::math::primitives::Sphere;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
+use lightyear::prelude::*;
 use mira_game_api::game::{
     camera::TopDownCamera,
     map::MapGround,
@@ -23,7 +24,6 @@ use mira_game_api::game::{
 use mira_game_api::network::{
     AbilitySlot, AbilityVisualEvent, AbilityVisualTuning, ChampionId, PlayerCommand,
 };
-use lightyear::prelude::*;
 
 const Q_CAST_COOLDOWN_SECONDS: f32 = 5.0;
 const Q_PROJECTILE_TRAVEL_SECONDS: f32 = 1.0;

@@ -69,8 +69,7 @@ pub(crate) fn launch_game(
     let game_dir = game_binary
         .parent()
         .ok_or_else(|| "Game-Client-Verzeichnis konnte nicht bestimmt werden.".to_string())?;
-    let synchronized_asset_root = content::ensure_content_current(&app)?;
-    let asset_root = resolve_game_asset_root(&app, game_dir, &synchronized_asset_root)?;
+    let asset_root = content::ready_game_asset_root(&app)?;
     wait_for_game_server_ready(&request.server_control_base_url)?;
 
     let mut command = Command::new(&game_binary);
@@ -348,6 +347,14 @@ fn empty_as_default<'a>(value: &'a str, default_value: &'a str) -> &'a str {
     }
 }
 
+fn format_path_candidates(candidates: &[PathBuf]) -> String {
+    candidates
+        .iter()
+        .map(|candidate| candidate.to_string_lossy())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 /// Waits until the dedicated server confirms that its UDP listener is ready.
 fn wait_for_game_server_ready(control_base_url: &str) -> Result<(), String> {
     let endpoint = game_server_ready_endpoint(control_base_url)?;
@@ -452,77 +459,6 @@ fn is_game_server_ready_response(response: &str) -> bool {
 }
 
 /// Runs the resolve game asset root step for the desktop game-launcher process system.
-fn resolve_game_asset_root(
-    app: &tauri::AppHandle,
-    game_dir: &std::path::Path,
-    synchronized_asset_root: &std::path::Path,
-) -> Result<PathBuf, String> {
-    let candidates = game_asset_root_candidates(app, game_dir, synchronized_asset_root);
-
-    candidates
-        .iter()
-        .find(|candidate| has_required_game_content(candidate))
-        .cloned()
-        .ok_or_else(|| {
-            format!(
-                "Game-Assets wurden nicht gefunden: assets/index.html fehlt. Geprüfte Pfade: {}.",
-                format_path_candidates(&candidates),
-            )
-        })
-}
-
-fn has_required_game_content(asset_root: &std::path::Path) -> bool {
-    asset_root.join("index.html").is_file()
-}
-
-/// Runs the format path candidates step for the desktop game-launcher process system.
-fn format_path_candidates(candidates: &[PathBuf]) -> String {
-    candidates
-        .iter()
-        .map(|candidate| candidate.to_string_lossy())
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-/// Runs the game asset root candidates step for the desktop game-launcher process system.
-fn game_asset_root_candidates(
-    app: &tauri::AppHandle,
-    game_dir: &std::path::Path,
-    synchronized_asset_root: &std::path::Path,
-) -> Vec<PathBuf> {
-    let mut candidates = vec![synchronized_asset_root.to_path_buf()];
-
-    candidates.push(game_dir.join("assets"));
-
-    if let Ok(resource_dir) = app.path().resource_dir() {
-        candidates.push(resource_dir.join("files").join("assets"));
-        candidates.push(resource_dir.join("assets"));
-    }
-
-    if let Ok(current_dir) = std::env::current_dir() {
-        candidates.push(current_dir.join("files").join("assets"));
-        candidates.push(current_dir.join("assets"));
-        candidates.push(current_dir.join("..").join("assets"));
-    }
-
-    candidates.push(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("files")
-            .join("assets"),
-    );
-
-    candidates.push(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("..")
-            .join("..")
-            .join("assets"),
-    );
-
-    candidates
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -545,12 +481,13 @@ mod tests {
     }
 
     #[test]
-    fn game_launch_is_blocked_when_synchronized_content_is_missing() {
+    fn game_content_sentinel_requires_the_authoritative_game_directories() {
         let directory = tempfile::tempdir().unwrap();
-        let required_asset_root = directory.path().join("content/assets");
-        assert!(!has_required_game_content(&required_asset_root));
-        std::fs::create_dir_all(&required_asset_root).unwrap();
-        std::fs::write(required_asset_root.join("index.html"), "ok").unwrap();
-        assert!(has_required_game_content(&required_asset_root));
+        let required_asset_root = directory.path().join("assets/game");
+        assert!(!content::has_required_game_content(&required_asset_root));
+        for directory in ["audio", "champions", "maps", "materials"] {
+            std::fs::create_dir_all(required_asset_root.join(directory)).unwrap();
+        }
+        assert!(content::has_required_game_content(&required_asset_root));
     }
 }

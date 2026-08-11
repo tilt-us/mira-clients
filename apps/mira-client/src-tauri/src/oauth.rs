@@ -1,7 +1,8 @@
 use std::{
+    collections::HashMap,
     io::{Read, Write},
     net::TcpListener,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{atomic::{AtomicU64, Ordering}, LazyLock, Mutex},
     thread,
     time::{Duration, Instant},
 };
@@ -19,6 +20,8 @@ const OAUTH_MODAL_MIN_WIDTH: f64 = 720.0;
 const OAUTH_MODAL_MIN_HEIGHT: f64 = 520.0;
 const OAUTH_PROVIDER_FAILED_ERROR: &str = "oauth_provider_failed";
 static OAUTH_WINDOW_COUNTER: AtomicU64 = AtomicU64::new(1);
+static WINDOWS_OAUTH_LISTENERS: LazyLock<Mutex<HashMap<String, TcpListener>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Stores OAuth Window Request data used by the desktop OAuth window system.
 #[derive(serde::Deserialize)]
@@ -41,6 +44,27 @@ pub(crate) struct OAuthWindowRequest {
 pub(crate) struct OAuthWindowResponse {
     modal: bool,
     redirect_uri: Option<String>,
+}
+
+/// Allocates the Windows loopback callback before the authorization URL is built.
+/// The frontend therefore uses one immutable redirect URI for authorization,
+/// saved PKCE state, callback matching, and token exchange.
+#[tauri::command]
+pub(crate) fn prepare_oauth_redirect_uri() -> Result<String, String> {
+    if !cfg!(windows) {
+        return Ok("http://127.0.0.1/".to_string());
+    }
+    let listener = TcpListener::bind(("127.0.0.1", 0))
+        .map_err(|error| format!("OAuth callback could not be allocated: {error}"))?;
+    let address = listener
+        .local_addr()
+        .map_err(|error| format!("OAuth callback address could not be read: {error}"))?;
+    let redirect_uri = format!("http://{address}/");
+    WINDOWS_OAUTH_LISTENERS
+        .lock()
+        .map_err(|_| "OAuth callback registry could not be locked.".to_string())?
+        .insert(redirect_uri.clone(), listener);
+    Ok(redirect_uri)
 }
 
 /// Stores OAuth Callback Payload data used by the desktop OAuth window system.
@@ -97,7 +121,7 @@ pub(crate) fn start_oauth_window(
     }
 
     if cfg!(windows) && !request.visible {
-        let redirect_uri = start_windows_browser_logout(app, auth_url)?;
+        let redirect_uri = start_windows_browser_logout(app, auth_url, &request)?;
         return Ok(OAuthWindowResponse {
             modal: false,
             redirect_uri: Some(redirect_uri),
@@ -629,16 +653,16 @@ fn start_windows_browser_oauth(
     mut auth_url: tauri::Url,
     request: &OAuthWindowRequest,
 ) -> Result<String, String> {
-    let listener = TcpListener::bind(("127.0.0.1", 0))
-        .map_err(|error| format!("OAuth-Callback konnte nicht gestartet werden: {error}"))?;
-    let callback_address = listener
-        .local_addr()
-        .map_err(|error| format!("OAuth-Callback-Adresse konnte nicht gelesen werden: {error}"))?;
-    let redirect_uri = format!("http://{callback_address}/");
+    let redirect_uri = request.redirect_uri.clone();
+    let listener = WINDOWS_OAUTH_LISTENERS
+        .lock()
+        .map_err(|_| "OAuth callback registry could not be locked.".to_string())?
+        .remove(&redirect_uri)
+        .ok_or_else(|| "OAuth callback was not prepared for the requested redirect URI.".to_string())?;
 
     let mut query_pairs = auth_url
         .query_pairs()
-        .filter(|(key, _)| key != "redirect_uri" && key != "prompt" && key != "max_age")
+        .filter(|(key, _)| key != "prompt" && key != "max_age")
         .map(|(key, value)| (key.into_owned(), value.into_owned()))
         .collect::<Vec<_>>();
     let is_discord_oauth = query_pairs
@@ -648,14 +672,21 @@ fn start_windows_browser_oauth(
         .iter()
         .find_map(|(key, value)| (key == "client_id").then(|| value.clone()));
 
-    query_pairs.push(("redirect_uri".to_string(), redirect_uri.clone()));
-
     if !is_discord_oauth && !request.password_reset {
         query_pairs.push(("prompt".to_string(), "login select_account".to_string()));
         query_pairs.push(("max_age".to_string(), "0".to_string()));
     }
 
     auth_url.query_pairs_mut().clear().extend_pairs(query_pairs);
+
+    if auth_url
+        .query_pairs()
+        .find_map(|(key, value)| (key == "redirect_uri").then(|| value.into_owned()))
+        .as_deref()
+        != Some(redirect_uri.as_str())
+    {
+        return Err("OAuth authorization request redirect URI does not match the prepared callback.".to_string());
+    }
 
     let post_logout_redirect_uri = format!("{}mira-oauth-start", redirect_uri);
     let browser_start_url = if request.clear_session_before_login {
@@ -730,13 +761,14 @@ fn start_windows_browser_oauth(
 fn start_windows_browser_logout(
     app: tauri::AppHandle,
     mut logout_url: tauri::Url,
+    request: &OAuthWindowRequest,
 ) -> Result<String, String> {
-    let listener = TcpListener::bind(("127.0.0.1", 0))
-        .map_err(|error| format!("OAuth-Logout-Callback konnte nicht gestartet werden: {error}"))?;
-    let callback_address = listener.local_addr().map_err(|error| {
-        format!("OAuth-Logout-Callback-Adresse konnte nicht gelesen werden: {error}")
-    })?;
-    let redirect_uri = format!("http://{callback_address}/");
+    let redirect_uri = request.redirect_uri.clone();
+    let listener = WINDOWS_OAUTH_LISTENERS
+        .lock()
+        .map_err(|_| "OAuth callback registry could not be locked.".to_string())?
+        .remove(&redirect_uri)
+        .ok_or_else(|| "OAuth callback was not prepared for the requested logout redirect URI.".to_string())?;
 
     let mut query_pairs = logout_url
         .query_pairs()

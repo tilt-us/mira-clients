@@ -157,6 +157,7 @@ client-game-closed-reconnect = Client wurde geschlossen bitte Verbinde dich neu!
 client-game-connect = Verbinden
 client-game-connect-loading = Verbindet...
 client-game-start-error = Spiel-Client konnte nicht gestartet werden.
+client-content-update-progress = Aktualisierung am Laufen
 game-mode-normal = Normales Spiel
 game-mode-ranked = Gewertetes Spiel
 game-mode-create = Erstellen
