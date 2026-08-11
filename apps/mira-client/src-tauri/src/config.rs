@@ -1,11 +1,4 @@
-/// Identifies the deployment environment embedded in this client build.
-#[derive(Debug, Clone, Copy, serde::Serialize)]
-#[serde(rename_all = "lowercase")]
-pub(crate) enum Environment {
-    Dev,
-    Staging,
-    Prod,
-}
+use mira_downloads::Environment;
 
 /// Stores the runtime configuration required by the React client.
 #[derive(serde::Serialize)]
@@ -34,18 +27,12 @@ const ENVIRONMENT_DEFINITIONS: &str = include_str!(concat!(
 
 /// Returns the environment selected when this desktop client was built.
 pub(crate) fn build_environment() -> Result<Environment, String> {
-    match option_env!("MIRA_ENV") {
-        Some("dev") => Ok(Environment::Dev),
-        Some("staging") => Ok(Environment::Staging),
-        Some("prod") => Ok(Environment::Prod),
-        Some(value) => Err(format!(
-            "Ungültige eingebettete MIRA_ENV-Konfiguration {value:?}. Erwartet: dev, staging oder prod."
-        )),
-        None => Err(
+    option_env!("MIRA_ENV")
+        .ok_or_else(|| {
             "MIRA_ENV wurde nicht in den Client eingebettet. Build mit MIRA_ENV=dev, MIRA_ENV=staging oder MIRA_ENV=prod erstellen."
-                .to_string(),
-        ),
-    }
+                .to_string()
+        })?
+        .parse()
 }
 
 /// Returns the configured public website host for OAuth error callbacks.

@@ -17,6 +17,22 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  garage-publish:
+    name: Garage publish plan tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Test Garage publish plan
+        run: node --test scripts/garage-publish.test.mjs
+
   mira-client:
     name: mira-client tests
     runs-on: ubuntu-latest

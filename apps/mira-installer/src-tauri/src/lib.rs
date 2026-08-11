@@ -1,5 +1,6 @@
+use mira_downloads::{Artifact, Environment, LatestManifest, RuntimeManifest};
 use reqwest::blocking::Client;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::fs::{self, File};
 use std::io::{Read, Write};
@@ -8,12 +9,10 @@ use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant};
 use tauri::{Emitter, LogicalSize, Manager, Size};
-use zip::ZipArchive;
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
-const LATEST_MANIFEST_URL: &str = "https://api.tilt-us.com/downloads/game-sources/latest.json";
 const ERROR_CODE_GAME_DATA: &str = "465";
 const ERROR_CODE_SERVER_NO_RESPONSE: &str = "19145";
 const WINDOWS_PROGRAM_FILES_FALLBACK: &str = r"C:\Program Files";
@@ -53,37 +52,6 @@ struct PlatformInfo {
     os: String,
     linux_family: Option<String>,
     package_extension: String,
-}
-
-/// Stores Latest Manifest data used by the installer Tauri backend system.
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct LatestManifest {
-    version: String,
-    tag: String,
-    commit: String,
-    manifest_url: String,
-}
-
-/// Stores Download Manifest data used by the installer Tauri backend system.
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct DownloadManifest {
-    version: String,
-    tag: String,
-    commit: String,
-    published_at: String,
-    base_url: String,
-    files: Vec<ManifestFile>,
-}
-
-/// Stores Manifest File data used by the installer Tauri backend system.
-#[derive(Clone, Debug, Deserialize, Serialize)]
-struct ManifestFile {
-    path: String,
-    url: String,
-    size: u64,
-    sha256: String,
 }
 
 /// Stores Install Result data used by the installer Tauri backend system.
@@ -255,6 +223,7 @@ fn install_game_blocking(
 
     emit_progress(&app, "install-status-platform", 0.03);
     let platform = detect_platform_info();
+    let environment = build_environment()?;
 
     emit_progress(&app, "install-status-manifest", 0.08);
     let client = Client::builder()
@@ -263,48 +232,36 @@ fn install_game_blocking(
         .map_err(|error| format!("failed to create http client: {error}"))?;
 
     let latest: LatestManifest = client
-        .get(LATEST_MANIFEST_URL)
+        .get(environment.latest_manifest_url())
         .send()
         .map_err(|error| format!("failed to download latest manifest: {error}"))?
         .error_for_status()
         .map_err(|error| format!("latest manifest request failed: {error}"))?
         .json()
         .map_err(|error| format!("failed to parse latest manifest: {error}"))?;
+    latest.validate_for(environment)?;
 
-    let manifest: DownloadManifest = client
-        .get(&latest.manifest_url)
+    let manifest: RuntimeManifest = client
+        .get(&latest.runtime_manifest_url)
         .send()
-        .map_err(|error| format!("failed to download release manifest: {error}"))?
+        .map_err(|error| format!("failed to download runtime manifest: {error}"))?
         .error_for_status()
-        .map_err(|error| format!("release manifest request failed: {error}"))?
+        .map_err(|error| format!("runtime manifest request failed: {error}"))?
         .json()
-        .map_err(|error| format!("failed to parse release manifest: {error}"))?;
+        .map_err(|error| format!("failed to parse runtime manifest: {error}"))?;
+    manifest.validate_for(environment)?;
 
-    let client_file = find_manifest_file(&manifest, |file| {
-        let path = file.path.to_lowercase();
-        path.starts_with("mira-client/")
-            && path.ends_with(&platform.package_extension.to_lowercase())
-    })?;
-    let game_file = find_manifest_file(&manifest, |file| {
-        let path = file.path.to_lowercase();
-        path.starts_with("mira-game-client/") && path.ends_with(game_client_suffix(&platform))
-    })?;
-    let assets_archive = find_archive(&manifest, "assets", &latest.tag)?;
+    let client_file = select_desktop_artifact(&manifest, &platform)?;
+    let game_file = select_game_client_artifact(&manifest, &platform)?;
 
     let temp_dir = requested_root.join(".mira-installer");
     replace_dir(&temp_dir)?;
 
-    let client_filename = Path::new(&client_file.path)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| "client download has no filename".to_string())?;
-    let client_download = temp_dir.join(client_filename);
-    let game_filename = Path::new(&game_file.path)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| "game client download has no filename".to_string())?;
-    let game_download = temp_dir.join(game_filename);
-    let assets_download = temp_dir.join(format!("assets-{}.zip", latest.tag));
+    let client_download = temp_dir.join(format!(
+        "mira-client-download{}",
+        platform.package_extension
+    ));
+    let game_download = temp_dir.join(game_client_filename(&platform));
 
     download_file(
         &app,
@@ -313,7 +270,7 @@ fn install_game_blocking(
         &client_download,
         "install-status-download-client",
         0.12,
-        0.28,
+        0.45,
     )?;
     download_file(
         &app,
@@ -321,20 +278,11 @@ fn install_game_blocking(
         &game_file,
         &game_download,
         "install-status-download-game",
-        0.28,
-        0.48,
-    )?;
-    download_file(
-        &app,
-        &client,
-        &assets_archive,
-        &assets_download,
-        "install-status-download-assets",
-        0.48,
-        0.68,
+        0.45,
+        0.72,
     )?;
 
-    emit_progress(&app, "install-status-finalize", 0.7);
+    emit_progress(&app, "install-status-finalize", 0.75);
     let launcher_path = requested_root.join(launcher_filename(&platform));
     remove_legacy_install_entries(&requested_root)?;
 
@@ -358,8 +306,9 @@ fn install_game_blocking(
         remove_legacy_install_entries(&install_root)?;
     }
 
-    let assets_dir = install_root.join("assets");
-    replace_dir(&assets_dir)?;
+    // Content now belongs to the desktop client's application-data directory.
+    // Remove only the legacy installer-owned copy so it cannot be selected later.
+    remove_if_exists(&install_root.join("assets"))?;
 
     let game_path = install_root.join(game_client_filename(&platform));
     remove_if_exists(&game_path)?;
@@ -368,17 +317,6 @@ fn install_game_blocking(
         .map_err(|error| format!("failed to install game client: {error}"))?;
     make_executable(&game_path)?;
 
-    unzip_archive(
-        &app,
-        &assets_download,
-        &assets_dir,
-        "install-status-unzip-assets",
-        0.72,
-        0.98,
-    )?;
-
-    write_json(install_root.join("latest.json"), &latest)?;
-    write_json(install_root.join("manifest.json"), &manifest)?;
     let _ = fs::remove_dir_all(&temp_dir);
 
     emit_progress(&app, "install-status-done", 1.0);
@@ -469,12 +407,46 @@ fn detect_linux_family() -> Option<String> {
     None
 }
 
-/// Runs the game client suffix step for the installer Tauri backend system.
-fn game_client_suffix(platform: &PlatformInfo) -> &'static str {
+/// Returns the deployment environment embedded by the installer build script.
+fn build_environment() -> Result<Environment, String> {
+    option_env!("MIRA_ENV")
+        .ok_or_else(|| {
+            "MIRA_ENV was not embedded in this installer build. Build with MIRA_ENV=dev, MIRA_ENV=staging, or MIRA_ENV=prod."
+                .to_string()
+        })?
+        .parse()
+}
+
+/// Selects the desktop client installer for the current operating system.
+fn select_desktop_artifact(
+    manifest: &RuntimeManifest,
+    platform: &PlatformInfo,
+) -> Result<Artifact, String> {
     match platform.os.as_str() {
-        "windows" => "-windows.exe",
-        "macos" => "-macos",
-        _ => "-linux",
+        "windows" => Ok(manifest.desktop.windows.clone()),
+        "macos" => Ok(manifest.desktop.macos.clone()),
+        "linux" => match platform.package_extension.as_str() {
+            ".deb" => Ok(manifest.desktop.linux.deb.clone()),
+            ".rpm" => Ok(manifest.desktop.linux.rpm.clone()),
+            ".AppImage" => Ok(manifest.desktop.linux.app_image.clone()),
+            extension => Err(format!(
+                "Unsupported Linux desktop package extension: {extension}"
+            )),
+        },
+        other => Err(format!("Unsupported installer platform: {other}")),
+    }
+}
+
+/// Selects the standalone game client executable for the current operating system.
+fn select_game_client_artifact(
+    manifest: &RuntimeManifest,
+    platform: &PlatformInfo,
+) -> Result<Artifact, String> {
+    match platform.os.as_str() {
+        "windows" => Ok(manifest.game_client.windows.clone()),
+        "linux" => Ok(manifest.game_client.linux.clone()),
+        "macos" => Ok(manifest.game_client.macos.clone()),
+        other => Err(format!("Unsupported installer platform: {other}")),
     }
 }
 
@@ -595,33 +567,6 @@ fn resolve_windows_launcher_path(install_dir: &Path) -> Result<PathBuf, String> 
     }
 }
 
-/// Runs the find archive step for the installer Tauri backend system.
-fn find_archive(
-    manifest: &DownloadManifest,
-    archive_name: &str,
-    tag: &str,
-) -> Result<ManifestFile, String> {
-    let exact_path = format!("{archive_name}-{tag}.zip");
-    find_manifest_file(manifest, |file| file.path == exact_path).or_else(|_| {
-        find_manifest_file(manifest, |file| {
-            file.path.starts_with(archive_name) && file.path.ends_with(".zip")
-        })
-    })
-}
-
-/// Runs the find manifest file step for the installer Tauri backend system.
-fn find_manifest_file<F>(manifest: &DownloadManifest, predicate: F) -> Result<ManifestFile, String>
-where
-    F: Fn(&ManifestFile) -> bool,
-{
-    manifest
-        .files
-        .iter()
-        .find(|file| predicate(file))
-        .cloned()
-        .ok_or_else(|| "required download file is missing in manifest".to_string())
-}
-
 /// Runs the normalize install error code step for the installer Tauri backend system.
 fn normalize_install_error_code(error: &str) -> &'static str {
     let normalized = error.to_lowercase();
@@ -697,7 +642,7 @@ fn configure_linux_webkit_command(_command: &mut Command) {}
 fn download_file(
     app: &tauri::AppHandle,
     client: &Client,
-    manifest_file: &ManifestFile,
+    artifact: &Artifact,
     destination: &Path,
     label_key: &'static str,
     start: f32,
@@ -710,21 +655,16 @@ fn download_file(
 
     let temp_destination = part_path(destination)?;
     let mut response = client
-        .get(&manifest_file.url)
+        .get(&artifact.url)
         .send()
-        .map_err(|error| format!("failed to download {}: {error}", manifest_file.path))?
+        .map_err(|error| format!("failed to download artifact: {error}"))?
         .error_for_status()
-        .map_err(|error| {
-            format!(
-                "download request failed for {}: {error}",
-                manifest_file.path
-            )
-        })?;
+        .map_err(|error| format!("download request failed: {error}"))?;
 
     let total = response
         .content_length()
         .filter(|length| *length > 0)
-        .unwrap_or(manifest_file.size);
+        .unwrap_or(artifact.size);
     let mut file = File::create(&temp_destination)
         .map_err(|error| format!("failed to create download file: {error}"))?;
     let mut hasher = Sha256::new();
@@ -735,7 +675,7 @@ fn download_file(
     loop {
         let bytes_read = response
             .read(&mut buffer)
-            .map_err(|error| format!("failed while downloading {}: {error}", manifest_file.path))?;
+            .map_err(|error| format!("failed while downloading artifact: {error}"))?;
 
         if bytes_read == 0 {
             break;
@@ -753,60 +693,13 @@ fn download_file(
     }
 
     let actual_sha256 = to_hex(&hasher.finalize());
-    if !manifest_file.sha256.eq_ignore_ascii_case(&actual_sha256) {
-        return Err(format!("checksum mismatch for {}", manifest_file.path));
+    if let Err(error) = verify_download(artifact, downloaded, &actual_sha256) {
+        let _ = fs::remove_file(&temp_destination);
+        return Err(error);
     }
 
     fs::rename(&temp_destination, destination)
         .map_err(|error| format!("failed to finalize download file: {error}"))?;
-    emit_progress(app, label_key, end);
-    Ok(())
-}
-
-/// Runs the unzip archive step for the installer Tauri backend system.
-fn unzip_archive(
-    app: &tauri::AppHandle,
-    archive_path: &Path,
-    destination: &Path,
-    label_key: &'static str,
-    start: f32,
-    end: f32,
-) -> Result<(), String> {
-    let archive_file =
-        File::open(archive_path).map_err(|error| format!("failed to open archive: {error}"))?;
-    let mut archive = ZipArchive::new(archive_file)
-        .map_err(|error| format!("failed to read archive: {error}"))?;
-    let total_entries = archive.len().max(1);
-
-    emit_progress(app, label_key, start);
-    for index in 0..archive.len() {
-        let mut entry = archive
-            .by_index(index)
-            .map_err(|error| format!("failed to read archive entry: {error}"))?;
-        let Some(enclosed_name) = entry.enclosed_name() else {
-            continue;
-        };
-        let output_path = destination.join(enclosed_name);
-
-        if entry.is_dir() {
-            fs::create_dir_all(&output_path)
-                .map_err(|error| format!("failed to create extracted folder: {error}"))?;
-        } else {
-            if let Some(parent) = output_path.parent() {
-                fs::create_dir_all(parent)
-                    .map_err(|error| format!("failed to create extracted folder: {error}"))?;
-            }
-
-            let mut output_file = File::create(&output_path)
-                .map_err(|error| format!("failed to create extracted file: {error}"))?;
-            std::io::copy(&mut entry, &mut output_file)
-                .map_err(|error| format!("failed to extract archive entry: {error}"))?;
-        }
-
-        let fraction = (index + 1) as f32 / total_entries as f32;
-        emit_progress(app, label_key, start + ((end - start) * fraction));
-    }
-
     emit_progress(app, label_key, end);
     Ok(())
 }
@@ -852,13 +745,6 @@ fn make_executable(_path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Runs the write json step for the installer Tauri backend system.
-fn write_json<T: Serialize>(path: PathBuf, value: &T) -> Result<(), String> {
-    let json = serde_json::to_vec_pretty(value)
-        .map_err(|error| format!("failed to serialize json: {error}"))?;
-    fs::write(path, json).map_err(|error| format!("failed to write json: {error}"))
-}
-
 /// Runs the part path step for the installer Tauri backend system.
 fn part_path(destination: &Path) -> Result<PathBuf, String> {
     let filename = destination
@@ -887,4 +773,122 @@ fn to_hex(bytes: &[u8]) -> String {
         let _ = write!(&mut output, "{byte:02x}");
     }
     output
+}
+
+fn verify_download(
+    artifact: &Artifact,
+    downloaded: u64,
+    actual_sha256: &str,
+) -> Result<(), String> {
+    if downloaded != artifact.size {
+        return Err(format!(
+            "download size mismatch: expected {} bytes, got {downloaded}",
+            artifact.size
+        ));
+    }
+    if !artifact.sha256.eq_ignore_ascii_case(actual_sha256) {
+        return Err("download checksum mismatch".to_string());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn artifact(name: &str) -> Artifact {
+        Artifact {
+            url: format!("https://downloads.tilt-us.com/{name}"),
+            sha256: "a".repeat(64),
+            size: 42,
+        }
+    }
+
+    fn runtime_manifest() -> RuntimeManifest {
+        RuntimeManifest {
+            schema_version: 1,
+            environment: Environment::Dev,
+            desktop: mira_downloads::DesktopArtifacts {
+                windows: artifact("desktop/windows/mira-client.exe"),
+                linux: mira_downloads::LinuxDesktopArtifacts {
+                    app_image: artifact("desktop/linux/mira-client.AppImage"),
+                    deb: artifact("desktop/linux/mira-client.deb"),
+                    rpm: artifact("desktop/linux/mira-client.rpm"),
+                },
+                macos: artifact("desktop/macos/mira-client.dmg"),
+            },
+            game_client: mira_downloads::PlatformArtifacts {
+                windows: artifact("game/windows/mira-game-client.exe"),
+                linux: artifact("game/linux/mira-game-client"),
+                macos: artifact("game/macos/mira-game-client"),
+            },
+        }
+    }
+
+    #[test]
+    fn maps_all_latest_manifest_urls() {
+        assert_eq!(
+            Environment::Dev.latest_manifest_url(),
+            "https://downloads.tilt-us.com/dev/latest.json"
+        );
+        assert_eq!(
+            Environment::Staging.latest_manifest_url(),
+            "https://downloads.tilt-us.com/staging/latest.json"
+        );
+        assert_eq!(
+            Environment::Prod.latest_manifest_url(),
+            "https://downloads.tilt-us.com/latest.json"
+        );
+        assert!("preview".parse::<Environment>().is_err());
+    }
+
+    #[test]
+    fn selects_runtime_artifacts_for_the_current_platform() {
+        let manifest = runtime_manifest();
+        let linux = PlatformInfo {
+            os: "linux".to_string(),
+            linux_family: Some("debian".to_string()),
+            package_extension: ".deb".to_string(),
+        };
+
+        assert!(
+            select_desktop_artifact(&manifest, &linux)
+                .unwrap()
+                .url
+                .ends_with("mira-client.deb")
+        );
+        assert!(
+            select_game_client_artifact(&manifest, &linux)
+                .unwrap()
+                .url
+                .ends_with("mira-game-client")
+        );
+    }
+
+    #[test]
+    fn parses_and_validates_a_runtime_manifest() {
+        let encoded = serde_json::to_string(&runtime_manifest()).unwrap();
+        let parsed: RuntimeManifest = serde_json::from_str(&encoded).unwrap();
+        parsed.validate_for(Environment::Dev).unwrap();
+    }
+
+    #[test]
+    fn verifies_size_and_checksum() {
+        let expected = Artifact {
+            url: "https://downloads.tilt-us.com/runtime/game/linux/mira-game-client".to_string(),
+            sha256: "abc".to_string(),
+            size: 3,
+        };
+        assert!(verify_download(&expected, 3, "abc").is_ok());
+        assert!(verify_download(&expected, 2, "abc").is_err());
+        assert!(verify_download(&expected, 3, "def").is_err());
+    }
+
+    #[test]
+    fn network_failures_are_reported_as_server_errors() {
+        assert_eq!(
+            normalize_install_error_code("failed to download artifact: connection reset"),
+            ERROR_CODE_SERVER_NO_RESPONSE
+        );
+    }
 }

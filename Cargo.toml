@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
   "apps/mira-game-client",
+  "crates/mira-downloads",
 ]
 exclude = [
   "apps/mira-client/src-tauri",

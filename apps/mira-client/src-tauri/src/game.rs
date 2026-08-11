@@ -1,3 +1,4 @@
+use crate::content;
 use std::{
     io::{Read, Write},
     net::{TcpStream, ToSocketAddrs},
@@ -68,7 +69,8 @@ pub(crate) fn launch_game(
     let game_dir = game_binary
         .parent()
         .ok_or_else(|| "Game-Client-Verzeichnis konnte nicht bestimmt werden.".to_string())?;
-    let asset_root = resolve_game_asset_root(&app, game_dir)?;
+    let synchronized_asset_root = content::ensure_content_current(&app)?;
+    let asset_root = resolve_game_asset_root(&app, game_dir, &synchronized_asset_root)?;
     wait_for_game_server_ready(&request.server_control_base_url)?;
 
     let mut command = Command::new(&game_binary);
@@ -453,12 +455,13 @@ fn is_game_server_ready_response(response: &str) -> bool {
 fn resolve_game_asset_root(
     app: &tauri::AppHandle,
     game_dir: &std::path::Path,
+    synchronized_asset_root: &std::path::Path,
 ) -> Result<PathBuf, String> {
-    let candidates = game_asset_root_candidates(app, game_dir);
+    let candidates = game_asset_root_candidates(app, game_dir, synchronized_asset_root);
 
     candidates
         .iter()
-        .find(|candidate| candidate.join("index.html").is_file())
+        .find(|candidate| has_required_game_content(candidate))
         .cloned()
         .ok_or_else(|| {
             format!(
@@ -466,6 +469,10 @@ fn resolve_game_asset_root(
                 format_path_candidates(&candidates),
             )
         })
+}
+
+fn has_required_game_content(asset_root: &std::path::Path) -> bool {
+    asset_root.join("index.html").is_file()
 }
 
 /// Runs the format path candidates step for the desktop game-launcher process system.
@@ -478,8 +485,12 @@ fn format_path_candidates(candidates: &[PathBuf]) -> String {
 }
 
 /// Runs the game asset root candidates step for the desktop game-launcher process system.
-fn game_asset_root_candidates(app: &tauri::AppHandle, game_dir: &std::path::Path) -> Vec<PathBuf> {
-    let mut candidates = Vec::new();
+fn game_asset_root_candidates(
+    app: &tauri::AppHandle,
+    game_dir: &std::path::Path,
+    synchronized_asset_root: &std::path::Path,
+) -> Vec<PathBuf> {
+    let mut candidates = vec![synchronized_asset_root.to_path_buf()];
 
     candidates.push(game_dir.join("assets"));
 
@@ -531,5 +542,15 @@ mod tests {
         assert!(!is_game_server_ready_response(
             "HTTP/1.1 503 Service Unavailable\r\n\r\n{\"ready\":false}"
         ));
+    }
+
+    #[test]
+    fn game_launch_is_blocked_when_synchronized_content_is_missing() {
+        let directory = tempfile::tempdir().unwrap();
+        let required_asset_root = directory.path().join("content/assets");
+        assert!(!has_required_game_content(&required_asset_root));
+        std::fs::create_dir_all(&required_asset_root).unwrap();
+        std::fs::write(required_asset_root.join("index.html"), "ok").unwrap();
+        assert!(has_required_game_content(&required_asset_root));
     }
 }
