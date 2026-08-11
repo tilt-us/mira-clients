@@ -5,8 +5,37 @@ dedicated game server.
 
 ## Download
 
-Release artifacts are published on the
-[GitHub Releases page](https://github.com/tilt-us/mira-client/releases).
+The website downloads the Mira Installer only. The installer downloads the
+desktop client and Bevy game-client binary. The desktop client owns game
+content and verifies it before it starts the game.
+
+Current download pointers:
+
+| Environment | Latest manifest |
+| --- | --- |
+| Development | `https://downloads.tilt-us.com/dev/latest.json` |
+| Staging | `https://downloads.tilt-us.com/staging/latest.json` |
+| Production | `https://downloads.tilt-us.com/latest.json` |
+
+`latest.json` points to the installer, runtime, and content manifests. The
+website consumes `installer/manifest.json`; the installer consumes the runtime
+manifest; the desktop client consumes the content manifest. Garage contains
+only current stable object names. Versioned artifacts and release history
+remain on [GitHub Releases](https://github.com/tilt-us/mira-clients/releases).
+
+## Download Publishing
+
+The release workflow creates a current content archive from `assets/` and
+uploads it with the installer and runtime artifacts to the `downloads.tilt-us.com`
+Garage bucket. It uploads artifacts first, manifests second, and `latest.json`
+last. The workflow requires these CI secrets and does not embed them in any
+application:
+
+- `GARAGE_ENDPOINT`
+- `GARAGE_ACCESS_KEY_ID`
+- `GARAGE_SECRET_ACCESS_KEY`
+- `GARAGE_REGION`
+- `GARAGE_BUCKET`
 
 ## Development Start
 

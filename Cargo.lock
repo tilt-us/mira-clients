@@ -5489,6 +5489,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "mira-downloads"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "mira-game-api"
 version = "0.1.0"
 source = "git+ssh://git@github.com/tilt-us/mira-game-api.git#7cf433c91f1e34efb0202ea88bf181239946f486"

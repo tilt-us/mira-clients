@@ -634,6 +634,7 @@ jobs:
       - name: Build
         env:
           BUNDLES: ${{ matrix.bundles }}
+          MIRA_ENV: prod
           TAURI_BUNDLER_NEW_APPIMAGE_FORMAT: ${{ runner.os == 'Linux' && 'true' || 'false' }}
           NO_STRIP: ${{ runner.os == 'Linux' && '1' || '' }}
         run: |
@@ -786,3 +787,68 @@ jobs:
           gh release upload "${TAG}" "${files[@]}" \
             --repo "${REPOSITORY}" \
             --clobber
+
+  publish-garage:
+    name: Publish current Garage downloads
+    needs:
+      - prepare
+      - build-mira-game-client
+      - build-mira-client
+      - build-mira-installer
+    if: needs.prepare.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout content source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.head_sha }}
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+
+      - name: Prepare content archive
+        run: |
+          set -euo pipefail
+          mkdir -p garage-content
+          zip -r garage-content/assets.zip assets
+
+      - name: Prepare current download manifests
+        env:
+          MIRA_ENV: prod
+          VERSION: ${{ needs.prepare.outputs.version }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          HEAD_SHA: ${{ needs.prepare.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+          node scripts/garage-publish.mjs prepare \
+            --environment "${MIRA_ENV}" \
+            --artifacts release-artifacts \
+            --content garage-content/assets.zip \
+            --output garage-publish \
+            --commit "${HEAD_SHA}" \
+            --tag "${TAG}" \
+            --version "${VERSION}"
+
+      - name: Upload current Garage downloads
+        env:
+          GARAGE_ENDPOINT: ${{ secrets.GARAGE_ENDPOINT }}
+          GARAGE_ACCESS_KEY_ID: ${{ secrets.GARAGE_ACCESS_KEY_ID }}
+          GARAGE_SECRET_ACCESS_KEY: ${{ secrets.GARAGE_SECRET_ACCESS_KEY }}
+          GARAGE_REGION: ${{ secrets.GARAGE_REGION }}
+          GARAGE_BUCKET: ${{ secrets.GARAGE_BUCKET }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.GARAGE_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.GARAGE_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.GARAGE_REGION }}
+          AWS_EC2_METADATA_DISABLED: true
+        run: |
+          set -euo pipefail
+          : "${GARAGE_ENDPOINT:?GARAGE_ENDPOINT must be configured}"
+          : "${GARAGE_ACCESS_KEY_ID:?GARAGE_ACCESS_KEY_ID must be configured}"
+          : "${GARAGE_SECRET_ACCESS_KEY:?GARAGE_SECRET_ACCESS_KEY must be configured}"
+          : "${GARAGE_REGION:?GARAGE_REGION must be configured}"
+          : "${GARAGE_BUCKET:?GARAGE_BUCKET must be configured}"
+          aws --version
+          node scripts/garage-publish.mjs upload --plan garage-publish/upload-plan.json
