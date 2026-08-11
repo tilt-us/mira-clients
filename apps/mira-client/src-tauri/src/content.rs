@@ -345,9 +345,15 @@ pub(crate) fn has_required_game_content(game_root: &Path) -> bool {
 
 pub(crate) fn ui_asset_root() -> Result<PathBuf, String> {
     let installed = install_root()?.join("assets").join("ui");
-    if installed.is_dir() {
+    if has_required_ui_content(&installed) {
         return canonical_ui_asset_root(installed);
     }
+
+    repository_ui_asset_root()
+}
+
+#[cfg(debug_assertions)]
+fn repository_ui_asset_root() -> Result<PathBuf, String> {
     canonical_ui_asset_root(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("..")
@@ -355,6 +361,14 @@ pub(crate) fn ui_asset_root() -> Result<PathBuf, String> {
             .join("..")
             .join("assets")
             .join("ui"),
+    )
+}
+
+#[cfg(not(debug_assertions))]
+fn repository_ui_asset_root() -> Result<PathBuf, String> {
+    Err(
+        "Mira UI assets are missing at <install-root>/assets/ui. Install or repair Mira with the Mira Installer."
+            .to_string(),
     )
 }
 
@@ -370,6 +384,12 @@ fn canonical_ui_asset_root(path: PathBuf) -> Result<PathBuf, String> {
 #[tauri::command]
 pub(crate) fn ui_asset_root_path() -> Result<String, String> {
     Ok(ui_asset_root()?.to_string_lossy().into_owned())
+}
+
+pub(crate) fn has_required_ui_content(ui_root: &Path) -> bool {
+    ["characters", "fonts", "wallpapers", "icons"]
+        .iter()
+        .all(|directory| ui_root.join(directory).is_dir())
 }
 
 fn unzip_archive(archive_path: &Path, destination: &Path) -> Result<(), String> {
@@ -497,6 +517,7 @@ mod tests {
         ));
     }
 
+    #[cfg(debug_assertions)]
     #[test]
     fn repository_ui_assets_use_the_external_ui_root() {
         let ui_root = ui_asset_root().unwrap();
@@ -507,9 +528,28 @@ mod tests {
                 .any(|component| component == std::path::Component::ParentDir)
         );
 
-        for directory in ["characters", "fonts", "wallpapers", "icons"] {
-            assert!(ui_root.join(directory).is_dir(), "missing {directory}");
+        assert!(has_required_ui_content(&ui_root));
+    }
+
+    #[cfg(not(debug_assertions))]
+    #[test]
+    fn release_builds_do_not_fall_back_to_the_repository_ui_assets() {
+        let error = repository_ui_asset_root().unwrap_err();
+
+        assert!(error.contains("<install-root>/assets/ui"));
+    }
+
+    #[test]
+    fn ui_asset_validation_requires_all_external_ui_directories() {
+        let directory = tempfile::tempdir().unwrap();
+        let ui_root = directory.path().join("ui");
+        fs::create_dir_all(&ui_root).unwrap();
+        assert!(!has_required_ui_content(&ui_root));
+
+        for child in ["characters", "fonts", "wallpapers", "icons"] {
+            fs::create_dir_all(ui_root.join(child)).unwrap();
         }
+        assert!(has_required_ui_content(&ui_root));
     }
 
     #[test]
