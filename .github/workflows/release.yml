@@ -1,47 +1,75 @@
 name: Release
 
 on:
-  workflow_run:
-    workflows:
-      - CI/CD
-    types:
-      - completed
+  push:
     branches:
-      - main
+      - development
       - master
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type PROD to publish production"
+        required: true
+        type: string
 
 permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.event.workflow_run.head_sha }}
-  cancel-in-progress: false
+  group: ${{ github.event_name == 'push' && (github.ref_name == 'development' && 'mira-client-publish-dev' || github.ref_name == 'master' && 'mira-client-publish-staging' || 'mira-client-publish-invalid') || github.event_name == 'workflow_dispatch' && 'mira-client-publish-prod' || 'mira-client-publish-invalid' }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
 
 jobs:
   prepare:
-    name: Prepare release
+    name: Resolve deployment environment
     runs-on: ubuntu-latest
-    if: github.event.workflow_run.conclusion == 'success'
     outputs:
-      should_release: ${{ steps.release.outputs.should_release }}
-      version: ${{ steps.release.outputs.version }}
-      tag: ${{ steps.release.outputs.tag }}
-      head_sha: ${{ steps.release.outputs.head_sha }}
-      notes: ${{ steps.release.outputs.notes }}
+      environment: ${{ steps.resolve.outputs.environment }}
+      is_production: ${{ steps.resolve.outputs.is_production }}
+      github_environment: ${{ steps.resolve.outputs.github_environment }}
+      version: ${{ steps.metadata.outputs.version }}
+      tag: ${{ steps.metadata.outputs.tag }}
+      head_sha: ${{ steps.metadata.outputs.head_sha }}
+      notes: ${{ steps.metadata.outputs.notes }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 0
 
-      - name: Calculate version and notes
-        id: release
+      - name: Resolve deployment environment
+        id: resolve
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          set -euo pipefail
+          resolution="$(node scripts/deployment-environment.mjs \
+            --event "${EVENT_NAME}" \
+            --branch "${REF_NAME}" \
+            --confirm "${CONFIRM:-}")"
+          environment="$(node -e 'console.log(JSON.parse(process.argv[1]).environment)' "${resolution}")"
+          production="$(node -e 'console.log(JSON.parse(process.argv[1]).production)' "${resolution}")"
+          {
+            echo "environment=${environment}"
+            echo "is_production=${production}"
+            if [[ "${production}" == "true" ]]; then
+              echo "github_environment=production"
+            else
+              echo "github_environment=${environment}"
+            fi
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Calculate build metadata
+        id: metadata
         env:
           GH_TOKEN: ${{ github.token }}
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          HEAD_SHA: ${{ github.sha }}
           REPOSITORY: ${{ github.repository }}
+          DEPLOYMENT_ENVIRONMENT: ${{ steps.resolve.outputs.environment }}
+          IS_PRODUCTION: ${{ steps.resolve.outputs.is_production }}
         run: |
           set -euo pipefail
 
@@ -52,35 +80,25 @@ jobs:
             | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
             | sort -V \
             | tail -n 1 || true)"
+          if [[ "${IS_PRODUCTION}" != "true" ]]; then
+            version="${latest_tag#v}"
+            version="${version:-0.0.0}"
+            tag="${latest_tag:-v0.0.0}"
+            {
+              echo "version=${version}"
+              echo "tag=${tag}"
+              echo "head_sha=${head_sha}"
+              echo "notes<<EOF"
+              echo "Rolling ${DEPLOYMENT_ENVIRONMENT} build for ${head_sha}."
+              echo "EOF"
+            } >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
           head_tag="$(git tag --points-at "${head_sha}" \
             | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
             | sort -V \
             | tail -n 1 || true)"
-
-          if [[ -n "${head_tag}" ]]; then
-            previous_tag="$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' \
-              | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
-              | grep -v -x "${head_tag}" \
-              | sort -V \
-              | tail -n 1 || true)"
-            base_version="${head_tag#v}"
-            if [[ -n "${previous_tag}" ]]; then
-              log_range="${previous_tag}..${head_sha}"
-              changes_title="Änderungen seit ${previous_tag}"
-            else
-              log_range="${head_sha}"
-              changes_title="Änderungen"
-            fi
-          elif [[ -n "${latest_tag}" ]]; then
-            base_version="${latest_tag#v}"
-            log_range="${latest_tag}..${head_sha}"
-            changes_title="Änderungen seit ${latest_tag}"
-          else
-            base_version="kein vorheriger Release"
-            log_range="${head_sha}"
-            changes_title="Änderungen"
-          fi
-
           if ! pr_title="$(gh api \
             -H 'Accept: application/vnd.github+json' \
             "/repos/${REPOSITORY}/commits/${head_sha}/pulls" \
@@ -88,43 +106,41 @@ jobs:
             2>/dev/null)"; then
             pr_title=""
           fi
-
           if [[ -z "${pr_title}" ]]; then
             pr_title="$(git log -1 --format=%s "${head_sha}")"
           fi
-
-          if [[ "${pr_title}" == *NO_RELEASE* ]]; then
-            echo "NO_RELEASE found in PR title. Skipping release."
-            echo "should_release=false" >> "${GITHUB_OUTPUT}"
-            echo "head_sha=${head_sha}" >> "${GITHUB_OUTPUT}"
-            exit 0
-          fi
-
           if [[ -n "${head_tag}" ]]; then
             version="${head_tag#v}"
-          elif [[ -z "${latest_tag}" ]]; then
-            version="1.0.0"
+            base_version="${version}"
           else
-            IFS=. read -r major minor patch <<< "${base_version}"
-            case "${pr_title,,}" in
-              feat*) minor=$((minor + 1)); patch=0 ;;
-              fix*|chore*|doc*|ci*|ref*) patch=$((patch + 1)) ;;
-              *) patch=$((patch + 1)) ;;
-            esac
-
-            version="${major}.${minor}.${patch}"
+            base_version="${latest_tag#v}"
+            if [[ -z "${base_version}" ]]; then
+              version="1.0.0"
+            else
+              IFS=. read -r major minor patch <<< "${base_version}"
+              case "${pr_title,,}" in
+                feat*) minor=$((minor + 1)); patch=0 ;;
+                fix*|chore*|doc*|ci*|ref*) patch=$((patch + 1)) ;;
+                *) patch=$((patch + 1)) ;;
+              esac
+              version="${major}.${minor}.${patch}"
+            fi
           fi
           tag="v${version}"
+
+          if [[ -n "${latest_tag}" ]]; then
+            log_range="${latest_tag}..${head_sha}"
+            changes_title="Änderungen seit ${latest_tag}"
+          else
+            log_range="${head_sha}"
+            changes_title="Änderungen"
+          fi
 
           if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
             tag_sha="$(git rev-list -n 1 "${tag}")"
             if [[ "${tag_sha}" != "${head_sha}" ]]; then
               echo "Tag ${tag} exists on ${tag_sha}, not ${head_sha}."
-              echo "should_release=false" >> "${GITHUB_OUTPUT}"
-              echo "version=${version}" >> "${GITHUB_OUTPUT}"
-              echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
-              echo "head_sha=${head_sha}" >> "${GITHUB_OUTPUT}"
-              exit 0
+              exit 1
             fi
           fi
 
@@ -132,7 +148,7 @@ jobs:
           {
             echo "## ${changes_title}"
             echo
-            echo "Basisversion: ${base_version}"
+            echo "Basisversion: ${base_version:-kein vorheriger Release}"
             echo "PR-Titel: ${pr_title}"
             echo
             echo "## Commits"
@@ -140,7 +156,6 @@ jobs:
           } > "${notes_file}"
 
           {
-            echo "should_release=true"
             echo "version=${version}"
             echo "tag=${tag}"
             echo "head_sha=${head_sha}"
@@ -152,7 +167,6 @@ jobs:
   build-mira-game-client:
     name: Build mira-game-client (${{ matrix.label }})
     needs: prepare
-    if: needs.prepare.outputs.should_release == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -170,6 +184,25 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ needs.prepare.outputs.head_sha }}
+
+      - name: Create mira-game-api access token
+        id: mira-game-api-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ secrets.MIRA_CI_APP_CLIENT_ID }}
+          private-key: ${{ secrets.MIRA_CI_APP_PRIVATE_KEY }}
+          owner: tilt-us
+          repositories: mira-game-api
+          permission-contents: read
+
+      - name: Configure Git access to mira-game-api
+        shell: bash
+        env:
+          MIRA_GAME_API_TOKEN: ${{ steps.mira-game-api-token.outputs.token }}
+        run: |
+          git config --global \
+            url."https://x-access-token:${MIRA_GAME_API_TOKEN}@github.com/".insteadOf \
+            "ssh://git@github.com/"
 
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
@@ -201,7 +234,7 @@ jobs:
 
       - name: Build
         env:
-          MIRA_ENV: prod
+          MIRA_ENV: ${{ needs.prepare.outputs.environment }}
         run: cargo build --release --locked -p mira-game-client
 
       - name: Stage artifact
@@ -229,7 +262,6 @@ jobs:
   build-mira-client:
     name: Build mira-client (${{ matrix.label }})
     needs: prepare
-    if: needs.prepare.outputs.should_release == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -411,7 +443,7 @@ jobs:
       - name: Build
         env:
           BUNDLES: ${{ matrix.bundles }}
-          MIRA_ENV: prod
+          MIRA_ENV: ${{ needs.prepare.outputs.environment }}
           TAURI_BUNDLER_NEW_APPIMAGE_FORMAT: ${{ runner.os == 'Linux' && 'true' || 'false' }}
           NO_STRIP: ${{ runner.os == 'Linux' && '1' || '' }}
         run: npm run tauri -- build --bundles "${BUNDLES}" --ci
@@ -455,7 +487,6 @@ jobs:
   build-mira-installer:
     name: Build mira-installer (${{ matrix.label }})
     needs: prepare
-    if: needs.prepare.outputs.should_release == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -634,7 +665,7 @@ jobs:
       - name: Build
         env:
           BUNDLES: ${{ matrix.bundles }}
-          MIRA_ENV: prod
+          MIRA_ENV: ${{ needs.prepare.outputs.environment }}
           TAURI_BUNDLER_NEW_APPIMAGE_FORMAT: ${{ runner.os == 'Linux' && 'true' || 'false' }}
           NO_STRIP: ${{ runner.os == 'Linux' && '1' || '' }}
         run: |
@@ -685,14 +716,14 @@ jobs:
           path: apps/mira-installer/dist/*
           if-no-files-found: error
 
-  publish:
+  publish-github-release:
     name: Publish GitHub release
     needs:
       - prepare
       - build-mira-game-client
       - build-mira-client
       - build-mira-installer
-    if: needs.prepare.outputs.should_release == 'true'
+    if: needs.prepare.outputs.is_production == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -795,14 +826,30 @@ jobs:
       - build-mira-game-client
       - build-mira-client
       - build-mira-installer
-    if: needs.prepare.outputs.should_release == 'true'
-    runs-on: ubuntu-latest
+    runs-on: mira-clients-publisher
+    environment: ${{ needs.prepare.outputs.github_environment }}
 
     steps:
       - name: Checkout content source
         uses: actions/checkout@v4
         with:
           ref: ${{ needs.prepare.outputs.head_sha }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Setup Python for AWS CLI
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install AWS CLI
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check --no-cache-dir awscli
+          aws --version
 
       - name: Download release artifacts
         uses: actions/download-artifact@v4
@@ -813,11 +860,21 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p garage-content
-          zip -r garage-content/assets.zip assets
+          python - <<'PY'
+          from pathlib import Path
+          from zipfile import ZIP_DEFLATED, ZipFile
+
+          source = Path("assets")
+          destination = Path("garage-content/assets.zip")
+          with ZipFile(destination, "w", compression=ZIP_DEFLATED, allowZip64=True) as archive:
+              for path in source.rglob("*"):
+                  if path.is_file():
+                      archive.write(path, path.as_posix())
+          PY
 
       - name: Prepare current download manifests
         env:
-          MIRA_ENV: prod
+          MIRA_ENV: ${{ needs.prepare.outputs.environment }}
           VERSION: ${{ needs.prepare.outputs.version }}
           TAG: ${{ needs.prepare.outputs.tag }}
           HEAD_SHA: ${{ needs.prepare.outputs.head_sha }}
