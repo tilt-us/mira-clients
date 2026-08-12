@@ -337,8 +337,10 @@ jobs:
         if: runner.os == 'Linux'
         uses: actions/cache@v4
         with:
-          path: ~/.cache/mira-appimage/runtime-x86_64
-          key: appimage-type2-runtime-x86_64-20251108
+          path: |
+            ~/.cache/mira-appimage/runtime-x86_64
+            ~/.cache/tauri/AppRun-x86_64
+          key: appimage-tools-x86_64-apprun-old-runtime-20251108
 
       - name: Prepare AppImage runtime
         if: runner.os == 'Linux'
@@ -573,8 +575,10 @@ jobs:
         if: runner.os == 'Linux'
         uses: actions/cache@v4
         with:
-          path: ~/.cache/mira-appimage/runtime-x86_64
-          key: appimage-type2-runtime-x86_64-20251108
+          path: |
+            ~/.cache/mira-appimage/runtime-x86_64
+            ~/.cache/tauri/AppRun-x86_64
+          key: appimage-tools-x86_64-apprun-old-runtime-20251108
 
       - name: Prepare AppImage runtime
         if: runner.os == 'Linux'
