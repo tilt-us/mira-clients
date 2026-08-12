@@ -28,9 +28,19 @@ pub fn run() {
             game::stop_game_client
         ])
         .setup(|app| {
-            let ui_assets = content::ui_asset_root()?;
-            app.asset_protocol_scope()
-                .allow_directory(ui_assets, true)?;
+            match content::ui_asset_root() {
+                Ok(ui_assets) => {
+                    if let Err(error) = app.asset_protocol_scope().allow_directory(ui_assets, true)
+                    {
+                        eprintln!("[mira-client] Could not scope external UI assets: {error}");
+                    }
+                }
+                Err(error) => {
+                    // Do not turn a missing external content tree into a Tauri
+                    // setup panic. The frontend displays the repair guidance.
+                    eprintln!("[mira-client] {error}");
+                }
+            }
             content::start_game_content_sync(app.handle().clone());
             Ok(())
         })
