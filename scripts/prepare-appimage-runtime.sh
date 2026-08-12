@@ -3,6 +3,8 @@ set -euo pipefail
 
 readonly app_run_url="https://github.com/tauri-apps/binary-releases/releases/download/apprun-old/AppRun-x86_64"
 readonly app_run_sha256="f30140a43a0a59e46db21bdefdf749b9e9f2c6946e92afabbacf98b8ae73fb4f"
+readonly linuxdeploy_url="https://github.com/tauri-apps/binary-releases/releases/download/linuxdeploy/linuxdeploy-x86_64.AppImage"
+readonly linuxdeploy_sha256="e762bea85c8eb0d4b3508d46e5c1f037f717d0f9303ae3b4aafc8b04991fa1ef"
 readonly runtime_url="https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64"
 readonly runtime_sha256="2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d"
 
@@ -29,11 +31,13 @@ download_verified() {
 
 tauri_tools_path="${HOME}/.cache/tauri"
 app_run_path="${tauri_tools_path}/AppRun-x86_64"
+linuxdeploy_path="${tauri_tools_path}/linuxdeploy-x86_64.AppImage"
 runtime_path="${MIRA_APPIMAGE_RUNTIME_PATH:-${HOME}/.cache/mira-appimage/runtime-x86_64}"
 
-# tauri-bundler 2.9 downloads this before it invokes linuxdeploy. Supplying it
-# here prevents a transient GitHub disconnect from failing both Linux bundles.
+# tauri-bundler 2.9 downloads these before it invokes linuxdeploy. Supplying
+# them here prevents transient GitHub disconnects from failing Linux bundles.
 download_verified "${app_run_url}" "${app_run_sha256}" "${app_run_path}"
+download_verified "${linuxdeploy_url}" "${linuxdeploy_sha256}" "${linuxdeploy_path}"
 download_verified "${runtime_url}" "${runtime_sha256}" "${runtime_path}"
 
 : "${GITHUB_ENV:?GITHUB_ENV must be set to export LDAI_RUNTIME_FILE}"
