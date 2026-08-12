@@ -340,7 +340,8 @@ jobs:
           path: |
             ~/.cache/mira-appimage/runtime-x86_64
             ~/.cache/tauri/AppRun-x86_64
-          key: appimage-tools-x86_64-apprun-old-runtime-20251108
+            ~/.cache/tauri/linuxdeploy-x86_64.AppImage
+          key: appimage-tools-x86_64-apprun-old-linuxdeploy-runtime-20251108
 
       - name: Prepare AppImage runtime
         if: runner.os == 'Linux'
@@ -578,7 +579,8 @@ jobs:
           path: |
             ~/.cache/mira-appimage/runtime-x86_64
             ~/.cache/tauri/AppRun-x86_64
-          key: appimage-tools-x86_64-apprun-old-runtime-20251108
+            ~/.cache/tauri/linuxdeploy-x86_64.AppImage
+          key: appimage-tools-x86_64-apprun-old-linuxdeploy-runtime-20251108
 
       - name: Prepare AppImage runtime
         if: runner.os == 'Linux'
