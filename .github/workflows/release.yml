@@ -333,6 +333,17 @@ jobs:
           workspaces: |
             apps/mira-client/src-tauri -> apps/mira-client/src-tauri/target
 
+      - name: Cache AppImage runtime
+        if: runner.os == 'Linux'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/mira-appimage/runtime-x86_64
+          key: appimage-type2-runtime-x86_64-20251108
+
+      - name: Prepare AppImage runtime
+        if: runner.os == 'Linux'
+        run: bash ../../scripts/prepare-appimage-runtime.sh
+
       - name: Install dependencies
         run: npm ci
 
@@ -557,6 +568,17 @@ jobs:
         with:
           workspaces: |
             apps/mira-installer/src-tauri -> apps/mira-installer/src-tauri/target
+
+      - name: Cache AppImage runtime
+        if: runner.os == 'Linux'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/mira-appimage/runtime-x86_64
+          key: appimage-type2-runtime-x86_64-20251108
+
+      - name: Prepare AppImage runtime
+        if: runner.os == 'Linux'
+        run: bash ../../scripts/prepare-appimage-runtime.sh
 
       - name: Install dependencies
         run: npm ci
