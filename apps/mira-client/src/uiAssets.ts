@@ -29,7 +29,8 @@ export function uiAssetUrl(relativePath: string) {
   if (!uiAssetRoot) {
     return "";
   }
-  const path = `${uiAssetRoot.replace(/[\\/]$/, "")}/${normalized}`;
+  const separator = uiAssetRoot.includes("\\") ? "\\" : "/";
+  const path = `${uiAssetRoot.replace(/[\\/]$/, "")}${separator}${normalized.replace(/\//g, separator)}`;
   return isTauri() ? convertFileSrc(path) : `${path}`;
 }
 

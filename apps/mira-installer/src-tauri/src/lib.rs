@@ -1,6 +1,6 @@
 use mira_downloads::{
-    download_artifact, download_client, Artifact, ContentManifest, Environment,
-    LatestManifest, RuntimeManifest,
+    Artifact, ContentManifest, Environment, LatestManifest, RuntimeManifest, download_artifact,
+    download_client,
 };
 use reqwest::blocking::Client;
 use serde::Serialize;
@@ -274,14 +274,26 @@ fn install_game_blocking(
     let game_download = temp_dir.join(game_client_filename(&platform));
     let ui_download = temp_dir.join("ui.zip");
 
+    // This runs on Tauri's blocking runtime, so the interface archive starts
+    // downloading without blocking the installer window and is ready before
+    // the installed launcher starts.
+    download_file(
+        &app,
+        &client,
+        &ui_file,
+        &ui_download,
+        "install-status-download-ui",
+        0.12,
+        0.30,
+    )?;
     download_file(
         &app,
         &client,
         &client_file,
         &client_download,
         "install-status-download-client",
-        0.12,
-        0.45,
+        0.30,
+        0.55,
     )?;
     download_file(
         &app,
@@ -289,17 +301,8 @@ fn install_game_blocking(
         &game_file,
         &game_download,
         "install-status-download-game",
-        0.45,
-        0.66,
-    )?;
-    download_file(
-        &app,
-        &client,
-        &ui_file,
-        &ui_download,
-        "install-status-download-ui",
-        0.66,
-        0.78,
+        0.55,
+        0.76,
     )?;
 
     emit_progress(&app, "install-status-finalize", 0.80);
@@ -334,6 +337,7 @@ fn install_game_blocking(
     make_executable(&game_path)?;
 
     install_ui_archive(&ui_download, &install_root)?;
+    mira_downloads::record_install_root(environment, &install_root)?;
 
     let _ = fs::remove_dir_all(&temp_dir);
 
@@ -713,10 +717,10 @@ fn install_ui_archive(archive_path: &Path, install_root: &Path) -> Result<(), St
 }
 
 fn unzip_archive(archive_path: &Path, destination: &Path) -> Result<(), String> {
-    let file = File::open(archive_path)
-        .map_err(|error| format!("failed to open UI archive: {error}"))?;
-    let mut archive = ZipArchive::new(file)
-        .map_err(|error| format!("failed to read UI archive: {error}"))?;
+    let file =
+        File::open(archive_path).map_err(|error| format!("failed to open UI archive: {error}"))?;
+    let mut archive =
+        ZipArchive::new(file).map_err(|error| format!("failed to read UI archive: {error}"))?;
     for index in 0..archive.len() {
         let mut entry = archive
             .by_index(index)
@@ -801,7 +805,6 @@ fn emit_progress(app: &tauri::AppHandle, label_key: &'static str, progress: f32)
         },
     );
 }
-
 
 #[cfg(test)]
 mod tests {

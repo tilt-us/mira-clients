@@ -12,6 +12,9 @@ use std::{
 pub const SCHEMA_VERSION: u32 = 1;
 pub const CONTENT_SCHEMA_VERSION: u32 = 2;
 pub const DOWNLOADS_BASE_URL: &str = "https://downloads.tilt-us.com";
+pub const INSTALL_ROOT_ENV: &str = "MIRA_INSTALL_ROOT";
+const INSTALL_ROOT_STATE_ENV: &str = "MIRA_INSTALL_ROOT_STATE";
+const INSTALL_ROOT_STATE_PREFIX: &str = "install-root";
 const DOWNLOAD_BUFFER_SIZE: usize = 1024 * 1024;
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
 
@@ -305,6 +308,115 @@ pub fn download_client() -> Result<Client, String> {
         .map_err(|error| format!("Could not create download HTTP client: {error}"))
 }
 
+/// Returns the installation root saved by the Mira Installer for this environment.
+///
+/// Packaged clients do not always run next to mutable content. For example,
+/// Debian packages place the executable in `/usr/bin` while the installer keeps
+/// `assets/ui` in the user-selected installation directory.
+pub fn recorded_install_root(environment: Environment) -> Option<PathBuf> {
+    let state_path = install_root_state_path(environment).ok()?;
+    read_install_root_state(&state_path).ok().flatten()
+}
+
+/// Saves the root containing `assets/ui` and `assets/game` for a deployment environment.
+pub fn record_install_root(
+    environment: Environment,
+    install_root: &Path,
+) -> Result<PathBuf, String> {
+    let install_root = absolute_path(install_root)?;
+    if !install_root.is_dir() {
+        return Err(format!(
+            "Mira installation root does not exist: {}",
+            install_root.display()
+        ));
+    }
+    let state_path = install_root_state_path(environment)?;
+    write_install_root_state(&state_path, &install_root)?;
+    Ok(install_root)
+}
+
+fn install_root_state_path(environment: Environment) -> Result<PathBuf, String> {
+    if let Some(path) = std::env::var_os(INSTALL_ROOT_STATE_ENV) {
+        return Ok(PathBuf::from(path));
+    }
+
+    Ok(mira_data_dir()?
+        .join("Mira Games")
+        .join("Mira Moba")
+        .join(format!(
+            "{INSTALL_ROOT_STATE_PREFIX}-{}",
+            environment.as_str()
+        )))
+}
+
+#[cfg(target_os = "windows")]
+fn mira_data_dir() -> Result<PathBuf, String> {
+    std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("USERPROFILE").map(|home| PathBuf::from(home).join("AppData/Local"))
+        })
+        .ok_or_else(|| {
+            "Could not determine the Windows local application data directory".to_string()
+        })
+}
+
+#[cfg(target_os = "macos")]
+fn mira_data_dir() -> Result<PathBuf, String> {
+    std::env::var_os("HOME")
+        .map(|home| PathBuf::from(home).join("Library/Application Support"))
+        .ok_or_else(|| "Could not determine the macOS application support directory".to_string())
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn mira_data_dir() -> Result<PathBuf, String> {
+    std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")))
+        .ok_or_else(|| "Could not determine the Linux data directory".to_string())
+}
+
+#[cfg(not(any(unix, target_os = "windows")))]
+fn mira_data_dir() -> Result<PathBuf, String> {
+    std::env::current_dir()
+        .map_err(|error| format!("Could not determine the Mira data directory: {error}"))
+}
+
+fn read_install_root_state(path: &Path) -> Result<Option<PathBuf>, String> {
+    let value = match fs::read_to_string(path) {
+        Ok(value) => value,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("Could not read Mira installation state: {error}")),
+    };
+    let root = PathBuf::from(value.trim());
+    if root.as_os_str().is_empty() || !root.is_absolute() || !root.is_dir() {
+        return Ok(None);
+    }
+    Ok(Some(root))
+}
+
+fn write_install_root_state(path: &Path, install_root: &Path) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| "Mira installation state has no parent directory".to_string())?;
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("Could not create Mira installation state directory: {error}"))?;
+    let temporary = path.with_extension(format!("{}.tmp", std::process::id()));
+    fs::write(&temporary, format!("{}\n", install_root.display()))
+        .map_err(|error| format!("Could not write Mira installation state: {error}"))?;
+    replace_file(&temporary, path)
+        .map_err(|error| format!("Could not activate Mira installation state: {error}"))
+}
+
+fn absolute_path(path: &Path) -> Result<PathBuf, String> {
+    if path.is_absolute() {
+        return Ok(path.to_path_buf());
+    }
+    std::env::current_dir()
+        .map(|directory| directory.join(path))
+        .map_err(|error| format!("Could not resolve Mira installation root: {error}"))
+}
+
 pub fn verify_download(
     artifact: &Artifact,
     downloaded: u64,
@@ -413,5 +525,36 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn install_root_state_round_trips_an_existing_absolute_root() {
+        let directory = tempfile::tempdir().unwrap();
+        let state_path = directory.path().join("state/install-root");
+        let install_root = directory.path().join("Mira Moba");
+        fs::create_dir_all(&install_root).unwrap();
+
+        write_install_root_state(&state_path, &install_root).unwrap();
+
+        assert_eq!(
+            read_install_root_state(&state_path).unwrap(),
+            Some(install_root)
+        );
+    }
+
+    #[test]
+    fn install_root_state_ignores_invalid_roots() {
+        let directory = tempfile::tempdir().unwrap();
+        let state_path = directory.path().join("install-root");
+
+        fs::write(&state_path, "relative/path\n").unwrap();
+        assert_eq!(read_install_root_state(&state_path).unwrap(), None);
+
+        fs::write(
+            &state_path,
+            directory.path().join("missing").display().to_string(),
+        )
+        .unwrap();
+        assert_eq!(read_install_root_state(&state_path).unwrap(), None);
     }
 }
