@@ -9,7 +9,10 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(target_os = "linux")]
+use std::process::Command;
 use tauri::{Emitter, Manager};
+#[cfg(not(target_os = "linux"))]
 use tauri_plugin_opener::OpenerExt;
 
 const KEYCLOAK_NATIVE_REDIRECT_URI: &str = "http://127.0.0.1";
@@ -200,7 +203,7 @@ pub(crate) fn start_oauth_window(
 
     // Keep the listener bound before opening the browser. A very fast callback
     // is queued by the operating system until the listener thread begins.
-    if let Err(error) = app.opener().open_url(auth_url.as_str(), None::<&str>) {
+    if let Err(error) = open_system_browser_url(&app, auth_url.as_str()) {
         OAUTH_ATTEMPTS.complete(request.attempt_id);
         return Err(format!(
             "OAuth login could not open in the system browser: {error}"
@@ -233,10 +236,71 @@ pub(crate) fn open_system_browser(
         .trim()
         .parse::<tauri::Url>()
         .map_err(|error| format!("Browser URL is invalid: {error}"))?;
-    app.opener()
-        .open_url(url.as_str(), None::<&str>)
+    open_system_browser_url(&app, url.as_str())
         .map_err(|error| format!("URL could not open in the system browser: {error}"))
 }
+
+fn open_system_browser_url(app: &tauri::AppHandle, url: &str) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    {
+        let _ = app;
+        return open_linux_system_browser(url);
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    app.opener()
+        .open_url(url, None::<&str>)
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(target_os = "linux")]
+fn open_linux_system_browser(url: &str) -> Result<(), String> {
+    linux_system_browser_command(url)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("could not start the Linux system browser: {error}"))
+}
+
+#[cfg(target_os = "linux")]
+fn linux_system_browser_command(url: &str) -> Command {
+    // Tauri's AppImage contains its own xdg-open. The generic opener library
+    // finds that one first and reports a successful spawn even if the bundled
+    // program cannot resolve the host browser. Use the host opener with an
+    // environment that does not point into the mounted AppImage instead.
+    let program = if std::path::Path::new("/usr/bin/xdg-open").is_file() {
+        "/usr/bin/xdg-open"
+    } else {
+        "xdg-open"
+    };
+    let mut command = Command::new(program);
+    command.arg(url);
+    command.env(
+        "PATH",
+        "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    );
+    for variable in APPIMAGE_BROWSER_ENVIRONMENT {
+        command.env_remove(variable);
+    }
+    command
+}
+
+#[cfg(target_os = "linux")]
+const APPIMAGE_BROWSER_ENVIRONMENT: &[&str] = &[
+    "APPDIR",
+    "APPIMAGE",
+    "GDK_PIXBUF_MODULE_FILE",
+    "GIO_EXTRA_MODULES",
+    "GSETTINGS_SCHEMA_DIR",
+    "GST_PLUGIN_PATH",
+    "GST_PLUGIN_SCANNER",
+    "GTK_DATA_PREFIX",
+    "GTK_EXE_PREFIX",
+    "GTK_IM_MODULE_FILE",
+    "GTK_PATH",
+    "GTK_THEME",
+    "LD_LIBRARY_PATH",
+    "XDG_DATA_DIRS",
+];
 
 fn native_redirect_uri(address: SocketAddr) -> Result<String, String> {
     if !address.ip().is_loopback() || address.ip().to_string() != "127.0.0.1" {
@@ -453,6 +517,9 @@ fn encode_url_component(value: &str) -> String {
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "linux")]
+    use std::ffi::OsStr;
+
     #[test]
     fn keycloak_registers_the_authority_only_loopback_uri() {
         assert_eq!(KEYCLOAK_NATIVE_REDIRECT_URI, "http://127.0.0.1");
@@ -544,5 +611,36 @@ mod tests {
 
         assert!(response.contains("window.close();"));
         assert!(response.contains("Returning to Mira..."));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_browser_command_uses_the_host_environment() {
+        let command = linux_system_browser_command("https://dev.tilt-us.com/login");
+
+        assert!(
+            command.get_program() == OsStr::new("/usr/bin/xdg-open")
+                || command.get_program() == OsStr::new("xdg-open")
+        );
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            vec![OsStr::new("https://dev.tilt-us.com/login")]
+        );
+
+        let environment = command.get_envs().collect::<Vec<_>>();
+        assert!(environment.iter().any(|(key, value)| {
+            *key == OsStr::new("PATH")
+                && *value
+                    == Some(OsStr::new(
+                        "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                    ))
+        }));
+        for variable in APPIMAGE_BROWSER_ENVIRONMENT {
+            assert!(
+                environment
+                    .iter()
+                    .any(|(key, value)| { *key == OsStr::new(variable) && value.is_none() })
+            );
+        }
     }
 }
