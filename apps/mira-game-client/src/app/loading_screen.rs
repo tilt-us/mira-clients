@@ -6,13 +6,13 @@ use bevy::ecs::spawn::SpawnIter;
 use bevy::image::{CompressedImageFormats, ImageSampler, ImageType};
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+use lightyear::prelude::*;
 use mira_game_api::game::player::{non_empty_string, public_display_name};
 use mira_game_api::game::team::TeamSpec;
 use mira_game_api::network::{
     ChampionId, DisplayReady, LauncherMatchManifest, LoadingScreenPlayer, LoadingScreenStatus,
     ReliableCommandChannel,
 };
-use lightyear::prelude::*;
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::sync::mpsc::{Receiver, channel};
@@ -138,7 +138,7 @@ impl LoadingScreenImages {
                 let asset_slug = champion
                     .asset_slug()
                     .expect("prototype champions must have asset slugs");
-                let path = format!("wallpapers/{asset_slug}-loading.jpg");
+                let path = format!("ui/wallpapers/{asset_slug}-loading.jpg");
                 (champion, asset_server.load(path))
             })
             .collect();

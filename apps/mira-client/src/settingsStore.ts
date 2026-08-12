@@ -44,6 +44,7 @@ import {
   type UiScale,
   writeStoredSettings,
 } from "./settings";
+import { uiCharacterUrl, uiWallpaperUrl } from "./uiAssets";
 
 const twoKResolutionMinimum = {
   height: 1080,
@@ -390,48 +391,8 @@ type MonitorResolutionSupport = {
   twoK: boolean;
 };
 
-const backgroundChampionWallpapers = getAssetUrlMap(
-  import.meta.glob("../../../assets/wallpapers/*-wallpaper.png", {
-    eager: true,
-    import: "default",
-    query: "?url",
-  }),
-  /\/([^/]+)-wallpaper\.png$/,
-);
-const backgroundChampionCharacters = getAssetUrlMap(
-  import.meta.glob("../../../assets/characters/*.png", {
-    eager: true,
-    import: "default",
-    query: "?url",
-  }),
-  /\/([^/]+)\.png$/,
-);
-
-function getAssetUrlMap(
-  modules: Record<string, unknown>,
-  namePattern: RegExp,
-) {
-  return Object.fromEntries(
-    Object.entries(modules)
-      .map(([path, url]) => {
-        const name = path.match(namePattern)?.[1];
-
-        return typeof name === "string" && typeof url === "string"
-          ? [name, url]
-          : undefined;
-      })
-      .filter((entry): entry is [string, string] => Boolean(entry)),
-  );
-}
-
 function getBackgroundChampionWallpaperUrl(backgroundChampion: BackgroundChampion) {
-  return (
-    backgroundChampionWallpapers[backgroundChampion] ??
-    backgroundChampionCharacters[backgroundChampion] ??
-    backgroundChampionWallpapers[defaultBackgroundChampion] ??
-    backgroundChampionCharacters[defaultBackgroundChampion] ??
-    ""
-  );
+  return uiWallpaperUrl(backgroundChampion) || uiCharacterUrl(defaultBackgroundChampion);
 }
 
 async function detectTauriMonitorResolutionSupport() {

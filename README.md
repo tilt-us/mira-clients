@@ -25,8 +25,8 @@ remain on [GitHub Releases](https://github.com/tilt-us/mira-clients/releases).
 
 ## Download Publishing
 
-The release workflow creates a current content archive from `assets/` and
-uploads it with the installer and runtime artifacts to the `downloads.tilt-us.com`
+The release workflow creates independent UI and game content archives from
+`assets/ui` and `assets/game` and uploads them with the installer and runtime artifacts to the `downloads.tilt-us.com`
 Garage bucket. It uploads artifacts first, manifests second, and `latest.json`
 last. The workflow requires these CI secrets and does not embed them in any
 application:
@@ -37,6 +37,12 @@ application:
 - `GARAGE_REGION`
 - `GARAGE_BUCKET`
 
+Deployment branches are explicit: pushes to `development` publish a `dev`
+build under `dev/`; pushes to `master` publish a `staging` build under
+`staging/`. Production is a manual workflow dispatch from `master` only and
+requires `confirm=PROD`; it publishes at the bucket root and is the only flow
+that creates or updates GitHub Releases.
+
 ## Development Start
 
 Install the desktop client dependencies first:
@@ -46,16 +52,16 @@ cd apps/mira-client
 npm install
 ```
 
-Start the desktop client against local services:
-
-```bash
-npm run local:desktop
-```
-
-Start the desktop client against the dev API:
+Start the desktop client against the official dev API:
 
 ```bash
 npm run dev:desktop
+```
+
+Start it against the official staging API:
+
+```bash
+npm run staging:desktop
 ```
 
 Start the Bevy game client directly in development preview mode with the visible

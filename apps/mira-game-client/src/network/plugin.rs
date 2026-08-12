@@ -1,12 +1,12 @@
 use super::ClientNetworkSettings;
 use bevy::prelude::*;
 use core::time::Duration;
-use mira_game_api::network::{
-    NETCODE_CLIENT_TIMEOUT_SECS, PROTOCOL_ID, SharedNetworkPlugin, fixed_timestep_duration,
-};
 use lightyear::netcode::Key;
 use lightyear::prelude::client::*;
 use lightyear::prelude::*;
+use mira_game_api::network::{
+    NETCODE_CLIENT_TIMEOUT_SECS, PROTOCOL_ID, SharedNetworkPlugin, fixed_timestep_duration,
+};
 
 const NETCODE_TOKEN_EXPIRY_TIMEOUT_MULTIPLIER: i32 = 4;
 const MILLISECONDS_PER_SECOND: f32 = 1_000.0;

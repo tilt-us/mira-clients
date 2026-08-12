@@ -25,5 +25,9 @@ export function getEnvironmentConfig(environment) {
 }
 
 export function getServiceUrl(environmentConfig, service) {
+  if (service === "auth") {
+    return environmentConfig.servicesApiUrl.replace(/\/$/, "");
+  }
+
   return new URL(service, `${environmentConfig.servicesApiUrl}/`).toString().replace(/\/$/, "");
 }

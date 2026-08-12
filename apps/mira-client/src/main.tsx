@@ -1,9 +1,20 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { loadRuntimeConfig } from "./runtimeConfig";
+import { initializeUiAssets } from "./uiAssets";
 
 async function bootstrap() {
   await loadRuntimeConfig();
+  const uiAssetsAvailable = await initializeUiAssets();
+
+  if (!uiAssetsAvailable) {
+    const root = document.getElementById("root");
+    if (root) {
+      root.textContent = "Mira UI assets are missing. Install or repair Mira with the Mira Installer.";
+    }
+    return;
+  }
+
   const { default: App } = await import("./App");
 
   ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(

@@ -5,6 +5,7 @@ use super::{
 use bevy::math::primitives::Sphere;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
+use lightyear::prelude::*;
 use mira_game_api::game::{
     auto_attack::AUTO_ATTACK_PROJECTILE_MIN_TRAVEL_SECONDS, camera::TopDownCamera, map::MapGround,
     player::Player,
@@ -13,7 +14,6 @@ use mira_game_api::network::{
     AutoAttackVisualEvent, NetworkTargetId, PlayerCommand, RangedMinionAutoAttackVisualEvent,
     ReliableCommandChannel,
 };
-use lightyear::prelude::*;
 
 const AUTO_ATTACK_PROJECTILE_RADIUS: f32 = 0.12;
 const AUTO_ATTACK_PROJECTILE_HEIGHT: f32 = 0.8;

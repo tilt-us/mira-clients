@@ -13,6 +13,7 @@ use bevy::ecs::query::QueryFilter;
 use bevy::math::primitives::{Cone, Cylinder, Sphere};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
+use lightyear::prelude::*;
 use mira_game_api::game::{
     camera::TopDownCamera,
     lane_navigation::{LaneNavigationObstacle, resolve_circle_obstacle_collisions},
@@ -23,7 +24,6 @@ use mira_game_api::game::{
 use mira_game_api::network::{
     AbilitySlot, AbilityVisualEvent, AbilityVisualTuning, ChampionId, PlayerCommand,
 };
-use lightyear::prelude::*;
 
 const Q_COOLDOWN_SECONDS: f32 = 6.0;
 const Q_RANGE: f32 = 8.0;

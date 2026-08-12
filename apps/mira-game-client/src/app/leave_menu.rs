@@ -3,8 +3,8 @@ use bevy::app::AppExit;
 use bevy::ecs::hierarchy::ChildSpawnerCommands;
 use bevy::prelude::*;
 use bevy::window::WindowCloseRequested;
-use mira_game_api::network::{ClientLeave, ReliableCommandChannel};
 use lightyear::prelude::*;
+use mira_game_api::network::{ClientLeave, ReliableCommandChannel};
 use std::time::Duration;
 
 const LEAVE_NOTIFICATION_GRACE_PERIOD: Duration = Duration::from_millis(120);

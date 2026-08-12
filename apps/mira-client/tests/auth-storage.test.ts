@@ -23,11 +23,11 @@ describe("OAuth request storage", () => {
       state: null,
     });
 
-    saveOAuthRequest("state-value", "verifier-value", "http://localhost:1420/");
+    saveOAuthRequest("state-value", "verifier-value", "http://127.0.0.1:52743");
 
     expect(readOAuthRequest()).toEqual({
       codeVerifier: "verifier-value",
-      redirectUri: "http://localhost:1420/",
+      redirectUri: "http://127.0.0.1:52743",
       state: "state-value",
     });
 

@@ -100,12 +100,14 @@ test("starts GitHub login with the GitHub identity provider hint", async ({ page
   const authUrl = new URL(page.url());
 
   expect(authUrl.searchParams.get("kc_idp_hint")).toBe("github");
+  expect(authUrl.searchParams.get("client_id")).toBe("mira-bevy");
+  expect(authUrl.searchParams.get("code_challenge_method")).toBe("S256");
   expect(authUrl.searchParams.get("accent")).toBe("f2c45b");
   expect(authUrl.searchParams.get("fontColor")).toBe("black");
   expect(authUrl.searchParams.get("kc_locale")).toBe("de");
   expect(authUrl.searchParams.get("lang")).toBe("german");
   expect(authUrl.searchParams.get("ui_locales")).toBe("de");
-  expect(authUrl.searchParams.get("prompt")).toBe("select_account");
+  expect(authUrl.searchParams.has("prompt")).toBe(false);
 });
 
 test("starts Google login with account selection and Google language hint", async ({ page }) => {
@@ -121,6 +123,8 @@ test("starts Google login with account selection and Google language hint", asyn
   const authUrl = new URL(page.url());
 
   expect(authUrl.searchParams.get("kc_idp_hint")).toBe("google");
+  expect(authUrl.searchParams.get("client_id")).toBe("mira-bevy");
+  expect(authUrl.searchParams.get("code_challenge_method")).toBe("S256");
   expect(authUrl.searchParams.get("accent")).toBe("f2c45b");
   expect(authUrl.searchParams.get("fontColor")).toBe("black");
   expect(authUrl.searchParams.get("kc_locale")).toBe("de");
@@ -143,6 +147,8 @@ test("starts Discord login with the Discord identity provider hint", async ({ pa
   const authUrl = new URL(page.url());
 
   expect(authUrl.searchParams.get("kc_idp_hint")).toBe("discord");
+  expect(authUrl.searchParams.get("client_id")).toBe("mira-bevy");
+  expect(authUrl.searchParams.get("code_challenge_method")).toBe("S256");
   expect(authUrl.searchParams.get("accent")).toBe("f2c45b");
   expect(authUrl.searchParams.get("fontColor")).toBe("black");
   expect(authUrl.searchParams.get("kc_locale")).toBe("de");

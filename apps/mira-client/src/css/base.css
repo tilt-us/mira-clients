@@ -1,7 +1,7 @@
 :root {
   --accent-color: #f2c45b;
   --accent-foreground-color: #101216;
-  --app-background-wallpaper: url("../../../../assets/wallpapers/yuna-wallpaper.png");
+  --app-background-wallpaper: none;
   color: #edf2f7;
   background: #101216;
   font-family:

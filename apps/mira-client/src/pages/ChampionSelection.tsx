@@ -5,14 +5,7 @@ import type {
   MatchPlayerResponse,
 } from "../api/client";
 import { getChampionCatalog } from "../api/client";
-import ignaraImage from "../../../../assets/characters/ignara.png";
-import liraImage from "../../../../assets/characters/lira.png";
-import sophiaImage from "../../../../assets/characters/sophia.png";
-import yunaImage from "../../../../assets/characters/yuna.png";
-import ignaraWallpaper from "../../../../assets/wallpapers/ignara-wallpaper.png";
-import liraWallpaper from "../../../../assets/wallpapers/lira-wallpaper.png";
-import sophiaWallpaper from "../../../../assets/wallpapers/sophia-wallpaper.png";
-import yunaWallpaper from "../../../../assets/wallpapers/yuna-wallpaper.png";
+import { uiCharacterUrl, uiWallpaperUrl } from "../uiAssets";
 import {
   LobbyRoleIcon,
   normalizeLobbyRoleId,
@@ -36,10 +29,10 @@ const pickSeconds = 20;
 const pickGraceMs = 2_000;
 const readySeconds = 20;
 const champions = [
-  { image: liraImage, name: "Lira", wallpaper: liraWallpaper },
-  { image: ignaraImage, name: "Ignara", wallpaper: ignaraWallpaper },
-  { image: yunaImage, name: "Yuna", wallpaper: yunaWallpaper },
-  { image: sophiaImage, name: "Sophia", wallpaper: sophiaWallpaper },
+  { image: uiCharacterUrl("lira"), name: "Lira", wallpaper: uiWallpaperUrl("lira") },
+  { image: uiCharacterUrl("ignara"), name: "Ignara", wallpaper: uiWallpaperUrl("ignara") },
+  { image: uiCharacterUrl("yuna"), name: "Yuna", wallpaper: uiWallpaperUrl("yuna") },
+  { image: uiCharacterUrl("sophia"), name: "Sophia", wallpaper: uiWallpaperUrl("sophia") },
 ];
 const championImagesByName = new Map(
   champions.map((champion) => [champion.name.toLowerCase(), champion.image]),

@@ -15,7 +15,7 @@ The Bevy game client uses `bevy_fontmesh` for overhead 3D text such as player
 names and level digits on health bars. Bevy 0.18 provides UI text and `Text2d`,
 but no built-in 3D mesh text; health-bar labels must be real 3D child entities
 so they stay attached to the bar transform. The font asset is Roboto Bold at
-`assets/fonts/Roboto-Bold.ttf`.
+`assets/ui/fonts/Roboto-Bold.ttf`.
 
 ## Commands
 
@@ -27,9 +27,9 @@ npm run staging:desktop
 npm run prod:desktop
 ```
 
-`npm run dev:desktop` starts the desktop app with the development environment.
-Use `npm run staging:desktop` or `npm run prod:desktop` for deterministic
-release bundles. See [the environment documentation](../../docs/environments.md)
+`npm run dev:desktop` and `npm run staging:desktop` start Tauri against the
+official DEV and STAGING services respectively. `npm run prod:desktop` creates
+the production bundle. See [the environment documentation](../../docs/environments.md)
 for the available values and direct build commands.
 
 ## Backend API
@@ -59,13 +59,20 @@ Import generated endpoints through `src/api/client.ts` so the configured base
 URL is applied in one place.
 
 Email/password login uses Keycloak's password grant with
-`VITE_KEYCLOAK_PASSWORD_CLIENT_ID`. Google, GitHub, and Discord login use
+`VITE_KEYCLOAK_PASSWORD_CLIENT_ID`. Official desktop DEV/STAGING/PROD builds
+use the public native OAuth client `mira-bevy`. Google, GitHub, and Discord login use
 `VITE_KEYCLOAK_CLIENT_ID` with the authorization-code flow, PKCE, and the
 provider hints `kc_idp_hint=google`, `kc_idp_hint=github`, and
-`kc_idp_hint=discord`. The authorization-code client must allow the Tauri dev
-redirect URL, for example `http://localhost:1420/*`. The password client must
+`kc_idp_hint=discord`. The authorization-code client must allow the native
+loopback redirect base `http://127.0.0.1`; each native login uses an
+OS-assigned port and requests `http://127.0.0.1:<port>` without a trailing
+slash. The password client must
 have Direct Access Grants enabled. Identity provider callbacks are derived from
 the selected environment's Keycloak issuer URL.
+
+For `mira-bevy`, configure exactly `http://127.0.0.1` as the Keycloak **Valid
+Redirect URI** for DEV, STAGING, and PROD. Do not use a wildcard, a port list,
+or a Vite development URL for native OAuth.
 
 ## Linux Prerequisites
 

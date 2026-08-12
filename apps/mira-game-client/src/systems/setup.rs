@@ -22,11 +22,14 @@ use super::{
     },
     healthbar,
 };
+use crate::app::settings::ClientAppSettings;
 use bevy::ecs::system::SystemParam;
 use bevy::gltf::GltfAssetLabel;
 use bevy::math::primitives::{Capsule3d, Cuboid, Cylinder};
 use bevy::prelude::*;
 use bevy_transform_interpolation::prelude::{RotationInterpolation, TranslationInterpolation};
+use lightyear::prelude::client::Client;
+use lightyear::prelude::*;
 use mira_game_api::game::{
     camera::{CameraZoom, TopDownCameraBundle},
     lane::{LANE_SPAWN_Z, LANE_TOWER_Z},
@@ -36,10 +39,8 @@ use mira_game_api::game::{
 use mira_game_api::network::{
     ChampionCatalogUpdate, ChampionId, NetworkChampionAbilities, NetworkChampionDefinition,
 };
-use lightyear::prelude::client::Client;
-use lightyear::prelude::*;
 use serde::Deserialize;
-use std::{collections::HashMap, path::PathBuf};
+use std::collections::HashMap;
 
 const DEV_DUMMY_HEALTH: f32 = 120.0;
 const DEV_DUMMY_HIT_RADIUS: f32 = 0.9;
@@ -137,27 +138,29 @@ pub(super) fn spawn_local_player_and_camera(
     mut materials: ResMut<Assets<StandardMaterial>>,
     health_bar_style: Res<super::healthbar::OverheadHealthBarStyle>,
     gameplay_settings: Res<MiraClientGameplaySettings>,
+    app_settings: Res<ClientAppSettings>,
 ) {
-    let champion_data = load_champion_data(LOCAL_CHAMPION_ID).unwrap_or_else(|| {
-        warn!(
-            "Failed to load champion data for id {}. Falling back to defaults.",
-            LOCAL_CHAMPION_ID.0
-        );
-        ChampionDataFile {
-            localized_name: "lira".to_string(),
-            model_name: "model.glb".to_string(),
-            animations: vec![
-                ChampionAnimationEntry {
-                    key: "idle".to_string(),
-                    index: 1,
-                },
-                ChampionAnimationEntry {
-                    key: "walk".to_string(),
-                    index: 5,
-                },
-            ],
-        }
-    });
+    let champion_data = load_champion_data(&app_settings.asset_root, LOCAL_CHAMPION_ID)
+        .unwrap_or_else(|| {
+            warn!(
+                "Failed to load champion data for id {}. Falling back to defaults.",
+                LOCAL_CHAMPION_ID.0
+            );
+            ChampionDataFile {
+                localized_name: "lira".to_string(),
+                model_name: "model.glb".to_string(),
+                animations: vec![
+                    ChampionAnimationEntry {
+                        key: "idle".to_string(),
+                        index: 1,
+                    },
+                    ChampionAnimationEntry {
+                        key: "walk".to_string(),
+                        index: 5,
+                    },
+                ],
+            }
+        });
 
     let q_settings = *q_settings;
     let w_settings = *w_settings;
@@ -552,9 +555,12 @@ pub(super) fn receive_champion_catalog_updates(
 }
 
 /// Loads champion metadata from the local asset directory.
-fn load_champion_data(champion: ChampionId) -> Option<ChampionDataFile> {
-    let file_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../assets/game/champions")
+fn load_champion_data(
+    asset_root: &std::path::Path,
+    champion: ChampionId,
+) -> Option<ChampionDataFile> {
+    let file_path = asset_root
+        .join("game/champions")
         .join(champion.asset_slug()?)
         .join("champion.json");
 

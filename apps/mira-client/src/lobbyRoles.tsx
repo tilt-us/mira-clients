@@ -1,13 +1,15 @@
 import type { CSSProperties } from "react";
-import adcRoleIcon from "../../../assets/icons/roles/adc.png";
-import jungleRoleIcon from "../../../assets/icons/roles/jng.png";
-import midRoleIcon from "../../../assets/icons/roles/mid-line-full.png";
-import midRoleShadowIcon from "../../../assets/icons/roles/mid-shadow-full.png";
-import supportRoleIcon from "../../../assets/icons/roles/sup.png";
-import topRoleIcon from "../../../assets/icons/roles/top.png";
+import { uiAssetUrl } from "./uiAssets";
 import type { LobbyMember, LobbySnapshot } from "./api/client";
 
 export type GameMode = "normal" | "ranked";
+
+const adcRoleIcon = uiAssetUrl("icons/roles/adc.png");
+const jungleRoleIcon = uiAssetUrl("icons/roles/jng.png");
+const midRoleIcon = uiAssetUrl("icons/roles/mid-line-full.png");
+const midRoleShadowIcon = uiAssetUrl("icons/roles/mid-shadow-full.png");
+const supportRoleIcon = uiAssetUrl("icons/roles/sup.png");
+const topRoleIcon = uiAssetUrl("icons/roles/top.png");
 export type LobbyRoleId = "adc" | "jungle" | "mid" | "support" | "top";
 export type ApiLobbyRole = "TOP" | "JUNGLE" | "MID" | "ADC" | "SUPPORT";
 export type LobbyMemberWithRoles = LobbyMember & {
