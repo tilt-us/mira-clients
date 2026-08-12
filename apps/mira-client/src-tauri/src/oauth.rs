@@ -308,9 +308,20 @@ fn spawn_oauth_listener(
 
 fn focus_main_window(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
-        let _ = window.show();
-        let _ = window.unminimize();
-        let _ = window.set_focus();
+        let focus_window = window.clone();
+        if let Err(error) = window.run_on_main_thread(move || {
+            if let Err(error) = focus_window.show() {
+                eprintln!("[mira-client][oauth] couldNotShowMainWindow={error}");
+            }
+            if let Err(error) = focus_window.unminimize() {
+                eprintln!("[mira-client][oauth] couldNotUnminimizeMainWindow={error}");
+            }
+            if let Err(error) = focus_window.set_focus() {
+                eprintln!("[mira-client][oauth] couldNotFocusMainWindow={error}");
+            }
+        }) {
+            eprintln!("[mira-client][oauth] couldNotScheduleMainWindowFocus={error}");
+        }
     }
 }
 
@@ -407,7 +418,7 @@ fn write_callback_response(stream: &mut TcpStream, is_error: bool) -> std::io::R
     let body = if is_error {
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Mira Login</title></head><body><h1>Mira</h1><p>Login was not completed. You can return to Mira.</p></body></html>"
     } else {
-        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Mira Login</title></head><body><h1>Mira</h1><p>Login successful. You can return to Mira.</p><script>window.close()</script></body></html>"
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Mira Login</title></head><body><h1>Mira</h1><p>Login successful. Returning to Mira...</p><script>window.close();</script></body></html>"
     };
     write_response(stream, "200 OK", "text/html; charset=utf-8", body)
 }
@@ -510,5 +521,28 @@ mod tests {
             ))
         );
         assert!(!redirect_uri.ends_with('/'));
+    }
+
+    #[test]
+    fn successful_callback_closes_the_browser_tab() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let address = listener.local_addr().unwrap();
+        let writer = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0_u8; 1024];
+            let _ = stream.read(&mut request);
+            write_callback_response(&mut stream, false).unwrap();
+        });
+
+        let mut response = String::new();
+        let mut stream = TcpStream::connect(address).unwrap();
+        stream
+            .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .unwrap();
+        stream.read_to_string(&mut response).unwrap();
+        writer.join().unwrap();
+
+        assert!(response.contains("window.close();"));
+        assert!(response.contains("Returning to Mira..."));
     }
 }
