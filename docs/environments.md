@@ -21,10 +21,14 @@ back to production:
 | `staging` | `https://downloads.tilt-us.com/staging/latest.json` |
 | `prod` | `https://downloads.tilt-us.com/latest.json` |
 
-The installer reads the runtime and content manifests, then installs the
-desktop client, game executable, and `assets/ui` at the installation root. The
-desktop client reads the same content manifest and atomically installs or
-updates `assets/game`; it blocks game launch until that directory is current.
+The installer reads the runtime and content manifests, downloads `assets/ui`
+before the desktop client and game executable, then records the selected
+installation root in user application data. A packaged client uses that
+environment-specific location to resolve `assets/ui` and `assets/game` even
+when its executable is installed elsewhere, such as `/usr/bin` by a Linux
+`.deb`. The desktop client reads the same content manifest and atomically
+installs or updates `assets/game`; it blocks game launch until that directory
+is current.
 
 Local debug builds default to `MIRA_ENV=dev`. Release builds require an explicit
 valid value and fail for a missing or invalid `MIRA_ENV`.
