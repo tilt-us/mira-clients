@@ -327,8 +327,11 @@ fn install_game_archive(
 }
 
 pub(crate) fn install_root() -> Result<PathBuf, String> {
-    if let Some(root) = std::env::var_os("MIRA_INSTALL_ROOT") {
+    if let Some(root) = std::env::var_os(mira_downloads::INSTALL_ROOT_ENV) {
         return Ok(PathBuf::from(root));
+    }
+    if let Some(root) = mira_downloads::recorded_install_root(config::build_environment()?) {
+        return Ok(root);
     }
     std::env::current_exe()
         .map_err(|error| format!("Could not resolve client executable: {error}"))?
@@ -344,9 +347,14 @@ pub(crate) fn has_required_game_content(game_root: &Path) -> bool {
 }
 
 pub(crate) fn ui_asset_root() -> Result<PathBuf, String> {
+    #[cfg(debug_assertions)]
+    if std::env::var_os(mira_downloads::INSTALL_ROOT_ENV).is_none() {
+        return repository_ui_asset_root();
+    }
+
     let installed = install_root()?.join("assets").join("ui");
     if has_required_ui_content(&installed) {
-        return canonical_ui_asset_root(installed);
+        return Ok(installed);
     }
 
     repository_ui_asset_root()
@@ -372,6 +380,7 @@ fn repository_ui_asset_root() -> Result<PathBuf, String> {
     )
 }
 
+#[cfg(debug_assertions)]
 fn canonical_ui_asset_root(path: PathBuf) -> Result<PathBuf, String> {
     path.canonicalize().map_err(|error| {
         format!(
