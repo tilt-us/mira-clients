@@ -73,8 +73,8 @@ with two local clients:
 
 ```bash
 just dev-server
-just dev-client 5000 6000 1001 lira light window
-just dev-client 5000 6000 1002 ignara dark window
+just dev-client 5000 1001 lira light window
+just dev-client 5000 1002 ignara dark window
 ```
 
 ## Offline Preview

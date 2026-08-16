@@ -27,22 +27,15 @@ import {
 } from "lucide-react";
 import {
   abortRankedSearch,
-  abortSearch,
   accept,
   bootstrap as liveBootstrap,
-  cancelChampionPhase,
-  cancelChampionPhaseDuplicate,
   clearChampionHover,
-  clearChampionHoverDuplicate,
   client,
   createRankedLobby,
   deleteChatRoom,
-  decide,
   decline,
-  get as getMatch,
   getUserSettingsSummary,
   hoverChampion,
-  hoverChampionDuplicate,
   invite,
   invitations as listLobbyInvitations,
   listRooms as listChatRooms,
@@ -51,15 +44,11 @@ import {
   leaveLobby,
   liveSendRequest,
   markChampionsReady,
-  markChampionsReadyDuplicate,
   notifyChampionSelectionLeft,
   online as listOnlineUsers,
   searchRanked,
   search as searchUsers,
   selectChampion,
-  selectChampionDuplicate,
-  startSearch,
-  temporaryMatches,
   transferHost,
   usersByPublicIds,
   getLobbyRoles,
@@ -79,10 +68,13 @@ import {
   API_BASE_URL,
   CHAT_API_BASE_URL,
   LIVE_API_BASE_URL,
-  MATCHMAKING_API_BASE_URL,
 } from "../api/config";
 import { getValidAccessToken } from "../auth/keycloak";
 import ChampionSelection from "./ChampionSelection";
+import {
+  getWarmupDelayMs,
+  scheduleWarmupPick,
+} from "./championSelectionLifecycle";
 import ChatDock from "../components/ChatDock";
 import CloseDialog from "../components/CloseDialog";
 import ProfileChampionsTab from "../components/ProfileChampionsTab";
@@ -118,16 +110,16 @@ import {
 } from "../utils/profile";
 import {
   clearStoredGameSession,
+  canReconnectGameClient,
   createGameMatchManifest,
+  didGameClientExit,
   getGameClientChampionId,
   getMatchChampionForPlayer,
-  getMatchControlBaseUrl,
-  getMatchHost,
-  getMatchPort,
   getMatchTeamForPlayer,
   readStoredGameSession,
+  requireMatchGameplayEndpoint,
   sendChampionSelectionLeaveKeepalive,
-  sendCancelChampionPhaseKeepalive,
+  waitForMatchGameplayEndpoint,
   writeStoredGameSession,
   type GameClientStatus,
   type GameLaunchParameters,
@@ -175,7 +167,6 @@ import {
   isActivePresenceStatus,
   isFinishedMatchStatus,
   isInviteablePresence,
-  isMatchForLobby,
   isMatchGameStarted,
   isMatchReady,
   isWarmupMatch,
@@ -183,7 +174,6 @@ import {
   isWarmupActive,
   mapFriendToInviteCandidate,
   mapFriendUserToProfile,
-  mapLobbyToMatchPlayers,
   mapOnlineUserToInviteCandidate,
   mapUserStatusToPresence,
   mapUserToInviteCandidate,
@@ -361,6 +351,8 @@ function Client({
   const [pendingMatch, setPendingMatch] = useState<ApiMatchResponse>();
   const [championSelectionMatch, setChampionSelectionMatch] =
     useState<ApiMatchResponse>();
+  const [championSelectionWarmupError, setChampionSelectionWarmupError] =
+    useState<string>();
   const [gameLaunchParameters, setGameLaunchParameters] =
     useState<GameLaunchParameters>();
   const [gameClientRunning, setGameClientRunning] = useState(false);
@@ -380,8 +372,10 @@ function Client({
   const [forceOnlinePublicIds, setForceOnlinePublicIds] = useState<number[]>([]);
   const activeLobbyRef = useRef<LobbySnapshot | undefined>(undefined);
   const championSelectionMatchRef = useRef<ApiMatchResponse | undefined>(undefined);
+  const warmupTransitionedMatchIdsRef = useRef<Set<string>>(new Set());
   const gameInProgressRef = useRef(false);
   const gameLaunchParametersRef = useRef<GameLaunchParameters | undefined>(undefined);
+  const observedGameClientRunningRef = useRef(false);
   const [presenceStatus, setPresenceStatus] = useState<PresenceStatus>("online");
   const lastActivityRef = useRef(Date.now());
   const hiddenSinceRef = useRef<number | undefined>(undefined);
@@ -1260,7 +1254,7 @@ function Client({
     async function refreshLobbyRoles() {
       const result = await getLobbyRoles({
         baseUrl: LIVE_API_BASE_URL,
-        fallbackBaseUrls: [API_BASE_URL, MATCHMAKING_API_BASE_URL],
+        fallbackBaseUrls: [API_BASE_URL],
         path: { lobbyId },
       });
 
@@ -1397,6 +1391,27 @@ function Client({
     setChampionSelectionMatch(match);
   }
 
+  function enterChampionSelection(matchId: string) {
+    const currentMatch = championSelectionMatchRef.current;
+
+    if (
+      warmupTransitionedMatchIdsRef.current.has(matchId) ||
+      !currentMatch ||
+      currentMatch.matchId !== matchId ||
+      !isWarmupMatch(currentMatch)
+    ) {
+      return;
+    }
+
+    warmupTransitionedMatchIdsRef.current.add(matchId);
+    setCurrentChampionSelectionMatch({
+      ...currentMatch,
+      phase: "PICK",
+      phaseEndsAt: undefined,
+      serverNow: undefined,
+    });
+  }
+
   useEffect(() => {
     gameInProgressRef.current = gameInProgress;
   }, [gameInProgress]);
@@ -1416,48 +1431,12 @@ function Client({
       return;
     }
 
-    const session = storedSession;
-    let active = true;
-
-    async function restoreStoredGameSession() {
-      const result = await getMatch({
-        baseUrl: MATCHMAKING_API_BASE_URL,
-        path: { matchId: session.parameters.matchId },
-      });
-
-      if (!active) {
-        return;
-      }
-
-      if (
-        result.response?.status === 404 ||
-        result.response?.status === 410 ||
-        !result.data ||
-        isFinishedMatchStatus(result.data.status)
-      ) {
-        clearStoredGameSession();
-        setGameLaunchParameters(undefined);
-        setGameInProgress(false);
-        setGameClientRunning(false);
-        setGameClientClosedByClient(false);
-        setPresenceStatus("online");
-        void publishPresence("ONLINE");
-        return;
-      }
-
-      setGameLaunchParameters(session.parameters);
-      setGameInProgress(true);
-      setGameClientRunning(false);
-      setGameClientClosedByClient(Boolean(session.closedByClient));
-      setPresenceStatus("ingame");
-      publishActivePresence("IN_GAME");
-    }
-
-    void restoreStoredGameSession();
-
-    return () => {
-      active = false;
-    };
+    setGameLaunchParameters(storedSession.parameters);
+    setGameInProgress(true);
+    setGameClientRunning(false);
+    setGameClientClosedByClient(Boolean(storedSession.closedByClient));
+    setPresenceStatus("ingame");
+    publishActivePresence("IN_GAME");
   }, [profilePublicId]);
 
   useEffect(() => {
@@ -1472,6 +1451,19 @@ function Client({
         const status = await invoke<GameClientStatus>("game_client_status");
 
         if (active) {
+          if (didGameClientExit(observedGameClientRunningRef.current, status.running)) {
+            observedGameClientRunningRef.current = false;
+            finishGameSession();
+            notify({
+              type: "error",
+              message: t("client-game-session-ended"),
+            });
+            return;
+          }
+
+          if (status.running) {
+            observedGameClientRunningRef.current = true;
+          }
           setGameClientRunning(status.running);
         }
       } catch (caughtError) {
@@ -1493,53 +1485,7 @@ function Client({
       active = false;
       window.clearInterval(intervalId);
     };
-  }, [gameInProgress]);
-
-  useEffect(() => {
-    const matchId = gameLaunchParameters?.matchId;
-
-    if (!gameInProgress || !matchId) {
-      return;
-    }
-
-    const activeMatchId = matchId;
-    let active = true;
-
-    async function refreshGameMatchStatus() {
-      const result = await getMatch({
-        baseUrl: MATCHMAKING_API_BASE_URL,
-        path: { matchId: activeMatchId },
-      });
-
-      if (!active) {
-        return;
-      }
-
-      if (
-        result.response?.status === 404 ||
-        result.response?.status === 410 ||
-        !result.data
-      ) {
-        finishGameSession();
-        return;
-      }
-
-      if (isFinishedMatchStatus(result.data.status)) {
-        applyMatch(normalizeMatchResponse(result.data));
-      }
-    }
-
-    void refreshGameMatchStatus();
-
-    const intervalId = window.setInterval(() => {
-      void refreshGameMatchStatus();
-    }, 3_000);
-
-    return () => {
-      active = false;
-      window.clearInterval(intervalId);
-    };
-  }, [gameInProgress, gameLaunchParameters?.matchId]);
+  }, [gameInProgress, notify, t]);
 
   useEffect(() => {
     if (!activeLobby) {
@@ -1632,27 +1578,22 @@ function Client({
       return;
     }
 
-    const phaseEndsAt = parseApiTimestamp(warmupMatch.phaseEndsAt);
-
-    if (phaseEndsAt === undefined) {
+    if (getWarmupDelayMs(warmupMatch) === undefined) {
+      const error = "Die Warmup-Frist des Matches ist ungueltig.";
+      setChampionSelectionWarmupError(error);
+      setLobbyError(error);
+      enterChampionSelection(warmupMatch.matchId);
       return;
     }
 
-    const timeoutId = window.setTimeout(() => {
-      void getMatch({
-        baseUrl: MATCHMAKING_API_BASE_URL,
-        path: { matchId: warmupMatch.matchId as string },
-      }).then((result) => {
-        if (!result.error) {
-          applyMatch(result.data);
-        }
-      });
-    }, Math.max(0, phaseEndsAt - Date.now()) + 100);
-
-    return () => {
-      window.clearTimeout(timeoutId);
-    };
-  }, [championSelectionMatch?.matchId, championSelectionMatch?.phaseEndsAt, championSelectionMatch?.status]);
+    setChampionSelectionWarmupError(undefined);
+    return scheduleWarmupPick(warmupMatch, enterChampionSelection);
+  }, [
+    championSelectionMatch?.matchId,
+    championSelectionMatch?.phaseEndsAt,
+    championSelectionMatch?.serverNow,
+    championSelectionMatch?.status,
+  ]);
 
   useEffect(() => {
     const serverNow = parseApiTimestamp(pendingMatch?.serverNow);
@@ -1663,90 +1604,6 @@ function Client({
 
     setMatchFoundServerClockOffsetMs(serverNow - Date.now());
   }, [pendingMatch?.matchId, pendingMatch?.serverNow]);
-
-  useEffect(() => {
-    if (championSelectionMatch || (!lobbyIsSearching && !pendingMatch?.matchId)) {
-      return;
-    }
-
-    let active = true;
-
-    async function refreshMatch() {
-      if (pendingMatch?.matchId) {
-        const result = await getMatch({
-          baseUrl: MATCHMAKING_API_BASE_URL,
-          path: { matchId: pendingMatch.matchId },
-        });
-
-        if (active && !result.error) {
-          applyMatch(result.data);
-        }
-
-        return;
-      }
-
-      const result = await temporaryMatches({
-        baseUrl: MATCHMAKING_API_BASE_URL,
-      });
-
-      if (!active || result.error) {
-        return;
-      }
-
-      const match = result.data?.find((temporaryMatch) => {
-        return (
-          temporaryMatch.status !== "CANCELLED" &&
-          isMatchForLobby(temporaryMatch, activeLobby?.id)
-        );
-      });
-
-      applyMatch(match);
-    }
-
-    void refreshMatch();
-
-    const intervalId = window.setInterval(refreshMatch, 1_500);
-
-    return () => {
-      active = false;
-      window.clearInterval(intervalId);
-    };
-  }, [
-    activeLobby?.id,
-    championSelectionMatch,
-    lobbyIsSearching,
-    pendingMatch?.matchId,
-  ]);
-
-  useEffect(() => {
-    if (!championSelectionMatch?.matchId) {
-      return;
-    }
-
-    let active = true;
-
-    async function refreshChampionSelectionMatch() {
-      if (!championSelectionMatch?.matchId) {
-        return;
-      }
-
-      const result = await getMatch({
-        baseUrl: MATCHMAKING_API_BASE_URL,
-        path: { matchId: championSelectionMatch.matchId },
-      });
-
-      if (active && !result.error && result.data) {
-        applyMatch(result.data);
-      }
-    }
-
-    const intervalId = window.setInterval(refreshChampionSelectionMatch, 1_000);
-
-    return () => {
-      active = false;
-      window.clearInterval(intervalId);
-    };
-  }, [championSelectionMatch?.matchId]);
 
   useEffect(() => {
     if (
@@ -1762,21 +1619,11 @@ function Client({
     setChampionsReadyMarkedMatchId(matchId);
 
     void markChampionsReady({
-      baseUrl: MATCHMAKING_API_BASE_URL,
+      baseUrl: LIVE_API_BASE_URL,
       path: { matchId },
-    }).then(async (result) => {
+    }).then((result) => {
       if (!result.error && result.data) {
         setCurrentChampionSelectionMatch(hydrateMatch(normalizeMatchResponse(result.data)));
-        return;
-      }
-
-      const fallbackResult = await markChampionsReadyDuplicate({
-        baseUrl: MATCHMAKING_API_BASE_URL,
-        path: { matchId },
-      });
-
-      if (!fallbackResult.error && fallbackResult.data) {
-        setCurrentChampionSelectionMatch(hydrateMatch(fallbackResult.data));
       }
     });
   }, [championSelectionMatch, championsReadyMarkedMatchId]);
@@ -1862,7 +1709,6 @@ function Client({
     for (const baseUrl of [
       LIVE_API_BASE_URL,
       API_BASE_URL,
-      MATCHMAKING_API_BASE_URL,
     ]) {
       const result = await listLobbyInvitations({
         baseUrl,
@@ -1915,10 +1761,10 @@ function Client({
     return enrichMatchPlayers(
       {
         ...match,
-        gameServer:
-          match.gameServer ??
-          championSelectionMatchRef.current?.gameServer ??
-          pendingMatch?.gameServer,
+        gameServerEndpoint:
+          match.gameServerEndpoint ??
+          championSelectionMatchRef.current?.gameServerEndpoint ??
+          pendingMatch?.gameServerEndpoint,
       },
       knownPlayers,
     );
@@ -1930,33 +1776,11 @@ function Client({
     }
 
     requeueingLobbyIdsRef.current.add(lobby.id);
-    const lobbyWithCachedRoles =
-      lobby.id === activeLobbyRef.current?.id
-        ? getActiveLobbyWithCachedRoles() ?? lobby
-        : lobby;
-
     try {
       await searchRanked({
         baseUrl: LIVE_API_BASE_URL,
         body: { lobbyId: lobby.id },
       });
-
-      const result = await startSearch({
-        baseUrl: MATCHMAKING_API_BASE_URL,
-        body: {
-          lobbyId: lobby.id,
-          mode: "RANKED",
-          players: mapLobbyToMatchPlayers(
-            lobbyWithCachedRoles,
-            currentMatchPlayerProfile,
-            publicUsersByPublicId,
-          ),
-        },
-      });
-
-      if (!result.error) {
-        applyMatch(result.data?.match, { keepSearchingOnCancel: true });
-      }
     } finally {
       requeueingLobbyIdsRef.current.delete(lobby.id);
     }
@@ -2042,6 +1866,14 @@ function Client({
       currentChampionSelectionMatch &&
       currentChampionSelectionMatch.matchId === hydratedMatch.matchId
     ) {
+      if (
+        hydratedMatch.matchId &&
+        warmupTransitionedMatchIdsRef.current.has(hydratedMatch.matchId) &&
+        isWarmupMatch(hydratedMatch)
+      ) {
+        return;
+      }
+
       if (
         isWarmupMatch(currentChampionSelectionMatch) &&
         isWarmupMatch(hydratedMatch) &&
@@ -2713,28 +2545,10 @@ function Client({
         (typeof storedSession.playerPublicId !== "number" ||
           storedSession.playerPublicId === profilePublicId)
       ) {
-        const matchStatus = await getMatch({
-          baseUrl: MATCHMAKING_API_BASE_URL,
-          path: { matchId: storedSession.parameters.matchId },
-        });
-
-        if (!active) {
-          return;
-        }
-
-        if (
-          matchStatus.response?.status === 404 ||
-          matchStatus.response?.status === 410 ||
-          !matchStatus.data ||
-          isFinishedMatchStatus(matchStatus.data.status)
-        ) {
-          clearStoredGameSession();
-        } else {
-          presenceInitializedRef.current = true;
-          setPresenceStatus("ingame");
-          publishActivePresence("IN_GAME");
-          return;
-        }
+        presenceInitializedRef.current = true;
+        setPresenceStatus("ingame");
+        publishActivePresence("IN_GAME");
+        return;
       }
 
       if (isActivePresenceStatus(currentStatus.data?.status)) {
@@ -3252,19 +3066,11 @@ function Client({
 
     await deleteChampionSelectionChatRooms(match);
 
-    const liveLeaveResult = await notifyChampionSelectionLeft({
+    const leaveResult = await notifyChampionSelectionLeft({
       baseUrl: LIVE_API_BASE_URL,
       body: { status },
       path: { matchId },
     }).catch(() => undefined);
-    const leaveResult =
-      liveLeaveResult && !liveLeaveResult.error
-        ? liveLeaveResult
-        : await notifyChampionSelectionLeft({
-            baseUrl: MATCHMAKING_API_BASE_URL,
-            body: { status },
-            path: { matchId },
-          }).catch(() => undefined);
 
     if (leaveResult && !leaveResult.error && leaveResult.data) {
       applyMatch(normalizeMatchResponse(leaveResult.data), {
@@ -3272,24 +3078,6 @@ function Client({
       });
 
       return;
-    }
-
-    sendCancelChampionPhaseKeepalive(matchId);
-
-    const result = await cancelChampionPhase({
-      baseUrl: LIVE_API_BASE_URL,
-      path: { matchId },
-    }).catch(() => undefined);
-
-    if ((!leaveResult || leaveResult.error) && (!result || result.error)) {
-      await cancelChampionPhase({
-        baseUrl: MATCHMAKING_API_BASE_URL,
-        path: { matchId },
-      }).catch(() => undefined);
-      await cancelChampionPhaseDuplicate({
-        baseUrl: MATCHMAKING_API_BASE_URL,
-        path: { matchId },
-      }).catch(() => undefined);
     }
   }
 
@@ -3388,18 +3176,10 @@ function Client({
     }
 
     if (lobbyIsSearching) {
-      const [rankedResult, matchResult] = await Promise.all([
-        abortRankedSearch({
-          baseUrl: LIVE_API_BASE_URL,
-          body: { lobbyId: activeLobby.id },
-        }),
-        abortSearch({
-          baseUrl: MATCHMAKING_API_BASE_URL,
-          path: { lobbyId: activeLobby.id },
-        }),
-      ]);
-
-      applyMatch(matchResult.data?.cancelledMatch, { keepSearchingOnCancel: false });
+      const rankedResult = await abortRankedSearch({
+        baseUrl: LIVE_API_BASE_URL,
+        body: { lobbyId: activeLobby.id },
+      });
       setPendingMatch(undefined);
       setMatchAutoDeclinedId(undefined);
       setMatchFoundStartedAt(undefined);
@@ -3438,8 +3218,6 @@ function Client({
 
     const wasLocallyAborted = activeLobby.id === lobbySearchAbortedLobbyId;
     setLobbySearchAbortedLobbyId(undefined);
-    const activeLobbyWithCachedRoles = getActiveLobbyWithCachedRoles() ?? activeLobby;
-
     if (!wasLocallyAborted && activeLobby.status === "SEARCHING") {
       const startedAt = activeLobby.updatedAt ? Date.parse(activeLobby.updatedAt) : Date.now();
 
@@ -3448,49 +3226,18 @@ function Client({
       setPresenceStatus("inqueue");
       publishActivePresence("IN_QUEUE");
 
-      const result = await startSearch({
-        baseUrl: MATCHMAKING_API_BASE_URL,
-        body: {
-          lobbyId: activeLobby.id,
-          mode: "RANKED",
-          players: mapLobbyToMatchPlayers(
-            activeLobbyWithCachedRoles,
-            currentMatchPlayerProfile,
-            publicUsersByPublicId,
-          ),
-        },
-      });
-
-      if (!result.error) {
-        applyMatch(result.data?.match);
-      }
-
       return;
     }
 
     setPresenceStatus("inqueue");
     publishActivePresence("IN_QUEUE");
 
-    const [result, matchSearchResult] = await Promise.all([
-      searchRanked({
-        baseUrl: LIVE_API_BASE_URL,
-        body: { lobbyId: activeLobby.id },
-      }),
-      startSearch({
-        baseUrl: MATCHMAKING_API_BASE_URL,
-        body: {
-          lobbyId: activeLobby.id,
-          mode: "RANKED",
-          players: mapLobbyToMatchPlayers(
-            activeLobbyWithCachedRoles,
-            currentMatchPlayerProfile,
-            publicUsersByPublicId,
-          ),
-        },
-      }),
-    ]);
+    const result = await searchRanked({
+      baseUrl: LIVE_API_BASE_URL,
+      body: { lobbyId: activeLobby.id },
+    });
 
-    if (result.error && matchSearchResult.error) {
+    if (result.error) {
       setPresenceStatus("inlobby");
       void publishPresence(
         "IN_LOBBY",
@@ -3512,9 +3259,6 @@ function Client({
       updatedAt: result.data?.startedAt ?? activeLobby.updatedAt,
     });
 
-    if (!matchSearchResult.error) {
-      applyMatch(matchSearchResult.data?.match);
-    }
   }
 
   async function handleCopyLobbyId() {
@@ -3565,21 +3309,6 @@ function Client({
       ? undefined
       : normalizeMatchResponse(result.data);
 
-    if (!nextMatch && typeof profilePublicId === "number") {
-      const fallbackResult = await decide({
-        baseUrl: MATCHMAKING_API_BASE_URL,
-        body: {
-          playerPublicId: profilePublicId,
-          decision: decision === "accept" ? "ACCEPTED" : "DECLINED",
-        },
-        path: { matchId },
-      });
-
-      if (!fallbackResult.error && fallbackResult.data) {
-        nextMatch = fallbackResult.data;
-      }
-    }
-
     setMatchDecisionBusy(undefined);
 
     if (!nextMatch && decision === "accept") {
@@ -3592,13 +3321,6 @@ function Client({
     }
 
     if (decision === "decline") {
-      if (!nextMatch) {
-        void cancelChampionPhaseDuplicate({
-          baseUrl: MATCHMAKING_API_BASE_URL,
-          path: { matchId },
-        }).catch(() => undefined);
-      }
-
       setPendingMatch(undefined);
       setMatchFoundStartedAt(undefined);
       setMatchAutoDeclinedId(undefined);
@@ -3653,27 +3375,6 @@ function Client({
         return;
       }
 
-      if (typeof profilePublicId === "number") {
-        const decideResult = await decide({
-          baseUrl: MATCHMAKING_API_BASE_URL,
-          body: {
-            playerPublicId: profilePublicId,
-            decision: "DECLINED",
-          },
-          path: { matchId },
-        }).catch(() => undefined);
-
-        if (decideResult && !decideResult.error) {
-          return;
-        }
-      }
-
-      if (activeLobbyRef.current?.id) {
-        await abortSearch({
-          baseUrl: MATCHMAKING_API_BASE_URL,
-          path: { lobbyId: activeLobbyRef.current.id },
-        }).catch(() => undefined);
-      }
     })();
   }, [
     currentPlayerAccepted,
@@ -3688,7 +3389,6 @@ function Client({
     for (const baseUrl of [
       LIVE_API_BASE_URL,
       API_BASE_URL,
-      MATCHMAKING_API_BASE_URL,
     ]) {
       const result = await invite({
         baseUrl,
@@ -3769,7 +3469,7 @@ function Client({
         ...(primaryRole ? { primaryRole: toApiLobbyRole(primaryRole) } : {}),
         secondaryRole: secondaryRole ? toApiLobbyRole(secondaryRole) : null,
       },
-      fallbackBaseUrls: [API_BASE_URL, MATCHMAKING_API_BASE_URL],
+      fallbackBaseUrls: [API_BASE_URL],
       path: { lobbyId: activeLobby.id },
     });
 
@@ -4096,91 +3796,17 @@ function Client({
       return false;
     }
 
-    let nextMatch: ApiMatchResponse | undefined;
-    const attempts: Array<{
-      endpoint: string;
-      status?: number;
-      error?: unknown;
-    }> = [];
-
-    for (const baseUrl of [
-      LIVE_API_BASE_URL,
-      MATCHMAKING_API_BASE_URL,
-      API_BASE_URL,
-    ]) {
-      try {
-        const result = await selectChampion({
-          baseUrl,
-          body: { champion },
-          path: { matchId },
-        });
-
-        if (!result.error && result.data) {
-          nextMatch = normalizeMatchResponse(result.data);
-
-          if (nextMatch) {
-            break;
-          }
-        }
-
-        attempts.push({
-          endpoint: `${baseUrl}/api/matches/${matchId}/champion-selection`,
-          error: result.error,
-          status: result.response?.status,
-        });
-      } catch (error) {
-        attempts.push({
-          endpoint: `${baseUrl}/api/matches/${matchId}/champion-selection`,
-          error,
-        });
-      }
-    }
-
-    if (!nextMatch && typeof profilePublicId === "number") {
-      for (const baseUrl of [
-        MATCHMAKING_API_BASE_URL,
-        LIVE_API_BASE_URL,
-        API_BASE_URL,
-      ]) {
-        try {
-          const fallbackResult = await selectChampionDuplicate({
-            baseUrl,
-            body: {
-              champion,
-              playerPublicId: profilePublicId,
-            },
-            path: { matchId },
-          });
-
-          if (!fallbackResult.error && fallbackResult.data) {
-            nextMatch = normalizeMatchResponse(fallbackResult.data);
-
-            if (nextMatch) {
-              break;
-            }
-          }
-
-          attempts.push({
-            endpoint: `${baseUrl}/internal/matches/${matchId}/champion-selections`,
-            error: fallbackResult.error,
-            status: fallbackResult.response?.status,
-          });
-        } catch (error) {
-          attempts.push({
-            endpoint: `${baseUrl}/internal/matches/${matchId}/champion-selections`,
-            error,
-          });
-        }
-      }
-    }
+    const result = await selectChampion({
+      baseUrl: LIVE_API_BASE_URL,
+      body: { champion },
+      path: { matchId },
+    }).catch(() => undefined);
+    const nextMatch =
+      result && !result.error && result.data
+        ? normalizeMatchResponse(result.data)
+        : undefined;
 
     if (!nextMatch) {
-      console.error("Champion selection failed on all known endpoints", {
-        attempts,
-        champion,
-        matchId,
-        profilePublicId,
-      });
       notifyLobbyError(t("match-decision-error"));
       return false;
     }
@@ -4198,7 +3824,7 @@ function Client({
 
     if (!champion) {
       const result = await clearChampionHover({
-        baseUrl: MATCHMAKING_API_BASE_URL,
+        baseUrl: LIVE_API_BASE_URL,
         path: { matchId },
       });
 
@@ -4216,33 +3842,11 @@ function Client({
         return;
       }
 
-      if (typeof profilePublicId !== "number") {
-        return;
-      }
-
-      const fallbackResult = await clearChampionHoverDuplicate({
-        baseUrl: MATCHMAKING_API_BASE_URL,
-        path: { matchId, playerPublicId: profilePublicId },
-      });
-
-      if (!fallbackResult.error && fallbackResult.data) {
-        setCurrentChampionSelectionMatch(
-          championSelectionMatchRef.current
-            ? hydrateMatch(
-                mergeMatchChampionHovers(
-                  championSelectionMatchRef.current,
-                  fallbackResult.data.hovers,
-                ),
-              )
-            : undefined,
-        );
-      }
-
       return;
     }
 
     const result = await hoverChampion({
-      baseUrl: MATCHMAKING_API_BASE_URL,
+      baseUrl: LIVE_API_BASE_URL,
       body: { champion },
       path: { matchId },
     });
@@ -4261,32 +3865,10 @@ function Client({
       return;
     }
 
-    if (typeof profilePublicId !== "number") {
-      return;
-    }
-
-    const fallbackResult = await hoverChampionDuplicate({
-      baseUrl: MATCHMAKING_API_BASE_URL,
-      body: { champion, playerPublicId: profilePublicId },
-      path: { matchId },
-    });
-
-    if (!fallbackResult.error && fallbackResult.data) {
-      setCurrentChampionSelectionMatch(
-        championSelectionMatchRef.current
-          ? hydrateMatch(
-              mergeMatchChampionHovers(
-                championSelectionMatchRef.current,
-                fallbackResult.data.hovers,
-              ),
-            )
-          : undefined,
-      );
-    }
   }
 
   async function handleChampionSelectionTimeout(
-    timedOutPickPublicIds: number[] = [],
+    _timedOutPickPublicIds: number[] = [],
   ) {
     if (championSelectionTimeoutInFlightRef.current) {
       return;
@@ -4300,78 +3882,18 @@ function Client({
 
       if (matchId) {
         await deleteChampionSelectionChatRooms(timedOutMatch);
-        await new Promise((resolve) => window.setTimeout(resolve, 350));
-
-        const latestMatch = await getMatch({
-          baseUrl: MATCHMAKING_API_BASE_URL,
-          path: { matchId },
-        }).catch(() => undefined);
-
-        if (latestMatch && !latestMatch.error && latestMatch.data) {
-          const hydratedLatestMatch = hydrateMatch(normalizeMatchResponse(latestMatch.data));
-          const latestPhaseEndsAt = parseApiTimestamp(hydratedLatestMatch.phaseEndsAt);
-          const latestPhase = hydratedLatestMatch.phase?.trim().toUpperCase();
-          const latestServerNow =
-            parseApiTimestamp(hydratedLatestMatch.serverNow) ?? Date.now();
-          const latestSelectedPublicIds = new Set(
-            hydratedLatestMatch.championSelections
-              ?.map((selection) => selection.playerPublicId)
-              .filter((publicId): publicId is number => typeof publicId === "number") ?? [],
-          );
-          const timedOutPickGroupComplete =
-            timedOutPickPublicIds.length > 0 &&
-            timedOutPickPublicIds.every((publicId) =>
-              latestSelectedPublicIds.has(publicId),
-            );
-
-          if (
-            hydratedLatestMatch.status === "READY" ||
-            latestPhase === "READY" ||
-            timedOutPickGroupComplete ||
-            (timedOutPickPublicIds.length === 0 &&
-              latestPhase === "PICK" &&
-              latestPhaseEndsAt !== undefined &&
-              latestPhaseEndsAt > latestServerNow) ||
-            latestPhase === "WARMUP"
-          ) {
-            setCurrentChampionSelectionMatch(hydratedLatestMatch);
-            return;
-          }
-        }
-
-        const liveLeaveResult = await notifyChampionSelectionLeft({
+        const leaveResult = await notifyChampionSelectionLeft({
           baseUrl: LIVE_API_BASE_URL,
           body: { status: "LEAVE" },
           path: { matchId },
         }).catch(() => undefined);
-        const fallbackLeaveResult =
-          liveLeaveResult && !liveLeaveResult.error
-            ? undefined
-            : await notifyChampionSelectionLeft({
-                baseUrl: MATCHMAKING_API_BASE_URL,
-                body: { status: "LEAVE" },
-                path: { matchId },
-              }).catch(() => undefined);
         const cancelledMatch =
-          liveLeaveResult && !liveLeaveResult.error && liveLeaveResult.data
-            ? normalizeMatchResponse(liveLeaveResult.data)
-            : fallbackLeaveResult &&
-                !fallbackLeaveResult.error &&
-                fallbackLeaveResult.data
-              ? normalizeMatchResponse(fallbackLeaveResult.data)
-              : undefined;
+          leaveResult && !leaveResult.error && leaveResult.data
+            ? normalizeMatchResponse(leaveResult.data)
+            : undefined;
 
         if (cancelledMatch) {
           applyMatch(cancelledMatch, { keepSearchingOnCancel: false });
-        } else {
-          await cancelChampionPhase({
-            baseUrl: LIVE_API_BASE_URL,
-            path: { matchId },
-          }).catch(() => undefined);
-          await cancelChampionPhase({
-            baseUrl: MATCHMAKING_API_BASE_URL,
-            path: { matchId },
-          }).catch(() => undefined);
         }
       }
 
@@ -4412,23 +3934,7 @@ function Client({
 
     const champion = getGameClientChampionId(selectedChampion);
 
-    const port = getMatchPort(match);
-
-    if (typeof port !== "number") {
-      throw new Error("Game-Server-Port fehlt.");
-    }
-
-    const serverHost = getMatchHost(match);
-
-    if (!serverHost) {
-      throw new Error("Game-Server-Adresse fehlt.");
-    }
-
-    const serverControlBaseUrl = getMatchControlBaseUrl(match);
-
-    if (!serverControlBaseUrl) {
-      throw new Error("Game-Server-Control-Adresse fehlt.");
-    }
+    const serverEndpoint = requireMatchGameplayEndpoint(match);
 
     const team = getMatchTeamForPlayer(match, profilePublicId);
 
@@ -4441,48 +3947,23 @@ function Client({
       matchManifestJson: JSON.stringify(createGameMatchManifest(match, match.matchId)),
       matchId: match.matchId,
       playerPublicId: profilePublicId,
-      serverHost,
-      serverControlBaseUrl,
-      port,
+      serverHost: serverEndpoint.host,
+      serverPort: serverEndpoint.port,
+      protocol: serverEndpoint.protocol,
       screen: gameScreenMode,
       team,
     };
   }
 
-  function hasGameServerLaunchInfo(match: ApiMatchResponse) {
-    return (
-      typeof getMatchPort(match) === "number" &&
-      Boolean(getMatchHost(match)) &&
-      Boolean(getMatchControlBaseUrl(match))
-    );
-  }
-
   async function getLaunchableMatch(match: ApiMatchResponse) {
-    let latestMatch = hydrateMatch(match);
-
-    for (let attempt = 0; attempt < 6; attempt += 1) {
-      if (hasGameServerLaunchInfo(latestMatch)) {
-        return latestMatch;
-      }
-
-      if (!latestMatch.matchId) {
-        return latestMatch;
-      }
-
-      await new Promise((resolve) => window.setTimeout(resolve, attempt === 0 ? 250 : 1_000));
-
-      const result = await getMatch({
-        baseUrl: MATCHMAKING_API_BASE_URL,
-        path: { matchId: latestMatch.matchId },
-      });
-
-      if (!result.error && result.data) {
-        latestMatch = hydrateMatch(result.data);
-        setCurrentChampionSelectionMatch(latestMatch);
-      }
+    if (!match.matchId) {
+      return hydrateMatch(match);
     }
 
-    return latestMatch;
+    return waitForMatchGameplayEndpoint(
+      match.matchId,
+      () => championSelectionMatchRef.current,
+    );
   }
 
   async function launchGameClient(parameters: GameLaunchParameters, forceRestart = false) {
@@ -4508,6 +3989,7 @@ function Client({
     };
 
     await invoke("launch_game", { request });
+    observedGameClientRunningRef.current = true;
     setGameLaunchParameters(parameters);
     setGameClientRunning(true);
     setGameClientClosedByClient(false);
@@ -4567,16 +4049,7 @@ function Client({
     setLobbyError(undefined);
 
     try {
-      const latestMatch = await getMatch({
-        baseUrl: MATCHMAKING_API_BASE_URL,
-        path: { matchId: gameLaunchParameters.matchId },
-      });
-      const launchParameters =
-        latestMatch.error || !latestMatch.data
-          ? gameLaunchParameters
-          : createGameLaunchParameters(await getLaunchableMatch(latestMatch.data));
-
-      await launchGameClient(launchParameters, true);
+      await launchGameClient(gameLaunchParameters, true);
     } catch (caughtError) {
       console.error(caughtError);
       notifyGameStartError(caughtError);
@@ -4591,6 +4064,7 @@ function Client({
         <ChampionSelection
           currentPlayerPublicId={profilePublicId}
           match={championSelectionMatch}
+          warmupError={championSelectionWarmupError}
           t={t}
           onChampionHover={handleChampionHover}
           onChampionSelect={handleChampionSelect}
@@ -4762,7 +4236,11 @@ function Client({
                     : "client-game-closed",
               )}
             </strong>
-            {!gameClientRunning && gameLaunchParameters ? (
+            {canReconnectGameClient(
+              gameClientRunning,
+              gameClientClosedByClient,
+              gameLaunchParameters,
+            ) ? (
               <button
                 className="client-game-connect-button"
                 disabled={gameReconnectBusy}

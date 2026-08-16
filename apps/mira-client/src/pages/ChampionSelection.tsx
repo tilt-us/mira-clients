@@ -22,6 +22,7 @@ type ChampionSelectionProps = {
   onPickTimeout: (activePickPublicIds: number[]) => void;
   onReadyPhaseComplete: () => Promise<void> | void;
   t: Translate;
+  warmupError?: string;
 };
 
 const warmupSeconds = 10;
@@ -401,6 +402,7 @@ function ChampionSelection({
   onPickTimeout,
   onReadyPhaseComplete,
   t,
+  warmupError,
 }: ChampionSelectionProps) {
   const [phaseStartedAt, setPhaseStartedAt] = useState(Date.now());
   const [phaseNow, setPhaseNow] = useState(Date.now());
@@ -834,6 +836,11 @@ function ChampionSelection({
         >
           <span style={{ transform: `scaleX(${phaseProgress})` }} />
         </div>
+        {warmupError ? (
+          <p className="champion-selection-warmup-error" role="alert">
+            {warmupError}
+          </p>
+        ) : null}
       </section>
 
       <section className="champion-selection-layout">

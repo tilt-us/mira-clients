@@ -259,15 +259,14 @@ export type ChampionSelectionPayload = {
     selectedAt?: string;
 };
 
-export type GameServerPayload = {
+export type GameServerEndpointPayload = {
     host?: string;
     port?: number;
     protocol?: string;
-    controlHost?: string;
-    controlPort?: number;
-    controlProtocol?: string;
-    controlBaseUrl?: string;
 };
+
+/** @deprecated Use GameServerEndpointPayload. Kept for generated barrel compatibility. */
+export type GameServerPayload = GameServerEndpointPayload;
 
 export type MatchLobbyPayload = {
     lobbyId?: string;
@@ -295,7 +294,7 @@ export type MatchResponse = {
     championSelections?: Array<ChampionSelectionPayload>;
     championHovers?: Array<ChampionHoverPayload>;
     roleAssignments?: Array<MatchRoleAssignmentPayload>;
-    gameServer?: GameServerPayload;
+    gameServerEndpoint?: GameServerEndpointPayload;
     createdAt?: string;
     updatedAt?: string;
     serverNow?: string;
@@ -482,15 +481,14 @@ export type ChampionSelectionResponse = {
     selectedAt?: string;
 };
 
-export type GameServerResponse = {
+export type GameServerEndpointResponse = {
     host?: string;
     port?: number;
     protocol?: string;
-    controlHost?: string;
-    controlPort?: number;
-    controlProtocol?: string;
-    controlBaseUrl?: string;
 };
+
+/** @deprecated Use GameServerEndpointResponse. Kept for generated barrel compatibility. */
+export type GameServerResponse = GameServerEndpointResponse;
 
 export type MatchLobbyResponse = {
     lobbyId?: string;
@@ -573,7 +571,7 @@ export type ApiMatchResponse = {
     championSelections?: Array<ChampionSelectionResponse>;
     championHovers?: Array<ChampionHoverResponse>;
     roleAssignments?: Array<MatchRoleAssignmentResponse>;
-    gameServer?: GameServerResponse;
+    gameServerEndpoint?: GameServerEndpointResponse;
     createdAt?: string;
     updatedAt?: string;
     serverNow?: string;

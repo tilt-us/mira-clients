@@ -1,19 +1,14 @@
 use crate::content;
 use std::{
-    io::{Read, Write},
-    net::{TcpStream, ToSocketAddrs},
     path::PathBuf,
     process::{Child, Command},
     sync::Mutex,
     thread,
-    time::{Duration, Instant},
+    time::Duration,
 };
 use tauri::Manager;
 
 const FORCE_RESTART_RECONNECT_DELAY: Duration = Duration::from_millis(8_500);
-const GAME_SERVER_READY_TIMEOUT: Duration = Duration::from_secs(12);
-const GAME_SERVER_READY_POLL_INTERVAL: Duration = Duration::from_millis(100);
-const GAME_SERVER_READY_REQUEST_TIMEOUT: Duration = Duration::from_millis(500);
 
 /// Stores Game Process State data used by the desktop game-launcher process system.
 #[derive(Default)]
@@ -35,8 +30,8 @@ pub(crate) struct LaunchGameRequest {
     match_id: String,
     player_public_id: u64,
     server_host: String,
-    server_control_base_url: String,
-    port: u16,
+    server_port: u16,
+    protocol: String,
     #[serde(default)]
     screen: String,
     team: String,
@@ -65,33 +60,18 @@ pub(crate) fn launch_game(
     process_state: tauri::State<'_, GameProcessState>,
     request: LaunchGameRequest,
 ) -> Result<LaunchGameResponse, String> {
+    validate_gameplay_endpoint(&request)?;
     let game_binary = resolve_game_binary(&app)?;
     let game_dir = game_binary
         .parent()
         .ok_or_else(|| "Game-Client-Verzeichnis konnte nicht bestimmt werden.".to_string())?;
     let asset_root = content::ready_game_asset_root(&app)?;
-    wait_for_game_server_ready(&request.server_control_base_url)?;
 
     let mut command = Command::new(&game_binary);
     command
         .current_dir(game_dir)
-        .env("MIRA_GAME_ASSET_ROOT", &asset_root)
-        .arg("--access-token")
-        .arg(&request.access_token)
-        .arg("--accent-color")
-        .arg(&request.accent_color)
-        .arg("--champion")
-        .arg(&request.champion)
-        .arg("--match-id")
-        .arg(&request.match_id)
-        .arg("--player-public-id")
-        .arg(request.player_public_id.to_string())
-        .arg("--server-host")
-        .arg(&request.server_host)
-        .arg("--port")
-        .arg(request.port.to_string())
-        .arg("--server-control-base-url")
-        .arg(&request.server_control_base_url);
+        .env("MIRA_GAME_ASSET_ROOT", &asset_root);
+    append_game_launch_args(&mut command, &request);
 
     if !request.screen.trim().is_empty() {
         command.arg("--screen").arg(&request.screen);
@@ -140,16 +120,16 @@ pub(crate) fn launch_game(
     }
 
     println!(
-        "[mira-client] Starting game client: binary={} cwd={} assets={} match={} player={} champion={} server={}:{} control={} screen={} team={}",
+        "[mira-client] Launching game client: matchId={} serverHost={} serverPort={} protocol={} binary={} cwd={} assets={} player={} champion={} screen={} team={}",
+        request.match_id,
+        request.server_host,
+        request.server_port,
+        request.protocol,
         game_binary.to_string_lossy(),
         game_dir.to_string_lossy(),
         asset_root.to_string_lossy(),
-        request.match_id,
         request.player_public_id,
         request.champion,
-        request.server_host,
-        request.port,
-        request.server_control_base_url,
         empty_as_default(&request.screen, "default"),
         request.team,
     );
@@ -181,6 +161,40 @@ pub(crate) fn launch_game(
         game_binary: game_binary.to_string_lossy().into_owned(),
         pid,
     })
+}
+
+fn append_game_launch_args(command: &mut Command, request: &LaunchGameRequest) {
+    command
+        .arg("--access-token")
+        .arg(&request.access_token)
+        .arg("--accent-color")
+        .arg(&request.accent_color)
+        .arg("--champion")
+        .arg(&request.champion)
+        .arg("--match-id")
+        .arg(&request.match_id)
+        .arg("--player-public-id")
+        .arg(request.player_public_id.to_string())
+        .arg("--server-host")
+        .arg(&request.server_host)
+        .arg("--port")
+        .arg(request.server_port.to_string());
+}
+
+fn validate_gameplay_endpoint(request: &LaunchGameRequest) -> Result<(), String> {
+    if request.server_host.trim().is_empty() {
+        return Err("Game server address missing".to_string());
+    }
+
+    if request.server_port == 0 {
+        return Err("Game server port missing".to_string());
+    }
+
+    if !request.protocol.eq_ignore_ascii_case("UDP") {
+        return Err("Game server protocol unsupported".to_string());
+    }
+
+    Ok(())
 }
 
 /// Runs the game client status step for the desktop game-launcher process system.
@@ -355,129 +369,72 @@ fn format_path_candidates(candidates: &[PathBuf]) -> String {
         .join(", ")
 }
 
-/// Waits until the dedicated server confirms that its UDP listener is ready.
-fn wait_for_game_server_ready(control_base_url: &str) -> Result<(), String> {
-    let endpoint = game_server_ready_endpoint(control_base_url)?;
-    let deadline = Instant::now() + GAME_SERVER_READY_TIMEOUT;
-
-    let last_error = loop {
-        let error = match request_game_server_readiness(&endpoint) {
-            Ok(true) => return Ok(()),
-            Ok(false) => "the server is still starting".to_string(),
-            Err(error) => error,
-        };
-
-        if Instant::now() >= deadline {
-            break error;
-        }
-
-        thread::sleep(GAME_SERVER_READY_POLL_INTERVAL);
-    };
-
-    Err(format!(
-        "Game-Server wurde unter {control_base_url} nicht rechtzeitig bereit: {last_error}",
-    ))
-}
-
-/// Builds the control API readiness endpoint from the match server base URL.
-fn game_server_ready_endpoint(control_base_url: &str) -> Result<tauri::Url, String> {
-    let mut endpoint = tauri::Url::parse(control_base_url)
-        .map_err(|error| format!("Ungültige Game-Server-Control-Adresse: {error}"))?;
-    if endpoint.scheme() != "http" {
-        return Err("Game-Server-Control-Adresse muss HTTP verwenden.".to_string());
-    }
-    if endpoint.host_str().is_none() {
-        return Err("Game-Server-Control-Adresse enthält keinen Host.".to_string());
-    }
-
-    endpoint.set_path("/ready");
-    endpoint.set_query(None);
-    endpoint.set_fragment(None);
-    Ok(endpoint)
-}
-
-/// Requests the dedicated server readiness endpoint once.
-fn request_game_server_readiness(endpoint: &tauri::Url) -> Result<bool, String> {
-    let host = endpoint
-        .host_str()
-        .ok_or_else(|| "Game-Server-Control-Adresse enthält keinen Host.".to_string())?;
-    let port = endpoint
-        .port_or_known_default()
-        .ok_or_else(|| "Game-Server-Control-Adresse enthält keinen Port.".to_string())?;
-    let addresses = (host, port).to_socket_addrs().map_err(|error| {
-        format!("Game-Server-Control-Host konnte nicht aufgelöst werden: {error}")
-    })?;
-    let mut connection_errors = Vec::new();
-    let mut stream = None;
-
-    for address in addresses {
-        match TcpStream::connect_timeout(&address, GAME_SERVER_READY_REQUEST_TIMEOUT) {
-            Ok(connection) => {
-                stream = Some(connection);
-                break;
-            }
-            Err(error) => connection_errors.push(error),
-        }
-    }
-
-    let mut stream = stream.ok_or_else(|| {
-        let detail = connection_errors
-            .last()
-            .map(|error| error.to_string())
-            .unwrap_or_else(|| "no socket address was returned".to_string());
-        format!("Game-Server-Control-Verbindung fehlgeschlagen: {detail}")
-    })?;
-    stream
-        .set_read_timeout(Some(GAME_SERVER_READY_REQUEST_TIMEOUT))
-        .map_err(|error| format!("Game-Server-Control-Lesezeitlimit fehlgeschlagen: {error}"))?;
-    stream
-        .set_write_timeout(Some(GAME_SERVER_READY_REQUEST_TIMEOUT))
-        .map_err(|error| format!("Game-Server-Control-Schreibzeitlimit fehlgeschlagen: {error}"))?;
-
-    write!(
-        stream,
-        "GET {} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
-        endpoint.path(),
-        host,
-    )
-    .map_err(|error| format!("Game-Server-Readiness-Anfrage fehlgeschlagen: {error}"))?;
-
-    let mut response = String::new();
-    stream
-        .read_to_string(&mut response)
-        .map_err(|error| format!("Game-Server-Readiness-Antwort fehlgeschlagen: {error}"))?;
-
-    Ok(is_game_server_ready_response(&response))
-}
-
-/// Returns whether a control API response confirms server readiness.
-fn is_game_server_ready_response(response: &str) -> bool {
-    response
-        .lines()
-        .next()
-        .is_some_and(|status| status.contains(" 200 "))
-}
-
 /// Runs the resolve game asset root step for the desktop game-launcher process system.
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn uses_a_root_readiness_endpoint() {
-        let endpoint = game_server_ready_endpoint("http://127.0.0.1:6000/api").unwrap();
-
-        assert_eq!(endpoint.as_str(), "http://127.0.0.1:6000/ready");
+    fn launch_request() -> LaunchGameRequest {
+        LaunchGameRequest {
+            access_token: "token".to_string(),
+            accent_color: "#123456".to_string(),
+            champion: "lira".to_string(),
+            force_restart: false,
+            match_manifest_json: String::new(),
+            match_id: "match-1".to_string(),
+            player_public_id: 42,
+            server_host: "217.160.25.101".to_string(),
+            server_port: 7949,
+            protocol: "UDP".to_string(),
+            screen: "window".to_string(),
+            team: "light".to_string(),
+        }
     }
 
     #[test]
-    fn accepts_only_successful_readiness_responses() {
-        assert!(is_game_server_ready_response(
-            "HTTP/1.1 200 OK\r\n\r\n{\"ready\":true}"
-        ));
-        assert!(!is_game_server_ready_response(
-            "HTTP/1.1 503 Service Unavailable\r\n\r\n{\"ready\":false}"
-        ));
+    fn passes_the_dynamic_udp_gameplay_endpoint_without_a_control_url() {
+        let mut command = Command::new("mira-game-client");
+        append_game_launch_args(&mut command, &launch_request());
+        let arguments = command
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        assert!(
+            arguments
+                .windows(2)
+                .any(|pair| pair == ["--server-host", "217.160.25.101"])
+        );
+        assert!(arguments.windows(2).any(|pair| pair == ["--port", "7949"]));
+        assert!(
+            !arguments
+                .iter()
+                .any(|argument| argument == "--server-control-base-url")
+        );
+    }
+
+    #[test]
+    fn rejects_incomplete_or_unsupported_gameplay_endpoints() {
+        let mut missing_host = launch_request();
+        missing_host.server_host.clear();
+        assert_eq!(
+            validate_gameplay_endpoint(&missing_host),
+            Err("Game server address missing".to_string())
+        );
+
+        let mut missing_port = launch_request();
+        missing_port.server_port = 0;
+        assert_eq!(
+            validate_gameplay_endpoint(&missing_port),
+            Err("Game server port missing".to_string())
+        );
+
+        let mut unsupported_protocol = launch_request();
+        unsupported_protocol.protocol = "TCP".to_string();
+        assert_eq!(
+            validate_gameplay_endpoint(&unsupported_protocol),
+            Err("Game server protocol unsupported".to_string())
+        );
     }
 
     #[test]
