@@ -3,7 +3,7 @@ import type {
   MatchLobbyResponse,
   MatchPlayerResponse,
 } from "./api/client";
-import { LIVE_API_BASE_URL, MATCHMAKING_API_BASE_URL } from "./api/config";
+import { LIVE_API_BASE_URL } from "./api/config";
 import { readTokens } from "./auth/storage";
 import type { GameScreenMode } from "./settings";
 import { getPublicDisplayName } from "./utils/profile";
@@ -19,8 +19,8 @@ export type LaunchGameRequest = {
   matchId: string;
   playerPublicId: number;
   serverHost: string;
-  serverControlBaseUrl: string;
-  port: number;
+  serverPort: number;
+  protocol: "UDP";
   screen: GameScreenMode;
   team: GameTeam;
 };
@@ -41,14 +41,10 @@ type GameMatchManifest = {
   players: GameMatchManifestPlayer[];
 };
 
-type GameServerAddressOverrides = {
-  publicControlBaseUrl?: string;
-  publicControlHost?: string;
-  publicHost?: string;
-  publicPort?: number;
-  gamePort?: number;
-  serverPort?: number;
-  udpPort?: number;
+export type GameServerEndpoint = {
+  host: string;
+  port: number;
+  protocol: "UDP";
 };
 
 export type StoredGameSession = {
@@ -61,6 +57,21 @@ export type GameClientStatus = {
   running: boolean;
   pid?: number;
 };
+
+export function canReconnectGameClient(
+  gameClientRunning: boolean,
+  gameClientClosedByClient: boolean,
+  parameters?: GameLaunchParameters,
+) {
+  return !gameClientRunning && gameClientClosedByClient && Boolean(parameters);
+}
+
+export function didGameClientExit(
+  wasObservedRunning: boolean,
+  isRunning: boolean,
+) {
+  return wasObservedRunning && !isRunning;
+}
 
 const storedGameSessionKey = "mira:last-game-session";
 
@@ -132,107 +143,104 @@ export function createGameMatchManifest(
   };
 }
 
-export function getMatchPort(match: ApiMatchResponse) {
-  const gameServer = match.gameServer as
-    | (NonNullable<ApiMatchResponse["gameServer"]> & GameServerAddressOverrides)
-    | undefined;
-  const explicitPort =
-    gameServer?.publicPort ??
-    gameServer?.gamePort ??
-    gameServer?.serverPort ??
-    gameServer?.udpPort ??
-    gameServer?.port;
+export function getMatchGameplayEndpoint(match: ApiMatchResponse): GameServerEndpoint | undefined {
+  const host = match.gameServerEndpoint?.host?.trim();
+  const port = match.gameServerEndpoint?.port;
+  const protocol = match.gameServerEndpoint?.protocol?.trim().toUpperCase();
 
-  if (typeof explicitPort === "number") {
-    return explicitPort;
-  }
-
-  if (typeof gameServer?.controlPort === "number" && gameServer.controlPort > 1000) {
-    return gameServer.controlPort - 1000;
-  }
-
-  return undefined;
-}
-
-export function getMatchHost(match: ApiMatchResponse) {
-  const gameServer = match.gameServer as
-    | (NonNullable<ApiMatchResponse["gameServer"]> & GameServerAddressOverrides)
-    | undefined;
-
-  return resolvePublishedGameServerHost(gameServer?.publicHost ?? gameServer?.host);
-}
-
-export function getMatchControlBaseUrl(match: ApiMatchResponse) {
-  const gameServer = match.gameServer as
-    | (NonNullable<ApiMatchResponse["gameServer"]> & GameServerAddressOverrides)
-    | undefined;
-  const explicitBaseUrl = gameServer?.publicControlBaseUrl ?? gameServer?.controlBaseUrl;
-
-  if (explicitBaseUrl) {
-    return resolvePublishedGameServerBaseUrl(explicitBaseUrl);
-  }
-
-  const controlHost = gameServer?.publicControlHost ?? gameServer?.controlHost;
-  const controlPort = gameServer?.controlPort;
-
-  if (!controlHost || typeof controlPort !== "number") {
+  if (
+    !host ||
+    !isPublicGameplayHost(host) ||
+    !isValidGameplayPort(port) ||
+    protocol !== "UDP"
+  ) {
     return undefined;
   }
 
-  const protocol = gameServer?.controlProtocol ?? "http";
-  const publishedControlHost = resolvePublishedGameServerHost(controlHost);
-
-  return publishedControlHost ? `${protocol}://${publishedControlHost}:${controlPort}` : undefined;
+  return { host, port, protocol };
 }
 
-function resolvePublishedGameServerHost(host?: string) {
+export function requireMatchGameplayEndpoint(match: ApiMatchResponse): GameServerEndpoint {
+  const host = match.gameServerEndpoint?.host?.trim();
+  const port = match.gameServerEndpoint?.port;
+
   if (!host) {
-    return undefined;
+    throw new Error("Game server address missing");
   }
 
-  const fallbackHost = getRemoteMatchmakingHost();
-
-  if (!fallbackHost || !isPrivatePublishedHost(host)) {
-    return host;
+  if (!isPublicGameplayHost(host)) {
+    throw new Error("Game server address invalid");
   }
 
-  return fallbackHost;
+  if (!isValidGameplayPort(port)) {
+    throw new Error("Game server port missing");
+  }
+
+  if (match.gameServerEndpoint?.protocol?.trim().toUpperCase() !== "UDP") {
+    throw new Error("Game server protocol unsupported");
+  }
+
+  return {
+    host,
+    port,
+    protocol: "UDP",
+  };
 }
 
-function resolvePublishedGameServerBaseUrl(baseUrl: string) {
-  try {
-    const parsedUrl = new URL(baseUrl);
-    const fallbackHost = getRemoteMatchmakingHost();
+export function waitForMatchGameplayEndpoint(
+  matchId: string,
+  getLatestMatch: () => ApiMatchResponse | undefined,
+): Promise<ApiMatchResponse> {
+  return new Promise((resolve) => {
+    const checkForEndpoint = () => {
+      const match = getLatestMatch();
 
-    if (fallbackHost && isPrivatePublishedHost(parsedUrl.hostname)) {
-      parsedUrl.hostname = fallbackHost;
-    }
+      if (match?.matchId !== matchId || !getMatchGameplayEndpoint(match)) {
+        return;
+      }
 
-    return parsedUrl.toString().replace(/\/$/, "");
-  } catch {
-    return baseUrl;
-  }
+      window.clearInterval(intervalId);
+      resolve(match);
+    };
+    const intervalId = window.setInterval(checkForEndpoint, 250);
+
+    checkForEndpoint();
+  });
 }
 
-function getRemoteMatchmakingHost() {
-  try {
-    const host = new URL(MATCHMAKING_API_BASE_URL).hostname;
-    return isPrivatePublishedHost(host) ? undefined : host;
-  } catch {
-    return undefined;
-  }
+function isValidGameplayPort(port: unknown): port is number {
+  return typeof port === "number" && Number.isInteger(port) && port > 0 && port <= 65_535;
 }
 
-function isPrivatePublishedHost(host: string) {
+function isPublicGameplayHost(host: string) {
   const normalizedHost = host.trim().toLowerCase().replace(/^\[|\]$/g, "");
+  const ipv4Parts = normalizedHost.split(".").map(Number);
 
-  return (
+  if (
     normalizedHost === "localhost" ||
     normalizedHost === "0.0.0.0" ||
     normalizedHost === "::" ||
     normalizedHost === "::1" ||
     normalizedHost === "0:0:0:0:0:0:0:1" ||
     normalizedHost.startsWith("127.")
+  ) {
+    return false;
+  }
+
+  if (
+    ipv4Parts.length !== 4 ||
+    ipv4Parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)
+  ) {
+    return true;
+  }
+
+  const [first, second] = ipv4Parts;
+  return !(
+    first === 10 ||
+    first === 127 ||
+    (first === 169 && second === 254) ||
+    (first === 172 && second >= 16 && second <= 31) ||
+    (first === 192 && second === 168)
   );
 }
 
@@ -379,35 +387,19 @@ export function clearStoredGameSession() {
   window.localStorage.removeItem(storedGameSessionKey);
 }
 
-export function sendCancelChampionPhaseKeepalive(matchId: string) {
-  const accessToken = readTokens()?.accessToken;
-
-  for (const baseUrl of [LIVE_API_BASE_URL, MATCHMAKING_API_BASE_URL]) {
-    void fetch(`${baseUrl}/api/matches/${matchId}/champion-phase`, {
-      headers: {
-        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-      },
-      keepalive: true,
-      method: "DELETE",
-    }).catch(() => undefined);
-  }
-}
-
 export function sendChampionSelectionLeaveKeepalive(
   matchId: string,
   status: "DISCONNECTED" | "LEAVE" | "QUIT",
 ) {
   const accessToken = readTokens()?.accessToken;
 
-  for (const baseUrl of [LIVE_API_BASE_URL, MATCHMAKING_API_BASE_URL]) {
-    void fetch(`${baseUrl}/api/matches/${matchId}/champion-selection/leave`, {
-      body: JSON.stringify({ status }),
-      headers: {
-        "Content-Type": "application/json",
-        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-      },
-      keepalive: true,
-      method: "POST",
-    }).catch(() => undefined);
-  }
+  void fetch(`${LIVE_API_BASE_URL}/api/matches/${matchId}/champion-selection/leave`, {
+    body: JSON.stringify({ status }),
+    headers: {
+      "Content-Type": "application/json",
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+    },
+    keepalive: true,
+    method: "POST",
+  }).catch(() => undefined);
 }

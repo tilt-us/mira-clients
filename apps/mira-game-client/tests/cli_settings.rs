@@ -14,8 +14,6 @@ fn parses_complete_launch_settings() {
         "42",
         "--champion",
         "yuna",
-        "--server-control-base-url",
-        "https://server.test",
         "--server-host",
         "8.8.8.8",
         "--screen",
@@ -33,10 +31,8 @@ fn parses_complete_launch_settings() {
     assert_eq!(launch_settings.match_id.as_deref(), Some("match-1"));
     assert_eq!(launch_settings.player_public_id.as_deref(), Some("42"));
     assert_eq!(launch_settings.champion.as_deref(), Some("yuna"));
-    assert_eq!(
-        launch_settings.server_control_base_url.as_deref(),
-        Some("https://server.test"),
-    );
+    assert_eq!(launch_settings.server_host.as_deref(), Some("8.8.8.8"));
+    assert_eq!(launch_settings.server_port, Some(4100));
     assert_eq!(launch_settings.screen_mode, ClientScreenMode::Window);
     assert_eq!(network_settings.client_id, 42);
     assert_eq!(
@@ -106,6 +102,11 @@ fn rejects_invalid_arguments() {
         "Unknown argument: --unknown",
     );
     assert_eq!(
+        client_settings_from_args(["--server-control-base-url", "http://127.0.0.1:6000"])
+            .expect_err("the obsolete control API argument should fail"),
+        "Unknown argument: --server-control-base-url",
+    );
+    assert_eq!(
         client_settings_from_args(["--match-id="]).expect_err("empty values should fail"),
         "Missing value for --match-id",
     );
@@ -127,6 +128,10 @@ fn rejects_invalid_arguments() {
     assert_eq!(
         client_settings_from_args(["--port", "abc"]).expect_err("invalid ports should fail"),
         "Invalid port: abc",
+    );
+    assert_eq!(
+        client_settings_from_args(["--port", "0"]).expect_err("port zero should fail"),
+        "Invalid port: 0",
     );
     assert_eq!(
         client_settings_from_args(["--match-id"]).expect_err("missing values should fail"),

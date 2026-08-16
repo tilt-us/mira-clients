@@ -156,6 +156,7 @@ client-back = Zurück
 client-game-running = Spiel bereits gestartet, bitte wechsle zum Fenster
 client-game-closed = Spiel-Client wurde geschlossen.
 client-game-closed-reconnect = Client wurde geschlossen bitte Verbinde dich neu!
+client-game-session-ended = Die Spielsitzung wurde unerwartet beendet.
 client-game-connect = Verbinden
 client-game-connect-loading = Verbindet...
 client-game-start-error = Spiel-Client konnte nicht gestartet werden.

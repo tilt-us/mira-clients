@@ -518,6 +518,7 @@ export function startGithubLogin(options?: KeycloakThemeOptions) {
     {
       idpHint: "github",
       name: "GitHub",
+      prompt: "select_account",
     },
     options,
   );

@@ -16,7 +16,7 @@ import type {
 import { LIVE_API_BASE_URL } from "../api/config";
 import { readTokens } from "../auth/storage";
 import type { ChatParticipant, ChatRoom } from "../components/ChatDock";
-import { getMatchTeams } from "../gameSession";
+import { getMatchGameplayEndpoint, getMatchTeams } from "../gameSession";
 import {
   getMemberLobbyRoles,
   toApiLobbyRole,
@@ -670,7 +670,7 @@ export function shouldTreatChampionSelectionAsWarmup(match: ApiMatchResponse) {
 }
 
 export function isMatchGameStarted(match: ApiMatchResponse | undefined) {
-  return match?.status === "READY";
+  return match?.status === "READY" && getMatchGameplayEndpoint(match) !== undefined;
 }
 
 export function normalizeRoleAssignmentSource(value: unknown): MatchPlayerResponse["roleAssignmentSource"] {

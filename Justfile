@@ -80,7 +80,6 @@ dev port="5000" control_port="6000" player_id="1001" champion="lira" team="light
         --team {{ team }} \
         --server-host 127.0.0.1 \
         --port {{ port }} \
-        --server-control-base-url http://127.0.0.1:{{ control_port }} \
         --screen {{ screen }}
 
 dev-server port="5000" control_port="6000":
@@ -91,11 +90,9 @@ dev-server port="5000" control_port="6000":
     MIRA_DEVELOPMENT_CHAMPION_CATALOG="${MIRA_DEVELOPMENT_CHAMPION_CATALOG:-embedded}" \
         cargo run --manifest-path "$server_manifest" -- --port {{ port }} --control-port {{ control_port }}
 
-dev-client port="5000" control_port="6000" player_id="1001" champion="lira" team="light" screen="window":
+dev-client port="5000" player_id="1001" champion="lira" team="light" screen="window":
     #!/usr/bin/env bash
     set -euo pipefail
-
-    just wait-for-server {{ control_port }}
 
     cargo run -p mira-game-client -- \
         --dev-preview \
@@ -105,7 +102,6 @@ dev-client port="5000" control_port="6000" player_id="1001" champion="lira" team
         --team {{ team }} \
         --server-host 127.0.0.1 \
         --port {{ port }} \
-        --server-control-base-url http://127.0.0.1:{{ control_port }} \
         --screen {{ screen }}
 
 offline-preview champion="lira" team="light" screen="window":

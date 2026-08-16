@@ -44,7 +44,6 @@ pub struct ClientLaunchSettings {
     pub match_id: Option<String>,
     pub player_public_id: Option<String>,
     pub champion: Option<String>,
-    pub server_control_base_url: Option<String>,
     pub server_host: Option<String>,
     pub server_port: Option<u16>,
     pub dev_preview: bool,
@@ -82,10 +81,6 @@ impl ClientLaunchSettings {
             || self.match_id.as_deref().is_none_or(str::is_empty)
             || self.player_public_id.as_deref().is_none_or(str::is_empty)
             || self.champion.as_deref().is_none_or(str::is_empty)
-            || self
-                .server_control_base_url
-                .as_deref()
-                .is_none_or(str::is_empty)
             || self.server_host.as_deref().is_none_or(str::is_empty)
             || self.server_port.is_none()
         {

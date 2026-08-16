@@ -71,6 +71,18 @@
   font-weight: 950;
 }
 
+.champion-selection-warmup-error {
+  position: relative;
+  z-index: 1;
+  justify-self: center;
+  max-width: min(560px, 90vw);
+  margin: -10px 0 0;
+  color: #ffb4ab;
+  font-size: 0.84rem;
+  font-weight: 700;
+  text-align: center;
+}
+
 .champion-selection-timeline {
   width: min(420px, 42vw);
   height: 3px;

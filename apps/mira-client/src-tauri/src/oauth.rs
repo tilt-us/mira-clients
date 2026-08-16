@@ -1,14 +1,13 @@
 use std::{
-    io::{Read, Write},
-    net::{SocketAddr, TcpListener, TcpStream},
+    net::{SocketAddr, TcpListener},
     sync::{
         LazyLock, Mutex,
         atomic::{AtomicU64, Ordering},
     },
-    thread,
-    time::{Duration, Instant},
 };
 
+#[cfg(not(target_os = "macos"))]
+use std::path::PathBuf;
 #[cfg(target_os = "linux")]
 use std::process::Command;
 use tauri::{Emitter, Manager};
@@ -16,7 +15,6 @@ use tauri::{Emitter, Manager};
 use tauri_plugin_opener::OpenerExt;
 
 const KEYCLOAK_NATIVE_REDIRECT_URI: &str = "http://127.0.0.1";
-const OAUTH_CALLBACK_TIMEOUT: Duration = Duration::from_secs(180);
 
 static OAUTH_ATTEMPTS: LazyLock<OAuthAttemptRegistry> = LazyLock::new(OAuthAttemptRegistry::new);
 
@@ -91,21 +89,24 @@ impl OAuthAttemptRegistry {
         attempt
             .listener
             .take()
-            .ok_or_else(|| "OAuth browser was already opened for this login attempt.".to_string())
+            .ok_or_else(|| "OAuth window was already opened for this login attempt.".to_string())
     }
 
-    fn complete(&self, attempt_id: u64) {
+    fn complete(&self, attempt_id: u64) -> bool {
         if let Ok(mut active_attempt) = self.active_attempt.lock()
             && active_attempt
                 .as_ref()
                 .is_some_and(|attempt| attempt.attempt_id == attempt_id)
         {
             *active_attempt = None;
+            return true;
         }
+
+        false
     }
 
-    fn cancel(&self, attempt_id: u64) {
-        self.complete(attempt_id);
+    fn cancel(&self, attempt_id: u64) -> bool {
+        self.complete(attempt_id)
     }
 }
 
@@ -171,7 +172,7 @@ pub(crate) fn cancel_oauth_attempt(request: OAuthAttemptIdentity) {
     OAUTH_ATTEMPTS.cancel(request.attempt_id);
 }
 
-/// Opens a prepared native OAuth attempt in the system browser exactly once.
+/// Opens a prepared native OAuth attempt in an isolated desktop webview.
 /// It consumes the listener allocated by `prepare_oauth_redirect_uri`; it never
 /// allocates another port or normalizes the redirect URI.
 #[tauri::command]
@@ -195,33 +196,124 @@ pub(crate) fn start_oauth_window(
         );
     }
 
-    let listener = OAUTH_ATTEMPTS.take_listener(request.attempt_id, redirect_uri)?;
-    eprintln!(
-        "[mira-client][oauth] attempt={} openingSystemBrowser",
-        request.attempt_id
-    );
+    // Browser profiles are persistent per provider. This preserves a user's
+    // trusted provider session while keeping Google and GitHub Keycloak
+    // cookies separate when two desktop clients are open at the same time.
+    drop(OAUTH_ATTEMPTS.take_listener(request.attempt_id, redirect_uri)?);
+    start_isolated_oauth_window(app, auth_url, request)
+}
 
-    // Keep the listener bound before opening the browser. A very fast callback
-    // is queued by the operating system until the listener thread begins.
-    if let Err(error) = open_system_browser_url(&app, auth_url.as_str()) {
-        OAUTH_ATTEMPTS.complete(request.attempt_id);
-        return Err(format!(
-            "OAuth login could not open in the system browser: {error}"
-        ));
+fn start_isolated_oauth_window(
+    app: tauri::AppHandle,
+    auth_url: tauri::Url,
+    request: OAuthWindowRequest,
+) -> Result<OAuthWindowResponse, String> {
+    let profile = oauth_profile_name(&auth_url);
+    let window_label = format!("mira-oauth-{}", request.attempt_id);
+    if let Some(window) = app.get_webview_window(&window_label) {
+        let _ = window.close();
     }
 
-    spawn_oauth_listener(
-        app,
-        listener,
-        request.attempt_id,
-        redirect_uri.to_string(),
-        request.password_reset,
-    );
+    let app_for_navigation = app.clone();
+    let redirect_uri_for_navigation = request.redirect_uri.clone();
+    let window_label_for_navigation = window_label.clone();
+    let attempt_id = request.attempt_id;
+    let password_reset = request.password_reset;
+
+    let builder =
+        tauri::WebviewWindowBuilder::new(&app, window_label, tauri::WebviewUrl::External(auth_url))
+            .title("Mira Login")
+            .inner_size(960.0, 680.0)
+            .min_inner_size(720.0, 520.0)
+            .resizable(true);
+
+    #[cfg(not(target_os = "macos"))]
+    let builder = builder.data_directory(oauth_profile_directory(&app, profile)?);
+
+    #[cfg(target_os = "macos")]
+    let builder = builder.data_store_identifier(oauth_data_store_identifier(profile));
+
+    let window = builder
+        .on_navigation(move |url| {
+            let Some(callback_url) = oauth_callback_url_from_navigation(
+                &redirect_uri_for_navigation,
+                url.as_str(),
+                password_reset,
+            ) else {
+                return true;
+            };
+
+            eprintln!("[mira-client][oauth] attempt={attempt_id} callbackReceived");
+            OAUTH_ATTEMPTS.complete(attempt_id);
+            let _ = app_for_navigation.emit(
+                "mira-oauth-callback",
+                OAuthCallbackPayload { url: callback_url },
+            );
+            if let Some(window) =
+                app_for_navigation.get_webview_window(&window_label_for_navigation)
+            {
+                let _ = window.close();
+            }
+            focus_main_window(&app_for_navigation);
+            false
+        })
+        .build()
+        .map_err(|error| format!("OAuth window could not be created: {error}"))?;
+
+    let app_for_close = app.clone();
+    let redirect_uri_for_close = request.redirect_uri.clone();
+    window.on_window_event(move |event| {
+        if matches!(event, tauri::WindowEvent::CloseRequested { .. })
+            && OAUTH_ATTEMPTS.cancel(request.attempt_id)
+        {
+            let _ = app_for_close.emit(
+                "mira-oauth-callback",
+                OAuthCallbackPayload {
+                    url: oauth_error_callback_url(&redirect_uri_for_close, "oauth_window_closed"),
+                },
+            );
+        }
+    });
 
     Ok(OAuthWindowResponse {
-        modal: false,
-        redirect_uri: redirect_uri.to_string(),
+        modal: true,
+        redirect_uri: request.redirect_uri,
     })
+}
+
+fn oauth_profile_name(auth_url: &tauri::Url) -> &'static str {
+    match auth_url
+        .query_pairs()
+        .find_map(|(key, value)| (key == "kc_idp_hint").then_some(value))
+        .as_deref()
+    {
+        Some("google") => "google",
+        Some("github") => "github",
+        Some("discord") => "discord",
+        _ => "keycloak",
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn oauth_profile_directory(app: &tauri::AppHandle, profile: &str) -> Result<PathBuf, String> {
+    let directory = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("OAuth profile directory could not be resolved: {error}"))?
+        .join("oauth-profiles")
+        .join(profile);
+    std::fs::create_dir_all(&directory)
+        .map_err(|error| format!("OAuth profile directory could not be created: {error}"))?;
+    Ok(directory)
+}
+
+#[cfg(target_os = "macos")]
+fn oauth_data_store_identifier(profile: &str) -> [u8; 16] {
+    let mut identifier = *b"mira-oauth-00000";
+    for (slot, byte) in identifier[11..].iter_mut().zip(profile.bytes()) {
+        *slot = byte;
+    }
+    identifier
 }
 
 /// Opens an explicit logout URL without creating or consuming an OAuth login
@@ -319,57 +411,6 @@ fn native_redirect_uri(address: SocketAddr) -> Result<String, String> {
     Ok(redirect_uri)
 }
 
-fn spawn_oauth_listener(
-    app: tauri::AppHandle,
-    listener: TcpListener,
-    attempt_id: u64,
-    redirect_uri: String,
-    password_reset: bool,
-) {
-    thread::spawn(move || {
-        let _ = listener.set_nonblocking(true);
-        let deadline = Instant::now() + OAUTH_CALLBACK_TIMEOUT;
-
-        while Instant::now() < deadline {
-            match listener.accept() {
-                Ok((mut stream, _)) => {
-                    match read_oauth_callback(&mut stream, &redirect_uri, password_reset) {
-                        LoopbackRequest::Callback { url, is_error } => {
-                            eprintln!("[mira-client][oauth] attempt={attempt_id} callbackReceived");
-                            let _ = write_callback_response(&mut stream, is_error);
-                            focus_main_window(&app);
-                            OAUTH_ATTEMPTS.complete(attempt_id);
-                            let _ = app.emit("mira-oauth-callback", OAuthCallbackPayload { url });
-                            return;
-                        }
-                        LoopbackRequest::Ignore => {
-                            let _ = write_ignored_response(&mut stream);
-                        }
-                    }
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                    thread::sleep(Duration::from_millis(50));
-                }
-                Err(error) => {
-                    eprintln!(
-                        "[mira-client][oauth] attempt={attempt_id} callbackListenerError={error}"
-                    );
-                    break;
-                }
-            }
-        }
-
-        OAUTH_ATTEMPTS.complete(attempt_id);
-        focus_main_window(&app);
-        let _ = app.emit(
-            "mira-oauth-callback",
-            OAuthCallbackPayload {
-                url: oauth_error_callback_url(&redirect_uri, "oauth_callback_timeout"),
-            },
-        );
-    });
-}
-
 fn focus_main_window(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let focus_window = window.clone();
@@ -392,34 +433,6 @@ fn focus_main_window(app: &tauri::AppHandle) {
 fn authorization_redirect_uri(url: &tauri::Url) -> Option<String> {
     url.query_pairs()
         .find_map(|(key, value)| (key == "redirect_uri").then(|| value.into_owned()))
-}
-
-enum LoopbackRequest {
-    Callback { url: String, is_error: bool },
-    Ignore,
-}
-
-fn read_oauth_callback(
-    stream: &mut TcpStream,
-    redirect_uri: &str,
-    allow_empty_root: bool,
-) -> LoopbackRequest {
-    let Some(target) = read_get_target(stream) else {
-        return LoopbackRequest::Ignore;
-    };
-
-    if target == "/" && allow_empty_root {
-        return LoopbackRequest::Callback {
-            url: password_reset_sent_redirect_uri(redirect_uri),
-            is_error: false,
-        };
-    }
-
-    let Some((url, is_error)) = callback_url_from_target(redirect_uri, &target) else {
-        return LoopbackRequest::Ignore;
-    };
-
-    LoopbackRequest::Callback { url, is_error }
 }
 
 /// The OIDC redirect is authority-only, while the HTTP callback naturally has
@@ -452,17 +465,18 @@ fn callback_url_from_target(redirect_uri: &str, target: &str) -> Option<(String,
     Some((format!("{redirect_uri}{target}"), has_error))
 }
 
-fn read_get_target(stream: &mut TcpStream) -> Option<String> {
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
-    let mut buffer = [0_u8; 4096];
-    let bytes_read = stream.read(&mut buffer).ok()?;
-    let request = String::from_utf8_lossy(&buffer[..bytes_read]);
-    let request_line = request.lines().next()?;
-    let mut parts = request_line.split_whitespace();
-    let method = parts.next()?;
-    let target = parts.next()?;
+fn oauth_callback_url_from_navigation(
+    redirect_uri: &str,
+    navigation_url: &str,
+    password_reset: bool,
+) -> Option<String> {
+    let target = navigation_url.strip_prefix(redirect_uri)?;
 
-    (method == "GET").then(|| target.to_string())
+    if target == "/" && password_reset {
+        return Some(password_reset_sent_redirect_uri(redirect_uri));
+    }
+
+    callback_url_from_target(redirect_uri, target).map(|(url, _)| url)
 }
 
 fn password_reset_sent_redirect_uri(redirect_uri: &str) -> String {
@@ -471,33 +485,6 @@ fn password_reset_sent_redirect_uri(redirect_uri: &str) -> String {
 
 fn oauth_error_callback_url(redirect_uri: &str, error: &str) -> String {
     format!("{redirect_uri}/?error={}", encode_url_component(error))
-}
-
-fn write_ignored_response(stream: &mut TcpStream) -> std::io::Result<()> {
-    const BODY: &str = "Not an OAuth callback.";
-    write_response(stream, "404 Not Found", "text/plain; charset=utf-8", BODY)
-}
-
-fn write_callback_response(stream: &mut TcpStream, is_error: bool) -> std::io::Result<()> {
-    let body = if is_error {
-        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Mira Login</title></head><body><h1>Mira</h1><p>Login was not completed. You can return to Mira.</p></body></html>"
-    } else {
-        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Mira Login</title></head><body><h1>Mira</h1><p>Login successful. Returning to Mira...</p><script>window.close();</script></body></html>"
-    };
-    write_response(stream, "200 OK", "text/html; charset=utf-8", body)
-}
-
-fn write_response(
-    stream: &mut TcpStream,
-    status: &str,
-    content_type: &str,
-    body: &str,
-) -> std::io::Result<()> {
-    let response = format!(
-        "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-        body.len()
-    );
-    stream.write_all(response.as_bytes())
 }
 
 fn encode_url_component(value: &str) -> String {
@@ -591,26 +578,40 @@ mod tests {
     }
 
     #[test]
-    fn successful_callback_closes_the_browser_tab() {
-        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
-        let address = listener.local_addr().unwrap();
-        let writer = thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut request = [0_u8; 1024];
-            let _ = stream.read(&mut request);
-            write_callback_response(&mut stream, false).unwrap();
-        });
+    fn isolated_oauth_window_intercepts_only_its_own_loopback_callback() {
+        let redirect_uri = "http://127.0.0.1:52743";
 
-        let mut response = String::new();
-        let mut stream = TcpStream::connect(address).unwrap();
-        stream
-            .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
-            .unwrap();
-        stream.read_to_string(&mut response).unwrap();
-        writer.join().unwrap();
+        assert_eq!(
+            oauth_callback_url_from_navigation(
+                redirect_uri,
+                "http://127.0.0.1:52743/?code=authorization-code&state=request-state",
+                false,
+            ),
+            Some("http://127.0.0.1:52743/?code=authorization-code&state=request-state".to_string(),),
+        );
+        assert_eq!(
+            oauth_callback_url_from_navigation(
+                redirect_uri,
+                "http://127.0.0.1:52744/?code=authorization-code&state=request-state",
+                false,
+            ),
+            None,
+        );
+    }
 
-        assert!(response.contains("window.close();"));
-        assert!(response.contains("Returning to Mira..."));
+    #[test]
+    fn provider_logins_use_distinct_persistent_profiles() {
+        let github_url = tauri::Url::parse(
+            "https://issuer.example/auth?kc_idp_hint=github&redirect_uri=http%3A%2F%2F127.0.0.1%3A52743",
+        )
+        .unwrap();
+        let google_url = tauri::Url::parse(
+            "https://issuer.example/auth?kc_idp_hint=google&redirect_uri=http%3A%2F%2F127.0.0.1%3A52743",
+        )
+        .unwrap();
+
+        assert_eq!(oauth_profile_name(&github_url), "github");
+        assert_eq!(oauth_profile_name(&google_url), "google");
     }
 
     #[cfg(target_os = "linux")]
