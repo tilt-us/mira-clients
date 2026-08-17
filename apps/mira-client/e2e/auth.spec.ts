@@ -87,7 +87,7 @@ test("shows a mail-check toast after the password reset callback", async ({ page
   expect(new URL(page.url()).searchParams.has("mira_password_reset")).toBe(false);
 });
 
-test("starts GitHub login with the GitHub identity provider hint", async ({ page }) => {
+test("starts GitHub login with account selection", async ({ page }) => {
   await mockKeycloakAuth(page);
 
   await page.goto("/");
@@ -107,7 +107,7 @@ test("starts GitHub login with the GitHub identity provider hint", async ({ page
   expect(authUrl.searchParams.get("kc_locale")).toBe("de");
   expect(authUrl.searchParams.get("lang")).toBe("german");
   expect(authUrl.searchParams.get("ui_locales")).toBe("de");
-  expect(authUrl.searchParams.has("prompt")).toBe(false);
+  expect(authUrl.searchParams.get("prompt")).toBe("select_account");
 });
 
 test("starts Google login with account selection and Google language hint", async ({ page }) => {

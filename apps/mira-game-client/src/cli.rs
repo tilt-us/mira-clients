@@ -36,20 +36,9 @@ where
                 println!("{}", usage());
                 return Ok(None);
             }
-            "--access-token"
-            | "--accent-color"
-            | "--match-id"
-            | "--player-public-id"
-            | "--champion"
-            | "--server-control-base-url"
-            | "--server-host"
-            | "--screen"
-            | "--port"
-            | "-p"
-            | "--char"
-            | "-c"
-            | "--team"
-            | "-t" => {
+            "--access-token" | "--accent-color" | "--match-id" | "--player-public-id"
+            | "--champion" | "--server-host" | "--screen" | "--port" | "-p" | "--char" | "-c"
+            | "--team" | "-t" => {
                 pending_option = Some(argument);
             }
             "--dev-preview" => {
@@ -81,7 +70,7 @@ where
 }
 /// Returns CLI usage text for the playable client.
 pub fn usage() -> &'static str {
-    "Usage: mira-game-client [OPTIONS]\n\nOptions:\n  --access-token <TOKEN>                 Matchmaking access token\n  --accent-color <HEX>                   Mira client accent color override\n  --match-id <MATCH_ID>                  Matchmaking match id\n  --player-public-id <PLAYER_PUBLIC_ID>  Public player id\n  --champion <CHAMPION>                  Champion slug or id\n  --server-control-base-url <URL>        Dedicated server REST control API base URL\n  --server-host <HOST>                   Hostname or IP of the dedicated server\n  --screen <full|window|borderless>      Game window mode\n  --dev-preview                          Development preview using the configured server\n  --offline-preview                      Development preview without server networking\n  -p, --port <PORT>                      UDP port of the dedicated server\n  -h, --help                             Print help"
+    "Usage: mira-game-client [OPTIONS]\n\nOptions:\n  --access-token <TOKEN>                 Matchmaking access token\n  --accent-color <HEX>                   Mira client accent color override\n  --match-id <MATCH_ID>                  Matchmaking match id\n  --player-public-id <PLAYER_PUBLIC_ID>  Public player id\n  --champion <CHAMPION>                  Champion slug or id\n  --server-host <HOST>                   Hostname or IP of the dedicated server\n  --screen <full|window|borderless>      Game window mode\n  --dev-preview                          Development preview using the configured server\n  --offline-preview                      Development preview without server networking\n  -p, --port <PORT>                      UDP port of the dedicated server\n  -h, --help                             Print help"
 }
 
 fn apply_client_arg(
@@ -103,9 +92,6 @@ fn apply_client_arg(
             network_settings.client_id = parse_player_public_id(option_value)?;
         }
         "champion" | "char" | "c" => launch_settings.champion = Some(option_value.to_string()),
-        "server-control-base-url" => {
-            launch_settings.server_control_base_url = Some(option_value.to_string());
-        }
         "screen" => launch_settings.screen_mode = parse_screen_mode(option_value)?,
         "server-host" => {
             launch_settings.server_host = Some(option_value.to_string());
@@ -183,7 +169,9 @@ fn require_non_empty_option_value<'a>(
 fn parse_port(value: &str) -> Result<u16, String> {
     value
         .parse::<u16>()
-        .map_err(|_| format!("Invalid port: {value}"))
+        .ok()
+        .filter(|port| *port > 0)
+        .ok_or_else(|| format!("Invalid port: {value}"))
 }
 
 #[cfg(test)]
@@ -224,8 +212,6 @@ mod tests {
             "127.0.0.1",
             "--port",
             "5000",
-            "--server-control-base-url",
-            "http://127.0.0.1:6000",
         ])
         .unwrap()
         .unwrap();

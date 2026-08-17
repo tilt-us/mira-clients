@@ -5,6 +5,7 @@ use mira_downloads::Environment;
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ClientConfig {
     environment: Environment,
+    no_shared_auth: bool,
 }
 
 /// Returns the environment selected when this desktop client was built.
@@ -22,5 +23,24 @@ pub(crate) fn build_environment() -> Result<Environment, String> {
 pub(crate) fn client_config() -> Result<ClientConfig, String> {
     Ok(ClientConfig {
         environment: build_environment()?,
+        // Multiple launcher processes use the same WebView data directory.
+        // Keep credentials scoped to an individual client window instead.
+        no_shared_auth: true,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn desktop_runtime_config_disables_shared_auth_storage() {
+        let value = serde_json::to_value(ClientConfig {
+            environment: Environment::Dev,
+            no_shared_auth: true,
+        })
+        .unwrap();
+
+        assert_eq!(value["noSharedAuth"], true);
+    }
 }

@@ -85,8 +85,8 @@ describe("native OAuth", () => {
 
   test.each([
     ["discord", startDiscordLogin, null],
-    ["github", startGithubLogin, null],
-  ] as const)("preserves the %s provider hint without an unnecessary prompt", async (provider, start, prompt) => {
+    ["github", startGithubLogin, "select_account"],
+  ] as const)("uses the expected %s provider prompt", async (provider, start, prompt) => {
     await start();
     const { url } = authorizationRequest();
 
