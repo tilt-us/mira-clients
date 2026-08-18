@@ -218,6 +218,7 @@ fn start_isolated_oauth_window(
     let window_label_for_navigation = window_label.clone();
     let attempt_id = request.attempt_id;
     let password_reset = request.password_reset;
+    let auth_url_for_loading_screen = auth_url.clone();
 
     // WebView2 can leave a newly-created window white when its first
     // navigation is an external identity-provider URL. Bootstrap with the
@@ -227,7 +228,7 @@ fn start_isolated_oauth_window(
     let builder = tauri::WebviewWindowBuilder::new(
         &app,
         window_label,
-        tauri::WebviewUrl::App(oauth_loading_screen_path(&auth_url)),
+        tauri::WebviewUrl::App(oauth_loading_screen_path()),
     )
     .title("Mira Login")
     .inner_size(960.0, 680.0)
@@ -241,6 +242,18 @@ fn start_isolated_oauth_window(
     let builder = builder.data_store_identifier(oauth_data_store_identifier(profile));
 
     let window = builder
+        .on_page_load(move |window, payload| {
+            if payload.event() == tauri::webview::PageLoadEvent::Finished
+                && is_oauth_loading_screen(payload.url())
+            {
+                eprintln!("[mira-client][oauth] attempt={attempt_id} providerNavigation=start");
+                if let Err(error) = window.navigate(auth_url_for_loading_screen.clone()) {
+                    eprintln!(
+                        "[mira-client][oauth] attempt={attempt_id} providerNavigation=failed error={error}"
+                    );
+                }
+            }
+        })
         .on_navigation(move |url| {
             let Some(callback_url) = oauth_callback_url_from_navigation(
                 &redirect_uri_for_navigation,
@@ -302,20 +315,27 @@ fn oauth_profile_name(auth_url: &tauri::Url) -> &'static str {
 }
 
 /// `oauth-loading.html` is served from Vite's public directory in development
-/// and from the bundled frontend in packaged builds. The complete provider URL
-/// is encoded as a query value so it cannot alter the local app URL.
-fn oauth_loading_screen_path(auth_url: &tauri::Url) -> PathBuf {
-    PathBuf::from(format!(
-        "oauth-loading.html?authUrl={}",
-        encode_url_component(auth_url.as_str())
-    ))
+/// and from the bundled frontend in packaged builds. The Tauri host performs
+/// the provider navigation after that page has loaded.
+fn oauth_loading_screen_path() -> PathBuf {
+    PathBuf::from("oauth-loading.html")
+}
+
+fn is_oauth_loading_screen(url: &tauri::Url) -> bool {
+    url.host_str() == Some("localhost") && url.path() == "/oauth-loading.html"
 }
 
 #[cfg(not(target_os = "macos"))]
 fn oauth_profile_directory(app: &tauri::AppHandle, profile: &str) -> Result<PathBuf, String> {
-    let directory = app
-        .path()
-        .app_data_dir()
+    #[cfg(target_os = "windows")]
+    let data_directory = app.path().app_local_data_dir();
+    #[cfg(not(target_os = "windows"))]
+    let data_directory = app.path().app_data_dir();
+
+    // WebView2 keeps locks, cache, and browser databases in its user-data
+    // directory. On Windows this must be local data rather than Roaming
+    // AppData, which may be redirected or synchronized by a domain profile.
+    let directory = data_directory
         .map_err(|error| format!("OAuth profile directory could not be resolved: {error}"))?
         .join("oauth-profiles")
         .join(profile);
@@ -633,23 +653,15 @@ mod tests {
 
     #[test]
     fn oauth_window_bootstraps_from_the_bundled_loading_page() {
-        let auth_url = tauri::Url::parse(
-            "https://issuer.example/auth?client_id=mira-bevy&redirect_uri=http%3A%2F%2F127.0.0.1%3A52743",
-        )
-        .unwrap();
-        let path = oauth_loading_screen_path(&auth_url);
+        let path = oauth_loading_screen_path();
         let local_url = tauri::Url::parse("tauri://localhost/")
             .unwrap()
             .join(path.to_str().unwrap())
             .unwrap();
 
         assert_eq!(local_url.path(), "/oauth-loading.html");
-        assert_eq!(
-            local_url
-                .query_pairs()
-                .find_map(|(key, value)| (key == "authUrl").then_some(value.into_owned())),
-            Some(auth_url.into())
-        );
+        assert!(is_oauth_loading_screen(&local_url));
+        assert!(local_url.query().is_none());
     }
 
     #[cfg(target_os = "linux")]
