@@ -356,19 +356,22 @@ fn start_smart_screen_oauth_window(
     let window_label_for_navigation = window_label.clone();
     let attempt_id = request.attempt_id;
     let password_reset = request.password_reset;
+    #[cfg(not(target_os = "linux"))]
     let auth_url_for_loading_screen = auth_url.clone();
 
-    // The bundled loading page lets WebView2/WebKit finish constructing the
-    // window before it receives a remote identity-provider navigation.
-    let builder = tauri::WebviewWindowBuilder::new(
-        &app,
-        window_label,
-        tauri::WebviewUrl::App(oauth_loading_screen_path()),
-    )
-    .title("Mira Login")
-    .inner_size(960.0, 680.0)
-    .min_inner_size(720.0, 520.0)
-    .resizable(true);
+    // Linux WebKitGTK reliably renders the provider URL as the first
+    // navigation. The bundled bootstrap page is retained for macOS, where it
+    // avoids a white child webview while the native view is constructed.
+    #[cfg(target_os = "linux")]
+    let initial_url = tauri::WebviewUrl::External(auth_url);
+    #[cfg(not(target_os = "linux"))]
+    let initial_url = tauri::WebviewUrl::App(oauth_loading_screen_path());
+
+    let builder = tauri::WebviewWindowBuilder::new(&app, window_label, initial_url)
+        .title("Mira Login")
+        .inner_size(960.0, 680.0)
+        .min_inner_size(720.0, 520.0)
+        .resizable(true);
 
     #[cfg(not(target_os = "macos"))]
     let builder = builder.data_directory(oauth_profile_directory(&app, profile)?);
@@ -376,8 +379,8 @@ fn start_smart_screen_oauth_window(
     #[cfg(target_os = "macos")]
     let builder = builder.data_store_identifier(oauth_data_store_identifier(profile));
 
-    let window = builder
-        .on_page_load(move |window, payload| {
+    #[cfg(not(target_os = "linux"))]
+    let builder = builder.on_page_load(move |window, payload| {
             if payload.event() == tauri::webview::PageLoadEvent::Finished
                 && is_oauth_loading_screen(payload.url())
             {
@@ -388,7 +391,9 @@ fn start_smart_screen_oauth_window(
                     );
                 }
             }
-        })
+        });
+
+    let window = builder
         .on_navigation(move |url| {
             let Some(callback_url) = oauth_callback_url_from_navigation(
                 &redirect_uri_for_navigation,
@@ -398,7 +403,9 @@ fn start_smart_screen_oauth_window(
                 return true;
             };
 
-            eprintln!("[mira-client][oauth] attempt={attempt_id} callbackReceived source=smartScreen");
+            eprintln!(
+                "[mira-client][oauth] attempt={attempt_id} callbackReceived source=smartScreen"
+            );
             OAUTH_ATTEMPTS.complete(attempt_id);
             let _ = app_for_navigation.emit(
                 "mira-oauth-callback",
@@ -407,7 +414,8 @@ fn start_smart_screen_oauth_window(
                     url: callback_url,
                 },
             );
-            if let Some(window) = app_for_navigation.get_webview_window(&window_label_for_navigation)
+            if let Some(window) =
+                app_for_navigation.get_webview_window(&window_label_for_navigation)
             {
                 let _ = window.close();
             }
@@ -457,12 +465,12 @@ fn oauth_profile_name(auth_url: &tauri::Url) -> &'static str {
 /// `oauth-loading.html` is served from Vite's public directory in development
 /// and from the bundled frontend in packaged builds. The Tauri host performs
 /// the provider navigation after that page has loaded.
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
 fn oauth_loading_screen_path() -> PathBuf {
     PathBuf::from("oauth-loading.html")
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
 fn is_oauth_loading_screen(url: &tauri::Url) -> bool {
     url.host_str() == Some("localhost") && url.path() == "/oauth-loading.html"
 }
@@ -954,6 +962,7 @@ fn add_oauth_browser_from_candidates(
     }
 }
 
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 fn paths_under_roots(roots: &[PathBuf], suffixes: &[&str]) -> Vec<PathBuf> {
     roots
         .iter()
@@ -1160,7 +1169,7 @@ fn linux_system_browser_command(url: &str) -> Command {
     // finds that one first and reports a successful spawn even if the bundled
     // program cannot resolve the host browser. Use the host opener with an
     // environment that does not point into the mounted AppImage instead.
-    let program = if std::path::Path::new("/usr/bin/xdg-open").is_file() {
+    let program = if Path::new("/usr/bin/xdg-open").is_file() {
         "/usr/bin/xdg-open"
     } else {
         "xdg-open"
@@ -1290,6 +1299,7 @@ fn oauth_error_callback_url(redirect_uri: &str, error: &str) -> String {
     format!("{redirect_uri}/?error={}", encode_url_component(error))
 }
 
+#[cfg(not(target_os = "windows"))]
 fn encode_url_component(value: &str) -> String {
     let mut encoded = String::new();
     for byte in value.bytes() {
