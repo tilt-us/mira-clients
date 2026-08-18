@@ -1,13 +1,12 @@
 use std::{
     net::{SocketAddr, TcpListener},
+    path::PathBuf,
     sync::{
         LazyLock, Mutex,
         atomic::{AtomicU64, Ordering},
     },
 };
 
-#[cfg(not(target_os = "macos"))]
-use std::path::PathBuf;
 #[cfg(target_os = "linux")]
 use std::process::Command;
 use tauri::{Emitter, Manager};
@@ -220,12 +219,20 @@ fn start_isolated_oauth_window(
     let attempt_id = request.attempt_id;
     let password_reset = request.password_reset;
 
-    let builder =
-        tauri::WebviewWindowBuilder::new(&app, window_label, tauri::WebviewUrl::External(auth_url))
-            .title("Mira Login")
-            .inner_size(960.0, 680.0)
-            .min_inner_size(720.0, 520.0)
-            .resizable(true);
+    // WebView2 can leave a newly-created window white when its first
+    // navigation is an external identity-provider URL. Bootstrap with the
+    // bundled page instead; it performs the external navigation after the
+    // webview has rendered. This also keeps the OAuth window usable when the
+    // provider takes a moment to respond.
+    let builder = tauri::WebviewWindowBuilder::new(
+        &app,
+        window_label,
+        tauri::WebviewUrl::App(oauth_loading_screen_path(&auth_url)),
+    )
+    .title("Mira Login")
+    .inner_size(960.0, 680.0)
+    .min_inner_size(720.0, 520.0)
+    .resizable(true);
 
     #[cfg(not(target_os = "macos"))]
     let builder = builder.data_directory(oauth_profile_directory(&app, profile)?);
@@ -292,6 +299,16 @@ fn oauth_profile_name(auth_url: &tauri::Url) -> &'static str {
         Some("discord") => "discord",
         _ => "keycloak",
     }
+}
+
+/// `oauth-loading.html` is served from Vite's public directory in development
+/// and from the bundled frontend in packaged builds. The complete provider URL
+/// is encoded as a query value so it cannot alter the local app URL.
+fn oauth_loading_screen_path(auth_url: &tauri::Url) -> PathBuf {
+    PathBuf::from(format!(
+        "oauth-loading.html?authUrl={}",
+        encode_url_component(auth_url.as_str())
+    ))
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -612,6 +629,27 @@ mod tests {
 
         assert_eq!(oauth_profile_name(&github_url), "github");
         assert_eq!(oauth_profile_name(&google_url), "google");
+    }
+
+    #[test]
+    fn oauth_window_bootstraps_from_the_bundled_loading_page() {
+        let auth_url = tauri::Url::parse(
+            "https://issuer.example/auth?client_id=mira-bevy&redirect_uri=http%3A%2F%2F127.0.0.1%3A52743",
+        )
+        .unwrap();
+        let path = oauth_loading_screen_path(&auth_url);
+        let local_url = tauri::Url::parse("tauri://localhost/")
+            .unwrap()
+            .join(path.to_str().unwrap())
+            .unwrap();
+
+        assert_eq!(local_url.path(), "/oauth-loading.html");
+        assert_eq!(
+            local_url
+                .query_pairs()
+                .find_map(|(key, value)| (key == "authUrl").then_some(value.into_owned())),
+            Some(auth_url.into())
+        );
     }
 
     #[cfg(target_os = "linux")]

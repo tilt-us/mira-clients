@@ -45,6 +45,8 @@ fn connect_to_server(mut commands: Commands, settings: Res<ClientNetworkSettings
         return Ok(());
     }
 
+    info!(server = %settings.server_addr, "Game server endpoint received.");
+
     let auth = Authentication::Manual {
         server_addr: settings.server_addr,
         client_id: settings.client_id,
@@ -75,8 +77,9 @@ fn connect_to_server(mut commands: Commands, settings: Res<ClientNetworkSettings
 
     commands.trigger(Connect { entity: client });
     info!(
-        "Lightyear client connecting from {} to {}",
-        settings.local_addr, settings.server_addr
+        local = %settings.local_addr,
+        server = %settings.server_addr,
+        "Connecting to game server."
     );
     Ok(())
 }
