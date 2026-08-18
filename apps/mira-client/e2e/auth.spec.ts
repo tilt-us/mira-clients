@@ -108,6 +108,7 @@ test("starts GitHub login with account selection", async ({ page }) => {
   expect(authUrl.searchParams.get("lang")).toBe("german");
   expect(authUrl.searchParams.get("ui_locales")).toBe("de");
   expect(authUrl.searchParams.get("prompt")).toBe("select_account");
+  expect(authUrl.searchParams.get("max_age")).toBe("0");
 });
 
 test("starts Google login with account selection and Google language hint", async ({ page }) => {
@@ -132,9 +133,10 @@ test("starts Google login with account selection and Google language hint", asyn
   expect(authUrl.searchParams.get("hl")).toBe("de");
   expect(authUrl.searchParams.get("ui_locales")).toBe("de");
   expect(authUrl.searchParams.get("prompt")).toBe("select_account");
+  expect(authUrl.searchParams.get("max_age")).toBe("0");
 });
 
-test("starts Discord login with the Discord identity provider hint", async ({ page }) => {
+test("starts Discord login with account selection", async ({ page }) => {
   await mockKeycloakAuth(page);
 
   await page.goto("/");
@@ -154,7 +156,8 @@ test("starts Discord login with the Discord identity provider hint", async ({ pa
   expect(authUrl.searchParams.get("kc_locale")).toBe("de");
   expect(authUrl.searchParams.get("lang")).toBe("german");
   expect(authUrl.searchParams.get("ui_locales")).toBe("de");
-  expect(authUrl.searchParams.has("prompt")).toBe(false);
+  expect(authUrl.searchParams.get("prompt")).toBe("select_account");
+  expect(authUrl.searchParams.get("max_age")).toBe("0");
 });
 
 test("switches to the registration form", async ({ page }) => {

@@ -69,6 +69,7 @@ import {
   CHAT_API_BASE_URL,
   LIVE_API_BASE_URL,
 } from "../api/config";
+import type { OAuthBrowserOption, OAuthBrowserSecurity } from "../auth/browserSecurity";
 import { getValidAccessToken } from "../auth/keycloak";
 import ChampionSelection from "./ChampionSelection";
 import {
@@ -223,6 +224,8 @@ import {
 type ClientProps = {
   accentColor: string;
   backgroundChampion: BackgroundChampion;
+  browserSecurity: OAuthBrowserSecurity;
+  browserSecurityOptions: OAuthBrowserOption[];
   chatPosition: ChatPosition;
   clientSettingsFolders: ClientSettingsFolder[];
   clientAnimation: ClientAnimation;
@@ -232,6 +235,7 @@ type ClientProps = {
   locale: AppLocale;
   onAccentColorChange: (accentColor: string) => void;
   onBackgroundChampionChange: (backgroundChampion: BackgroundChampion) => void;
+  onBrowserSecurityChange: (browserSecurity: OAuthBrowserSecurity) => void;
   onChatPositionChange: (chatPosition: ChatPosition) => void;
   onClientSettingsFoldersChange: (folders: ClientSettingsFolder[]) => void;
   onClientAnimationChange: (clientAnimation: ClientAnimation) => void;
@@ -264,6 +268,8 @@ type ClientBackTarget = "main" | "gameSelector" | "lobby";
 function Client({
   accentColor,
   backgroundChampion,
+  browserSecurity,
+  browserSecurityOptions,
   chatPosition,
   clientSettingsFolders,
   clientAnimation,
@@ -273,6 +279,7 @@ function Client({
   locale,
   onAccentColorChange,
   onBackgroundChampionChange,
+  onBrowserSecurityChange,
   onChatPositionChange,
   onClientSettingsFoldersChange,
   onClientAnimationChange,
@@ -5144,6 +5151,8 @@ function Client({
         <SettingsModal
           accentColor={accentColor}
           backgroundChampion={backgroundChampion}
+          browserSecurity={browserSecurity}
+          browserSecurityOptions={browserSecurityOptions}
           chatPosition={chatPosition}
           clientAnimation={clientAnimation}
           friendRequestPolicy={friendRequestPolicy}
@@ -5158,6 +5167,7 @@ function Client({
           vision="Vision.ALL"
           onAccentColorChange={onAccentColorChange}
           onBackgroundChampionChange={onBackgroundChampionChange}
+          onBrowserSecurityChange={onBrowserSecurityChange}
           onChatPositionChange={onChatPositionChange}
           onClientAnimationChange={onClientAnimationChange}
           onClose={onSettingsClose}

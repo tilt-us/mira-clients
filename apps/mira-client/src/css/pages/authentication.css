@@ -49,6 +49,13 @@
   line-height: 1.4;
 }
 
+.oauth-waiting-modal .oauth-waiting-cancel {
+  grid-column: 1 / -1;
+  justify-self: end;
+  min-height: 36px;
+  padding: 0 14px;
+}
+
 @keyframes oauth-waiting-spin {
   to {
     transform: rotate(360deg);

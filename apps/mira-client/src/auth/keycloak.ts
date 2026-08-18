@@ -14,6 +14,10 @@ import { apiFetch } from "../api/http";
 import { getAccentForegroundColor, isHexColor } from "../settings";
 import type { AppLocale } from "../i18n";
 import {
+  defaultOAuthBrowserSecurity,
+  type OAuthBrowserSecurity,
+} from "./browserSecurity";
+import {
   clearTokens,
   clearOAuthRequest,
   readOAuthRequest,
@@ -267,6 +271,7 @@ function normalizeKeycloakError(error: string) {
 }
 
 type OAuthProvider = {
+  forceAccountSelection?: true;
   googleLanguage?: true;
   idpHint: string;
   name: string;
@@ -275,6 +280,7 @@ type OAuthProvider = {
 
 type KeycloakThemeOptions = {
   accentColor: string;
+  browserSecurity?: OAuthBrowserSecurity;
   locale: AppLocale;
 };
 
@@ -357,20 +363,51 @@ async function beginNativeOAuthAttempt(provider: string) {
 }
 
 async function cancelNativeOAuthAttempt(preparation?: NativeOAuthPreparation) {
-  if (preparation?.attemptId) {
+  const attempt = preparation ?? nativeOAuthAttempt;
+
+  if (attempt?.attemptId) {
     await invoke("cancel_oauth_attempt", {
-      request: { attemptId: preparation.attemptId },
+      request: { attemptId: attempt.attemptId },
     }).catch(() => undefined);
   }
 
-  nativeOAuthAttempt = undefined;
+  if (!attempt || nativeOAuthAttempt?.attemptId === attempt.attemptId) {
+    nativeOAuthAttempt = undefined;
+  }
 }
 
-export function completeNativeOAuthAttempt() {
+/** Cancels a waiting desktop-browser sign-in and releases its loopback port. */
+export async function cancelNativeOAuthLogin() {
+  const attempt = nativeOAuthAttempt;
+
+  if (!attempt) {
+    return;
+  }
+
+  console.info(`[mira-client][oauth] attempt=${attempt.attemptId} cancelled=user`);
+  try {
+    await cancelNativeOAuthAttempt(attempt);
+  } finally {
+    // A browser tab can still finish navigating after the user cancels. Do
+    // not leave its PKCE data around for a later, unrelated login attempt.
+    clearOAuthRequest();
+  }
+}
+
+export function isNativeOAuthAttemptCurrent(attemptId: number) {
+  return nativeOAuthAttempt?.attemptId === attemptId;
+}
+
+export function completeNativeOAuthAttempt(attemptId?: number) {
+  if (attemptId !== undefined && !isNativeOAuthAttemptCurrent(attemptId)) {
+    return false;
+  }
+
   if (nativeOAuthAttempt) {
     console.info(`[mira-client][oauth] attempt=${nativeOAuthAttempt.attemptId} complete`);
   }
   nativeOAuthAttempt = undefined;
+  return true;
 }
 
 function addKeycloakThemeParams(
@@ -458,6 +495,13 @@ async function startProviderLogin(
       searchParams.set("prompt", provider.prompt);
     }
 
+    if (provider.forceAccountSelection) {
+      // `prompt=select_account` is forwarded to the social provider, but an
+      // existing Keycloak SSO session can otherwise complete the broker flow
+      // before that provider gets a chance to show its account chooser.
+      searchParams.set("max_age", "0");
+    }
+
     addKeycloakThemeParams(searchParams, options);
 
     if (provider.googleLanguage && options) {
@@ -467,7 +511,7 @@ async function startProviderLogin(
     saveOAuthRequest(state, codeVerifier, redirectUri);
     const authUrl = `${KEYCLOAK_AUTH_URL}?${searchParams.toString()}`;
     console.info(
-      `[mira-client][oauth] attempt=${preparation?.attemptId ?? "browser"} environment=${KEYCLOAK_ENVIRONMENT} provider=${provider.idpHint} clientId=${KEYCLOAK_CLIENT_ID} issuer=${KEYCLOAK_ISSUER_URL} redirectUri=${redirectUri} brokerEndpoint=${KEYCLOAK_ISSUER_URL}/broker/${provider.idpHint}/endpoint`,
+      `[mira-client][oauth] attempt=${preparation?.attemptId ?? "browser"} environment=${KEYCLOAK_ENVIRONMENT} provider=${provider.idpHint} accountSelection=${Boolean(provider.forceAccountSelection)} prompt=${provider.prompt ?? "none"} maxAge=${searchParams.get("max_age") ?? "none"} clientId=${KEYCLOAK_CLIENT_ID} issuer=${KEYCLOAK_ISSUER_URL} redirectUri=${redirectUri} brokerEndpoint=${KEYCLOAK_ISSUER_URL}/broker/${provider.idpHint}/endpoint`,
     );
 
     if (preparation) {
@@ -475,6 +519,7 @@ async function startProviderLogin(
         request: {
           attemptId: preparation.attemptId,
           authUrl,
+          browserSecurity: options?.browserSecurity ?? defaultOAuthBrowserSecurity(),
           redirectUri,
         },
       });
@@ -505,6 +550,7 @@ export function startGoogleLogin(options?: KeycloakThemeOptions) {
   return startProviderLogin(
     {
       googleLanguage: true,
+      forceAccountSelection: true,
       idpHint: "google",
       name: "Google",
       prompt: "select_account",
@@ -516,6 +562,7 @@ export function startGoogleLogin(options?: KeycloakThemeOptions) {
 export function startGithubLogin(options?: KeycloakThemeOptions) {
   return startProviderLogin(
     {
+      forceAccountSelection: true,
       idpHint: "github",
       name: "GitHub",
       prompt: "select_account",
@@ -527,8 +574,10 @@ export function startGithubLogin(options?: KeycloakThemeOptions) {
 export function startDiscordLogin(options?: KeycloakThemeOptions) {
   return startProviderLogin(
     {
+      forceAccountSelection: true,
       idpHint: "discord",
       name: "Discord",
+      prompt: "select_account",
     },
     options,
   );
@@ -563,6 +612,7 @@ export async function startPasswordReset(options?: KeycloakThemeOptions) {
         request: {
           attemptId: preparation.attemptId,
           authUrl: resetUrl,
+          browserSecurity: options?.browserSecurity ?? defaultOAuthBrowserSecurity(),
           passwordReset: true,
           redirectUri,
         },
@@ -601,6 +651,14 @@ async function getLogoutIdToken() {
 }
 
 export async function startKeycloakLogout() {
+  if (isTauri()) {
+    // Do not open a provider or Keycloak logout tab from the desktop client.
+    // Provider account selection is explicitly requested for every later
+    // OAuth login, so a local Mira logout does not need to navigate away.
+    console.info("[mira-client][oauth] logout browser=skipped");
+    return;
+  }
+
   const idToken = await getLogoutIdToken();
   const searchParams = new URLSearchParams({
     client_id: KEYCLOAK_CLIENT_ID,
@@ -611,15 +669,6 @@ export async function startKeycloakLogout() {
   }
 
   const logoutUrl = `${KEYCLOAK_ISSUER_URL}/protocol/openid-connect/logout?${searchParams.toString()}`;
-
-  console.info(`[mira-client][oauth] logout systemBrowser=${isTauri()}`);
-
-  if (isTauri()) {
-    await invoke("open_system_browser", {
-      request: { url: logoutUrl },
-    });
-    return;
-  }
 
   window.location.assign(logoutUrl);
 }
