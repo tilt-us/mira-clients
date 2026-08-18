@@ -1,6 +1,6 @@
 use crate::environment::EnvironmentConfig;
 use bevy::prelude::{Color, Resource};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 const DEFAULT_ACCENT_COLOR: &str = "#f2c45b";
@@ -33,6 +33,7 @@ pub enum ClientLaunchGate {
 #[derive(Resource, Debug, Clone)]
 pub struct ClientAppSettings {
     pub asset_root: PathBuf,
+    pub asset_root_error: Option<String>,
     pub ui_enabled: bool,
 }
 
@@ -107,8 +108,14 @@ impl ClientLaunchGate {
 
 impl Default for ClientAppSettings {
     fn default() -> Self {
+        let (asset_root, asset_root_error) = match resolve_asset_root() {
+            Ok(asset_root) => (asset_root, None),
+            Err(error) => (PathBuf::from("assets"), Some(error)),
+        };
+
         Self {
-            asset_root: resolve_asset_root(),
+            asset_root,
+            asset_root_error,
             ui_enabled: client_ui_enabled(),
         }
     }
@@ -188,17 +195,21 @@ fn access_token_is_valid(environment: &EnvironmentConfig, access_token: &str) ->
         .unwrap_or(false)
 }
 
-/// Finds the game asset root for development, packaged, and direct binary runs.
-fn resolve_asset_root() -> PathBuf {
-    asset_root_candidates()
+/// Finds the complete runtime asset root for development, packaged, and direct binary runs.
+fn resolve_asset_root() -> Result<PathBuf, String> {
+    resolve_asset_root_from_candidates(asset_root_candidates())
+}
+
+pub(crate) fn resolve_asset_root_from_candidates(
+    candidates: impl IntoIterator<Item = PathBuf>,
+) -> Result<PathBuf, String> {
+    candidates
         .into_iter()
-        .find(|candidate| has_required_game_content(candidate))
+        .find(|candidate| has_required_runtime_content(candidate))
         .and_then(|candidate| candidate.canonicalize().ok())
-        .unwrap_or_else(|| {
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("..")
-                .join("..")
-                .join("assets")
+        .ok_or_else(|| {
+            "Game assets are unavailable. Expected an assets directory containing game content and the required ui files. Repair the Mira installation or launch from a complete development checkout."
+                .to_string()
         })
 }
 
@@ -217,30 +228,54 @@ fn asset_root_candidates() -> Vec<PathBuf> {
     if let Ok(current_exe) = std::env::current_exe()
         && let Some(exe_dir) = current_exe.parent()
     {
-        candidates.push(exe_dir.join("assets"));
-        candidates.push(exe_dir.join("..").join("assets"));
-        candidates.push(exe_dir.join("..").join("..").join("assets"));
+        candidates.extend(
+            exe_dir
+                .ancestors()
+                .map(|directory| directory.join("assets")),
+        );
     }
-
-    candidates.push(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("..")
-            .join("assets"),
-    );
 
     candidates
 }
 
-fn has_required_game_content(asset_root: &std::path::Path) -> bool {
+pub(crate) fn has_required_runtime_content(asset_root: &Path) -> bool {
+    has_required_game_content(asset_root) && has_required_game_client_runtime_ui(asset_root)
+}
+
+fn has_required_game_content(asset_root: &Path) -> bool {
     ["audio", "champions", "maps", "materials"]
         .iter()
         .all(|directory| asset_root.join("game").join(directory).is_dir())
 }
 
+fn has_required_game_client_runtime_ui(asset_root: &Path) -> bool {
+    ["characters", "fonts", "wallpapers"]
+        .iter()
+        .all(|directory| asset_root.join("ui").join(directory).is_dir())
+        && asset_root.join("ui/fonts/Roboto-Bold.ttf").is_file()
+}
+
+#[cfg(test)]
+pub(crate) fn has_required_game_client_ui_content(asset_root: &Path) -> bool {
+    [
+        "ui/wallpapers/lira-loading.jpg",
+        "ui/wallpapers/ignara-loading.jpg",
+        "ui/wallpapers/sophia-loading.jpg",
+        "ui/wallpapers/yuna-loading.jpg",
+        "ui/characters/lira.png",
+        "ui/characters/ignara.png",
+        "ui/characters/sophia.png",
+        "ui/characters/yuna.png",
+        "ui/fonts/Roboto-Bold.ttf",
+    ]
+    .iter()
+    .all(|asset| asset_root.join(asset).is_file())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::tempdir;
 
     #[test]
     fn normalizes_valid_accent_colors() {
@@ -258,5 +293,58 @@ mod tests {
         };
 
         assert_eq!(settings.accent_color_css(), DEFAULT_ACCENT_COLOR);
+    }
+
+    #[test]
+    fn resolves_a_complete_runtime_root_without_a_developer_path() {
+        let directory = tempdir().unwrap();
+        let assets = directory.path().join("assets");
+        for directory in ["audio", "champions", "maps", "materials"] {
+            std::fs::create_dir_all(assets.join("game").join(directory)).unwrap();
+        }
+        for asset in [
+            "ui/wallpapers/lira-loading.jpg",
+            "ui/wallpapers/ignara-loading.jpg",
+            "ui/wallpapers/sophia-loading.jpg",
+            "ui/wallpapers/yuna-loading.jpg",
+            "ui/characters/lira.png",
+            "ui/characters/ignara.png",
+            "ui/characters/sophia.png",
+            "ui/characters/yuna.png",
+            "ui/fonts/Roboto-Bold.ttf",
+        ] {
+            let path = assets.join(asset);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, []).unwrap();
+        }
+
+        assert_eq!(
+            resolve_asset_root_from_candidates([assets.clone()]).unwrap(),
+            assets.canonicalize().unwrap()
+        );
+    }
+
+    #[test]
+    fn rejects_a_game_only_root_instead_of_using_it_for_ui_assets() {
+        let directory = tempdir().unwrap();
+        let assets = directory.path().join("assets");
+        for directory in ["audio", "champions", "maps", "materials"] {
+            std::fs::create_dir_all(assets.join("game").join(directory)).unwrap();
+        }
+
+        assert!(!has_required_runtime_content(&assets));
+        assert!(resolve_asset_root_from_candidates([assets]).is_err());
+    }
+
+    #[test]
+    fn repository_assets_contain_the_loading_and_hud_files() {
+        let assets = std::env::current_dir()
+            .unwrap()
+            .ancestors()
+            .map(|directory| directory.join("assets"))
+            .find(|candidate| has_required_game_client_ui_content(candidate))
+            .expect("a complete repository assets directory");
+
+        assert!(has_required_game_client_ui_content(&assets));
     }
 }

@@ -60,10 +60,10 @@ export type GameClientStatus = {
 
 export function canReconnectGameClient(
   gameClientRunning: boolean,
-  gameClientClosedByClient: boolean,
+  gameServerAvailable: boolean,
   parameters?: GameLaunchParameters,
 ) {
-  return !gameClientRunning && gameClientClosedByClient && Boolean(parameters);
+  return !gameClientRunning && gameServerAvailable && Boolean(parameters);
 }
 
 export function didGameClientExit(

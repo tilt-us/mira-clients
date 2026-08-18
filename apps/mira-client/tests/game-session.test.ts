@@ -18,11 +18,11 @@ const launchParameters: GameLaunchParameters = {
 };
 
 describe("game-session reconnect", () => {
-  test("does not offer reconnect after an unexpected game-client exit", () => {
+  test("does not offer reconnect when the game server is unavailable", () => {
     expect(canReconnectGameClient(false, false, launchParameters)).toBe(false);
   });
 
-  test("offers reconnect only after the player intentionally closed the client", () => {
+  test("offers reconnect after the game client exits while the server remains ready", () => {
     expect(canReconnectGameClient(false, true, launchParameters)).toBe(true);
   });
 
