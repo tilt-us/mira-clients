@@ -1,6 +1,6 @@
 use crate::content;
 use std::{
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Child, Command},
     sync::Mutex,
     thread,
@@ -65,7 +65,7 @@ pub(crate) fn launch_game(
     let game_dir = game_binary
         .parent()
         .ok_or_else(|| "Game-Client-Verzeichnis konnte nicht bestimmt werden.".to_string())?;
-    let asset_root = content::ready_game_asset_root(&app)?;
+    let asset_root = resolve_game_asset_root(&app, &game_binary)?;
 
     let mut command = Command::new(&game_binary);
     command
@@ -195,6 +195,36 @@ fn validate_gameplay_endpoint(request: &LaunchGameRequest) -> Result<(), String>
     }
 
     Ok(())
+}
+
+/// Resolves the one asset root that contains both standalone game and UI assets.
+fn resolve_game_asset_root(app: &tauri::AppHandle, game_binary: &Path) -> Result<PathBuf, String> {
+    if cfg!(debug_assertions) && std::env::var_os(mira_downloads::INSTALL_ROOT_ENV).is_none() {
+        return development_game_asset_root(game_binary);
+    }
+
+    content::ready_game_asset_root(app)
+}
+
+/// Locates a checkout's assets folder relative to the development game binary.
+///
+/// This deliberately walks from the executable path instead of embedding a developer
+/// workstation path in the launcher.
+fn development_game_asset_root(game_binary: &Path) -> Result<PathBuf, String> {
+    game_binary
+        .parent()
+        .into_iter()
+        .flat_map(Path::ancestors)
+        .map(|directory| directory.join("assets"))
+        .find(|candidate| {
+            content::has_required_game_content(&candidate.join("game"))
+                && content::has_required_game_client_runtime_ui(candidate)
+        })
+        .and_then(|candidate| candidate.canonicalize().ok())
+        .ok_or_else(|| {
+            "Development game assets are incomplete. Expected an assets directory containing game content and required UI files."
+                .to_string()
+        })
 }
 
 /// Runs the game client status step for the desktop game-launcher process system.
@@ -384,7 +414,7 @@ mod tests {
             match_id: "match-1".to_string(),
             player_public_id: 42,
             server_host: "217.160.25.101".to_string(),
-            server_port: 7949,
+            server_port: 7035,
             protocol: "UDP".to_string(),
             screen: "window".to_string(),
             team: "light".to_string(),
@@ -405,7 +435,7 @@ mod tests {
                 .windows(2)
                 .any(|pair| pair == ["--server-host", "217.160.25.101"])
         );
-        assert!(arguments.windows(2).any(|pair| pair == ["--port", "7949"]));
+        assert!(arguments.windows(2).any(|pair| pair == ["--port", "7035"]));
         assert!(
             !arguments
                 .iter()
@@ -446,5 +476,35 @@ mod tests {
             std::fs::create_dir_all(required_asset_root.join(directory)).unwrap();
         }
         assert!(content::has_required_game_content(&required_asset_root));
+    }
+
+    #[test]
+    fn development_asset_root_is_found_relative_to_the_game_binary() {
+        let directory = tempfile::tempdir().unwrap();
+        let game_binary = directory.path().join("target/debug/mira-game-client");
+        let assets = directory.path().join("assets");
+        for directory in ["audio", "champions", "maps", "materials"] {
+            std::fs::create_dir_all(assets.join("game").join(directory)).unwrap();
+        }
+        for asset in [
+            "ui/wallpapers/lira-loading.jpg",
+            "ui/wallpapers/ignara-loading.jpg",
+            "ui/wallpapers/sophia-loading.jpg",
+            "ui/wallpapers/yuna-loading.jpg",
+            "ui/characters/lira.png",
+            "ui/characters/ignara.png",
+            "ui/characters/sophia.png",
+            "ui/characters/yuna.png",
+            "ui/fonts/Roboto-Bold.ttf",
+        ] {
+            let path = assets.join(asset);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, []).unwrap();
+        }
+
+        assert_eq!(
+            development_game_asset_root(&game_binary).unwrap(),
+            assets.canonicalize().unwrap()
+        );
     }
 }

@@ -10,12 +10,14 @@ vi.mock("@tauri-apps/api/core", () => tauri);
 vi.mock("../src/api/http", () => http);
 
 import {
+  cancelNativeOAuthLogin,
   completeNativeOAuthAttempt,
   completeRedirectLogin,
   isNativeOAuthInFlight,
   startDiscordLogin,
   startGithubLogin,
   startGoogleLogin,
+  startKeycloakLogout,
 } from "../src/auth/keycloak";
 import { clearOAuthRequest, readOAuthRequest } from "../src/auth/storage";
 
@@ -37,8 +39,13 @@ function prepareTauriMocks() {
 
 function authorizationRequest() {
   const startCall = tauri.invoke.mock.calls.find(([command]) => command === "start_oauth_window");
-  const request = startCall?.[1]?.request as { authUrl: string; redirectUri: string };
+  const request = startCall?.[1]?.request as {
+    authUrl: string;
+    browserSecurity: string;
+    redirectUri: string;
+  };
   return {
+    browserSecurity: request.browserSecurity,
     redirectUri: request.redirectUri,
     url: new URL(request.authUrl),
   };
@@ -54,7 +61,7 @@ describe("native OAuth", () => {
     prepareTauriMocks();
   });
 
-  test("allocates one slash-free redirect and opens the system browser once", async () => {
+  test("allocates one slash-free redirect and opens native OAuth once", async () => {
     await startGoogleLogin();
 
     const { redirectUri: authorizationRedirectUri, url } = authorizationRequest();
@@ -67,6 +74,7 @@ describe("native OAuth", () => {
     expect(url.searchParams.get("code_challenge_method")).toBe("S256");
     expect(url.searchParams.get("kc_idp_hint")).toBe("google");
     expect(url.searchParams.get("prompt")).toBe("select_account");
+    expect(url.searchParams.get("max_age")).toBe("0");
     expect(readOAuthRequest().redirectUri).toBe(redirectUri);
     completeNativeOAuthAttempt();
     expect(isNativeOAuthInFlight()).toBe(false);
@@ -83,8 +91,40 @@ describe("native OAuth", () => {
     expect(isNativeOAuthInFlight()).toBe(true);
   });
 
+  test("cancels a waiting native OAuth attempt and clears its PKCE request", async () => {
+    await startGoogleLogin();
+
+    await cancelNativeOAuthLogin();
+
+    expect(tauri.invoke).toHaveBeenCalledWith("cancel_oauth_attempt", {
+      request: { attemptId: 1 },
+    });
+    expect(readOAuthRequest()).toEqual({
+      state: null,
+      codeVerifier: null,
+      redirectUri: null,
+    });
+    expect(isNativeOAuthInFlight()).toBe(false);
+  });
+
+  test("forwards the locally selected browser security mode to native OAuth", async () => {
+    await startGoogleLogin({
+      accentColor: "#f2c45b",
+      browserSecurity: "browser:firefox",
+      locale: "en",
+    });
+
+    expect(authorizationRequest().browserSecurity).toBe("browser:firefox");
+  });
+
+  test("never opens a browser tab for desktop logout", async () => {
+    await startKeycloakLogout();
+
+    expect(tauri.invoke).not.toHaveBeenCalled();
+  });
+
   test.each([
-    ["discord", startDiscordLogin, null],
+    ["discord", startDiscordLogin, "select_account"],
     ["github", startGithubLogin, "select_account"],
   ] as const)("uses the expected %s provider prompt", async (provider, start, prompt) => {
     await start();
@@ -92,6 +132,7 @@ describe("native OAuth", () => {
 
     expect(url.searchParams.get("kc_idp_hint")).toBe(provider);
     expect(url.searchParams.get("prompt")).toBe(prompt);
+    expect(url.searchParams.get("max_age")).toBe("0");
   });
 
   test("uses the byte-identical stored redirect URI for token exchange", async () => {

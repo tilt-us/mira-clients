@@ -18,11 +18,23 @@ import {
 import { API_BASE_URL, API_ENVIRONMENT, LIVE_API_BASE_URL } from "../api/config";
 import { apiFetch } from "../api/http";
 import {
+  defaultOAuthBrowserOptions,
+  defaultOAuthBrowserSecurity,
+  loadOAuthBrowserConfiguration,
+  readOAuthBrowserSecurity,
+  writeOAuthBrowserSecurity,
+  type OAuthBrowserOption,
+  type OAuthBrowserSecurity,
+} from "../auth/browserSecurity";
+import {
+  cancelNativeOAuthLogin,
   assertAccessTokenIssuer,
   completeNativeOAuthAttempt,
   completeRedirectLogin,
   getValidDesktopApiToken,
   getValidAccessToken,
+  isNativeOAuthAttemptCurrent,
+  isNativeOAuthInFlight,
   loginWithPassword,
   passwordResetSentParam,
   startPasswordReset,
@@ -62,6 +74,7 @@ type AuthMode = "login" | "register";
 type LoadState = "idle" | "loading";
 
 type OAuthCallbackPayload = {
+  attemptId: number;
   url: string;
 };
 
@@ -492,6 +505,13 @@ function Authentication() {
   const [registerPassword, setRegisterPassword] = useState("");
   const [loadState, setLoadState] = useState<LoadState>("idle");
   const [oauthModalOpen, setOauthModalOpen] = useState(false);
+  const [oauthBrowserSecurity, setOauthBrowserSecurity] =
+    useState<OAuthBrowserSecurity>(
+      () => readOAuthBrowserSecurity() ?? defaultOAuthBrowserSecurity(),
+    );
+  const [oauthBrowserOptions, setOauthBrowserOptions] = useState<OAuthBrowserOption[]>(
+    defaultOAuthBrowserOptions,
+  );
   const [oauthProfileSetup, setOauthProfileSetup] =
     useState<OAuthProfileSetupState>();
   const [closeDialogOpen, setCloseDialogOpen] = useState(false);
@@ -531,6 +551,44 @@ function Authentication() {
   const hydratedClientSettingsProfileKeyRef = useRef<string | undefined>(undefined);
   const lastSavedClientSettingsPayloadRef = useRef<string | undefined>(undefined);
   const activeProfileKey = profile ? getClientSettingsProfileKey(profile) : undefined;
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadBrowserSecurityOptions() {
+      const configuration = await loadOAuthBrowserConfiguration();
+
+      if (cancelled) {
+        return;
+      }
+
+      setOauthBrowserOptions(configuration.options);
+      const storedSelection = readOAuthBrowserSecurity();
+      const candidate = storedSelection ?? configuration.defaultBrowserSecurity;
+      const selectionAvailable = configuration.options.some(
+        (option) => option.id === candidate,
+      );
+      const nextSelection = selectionAvailable
+        ? candidate
+        : configuration.defaultBrowserSecurity;
+
+      setOauthBrowserSecurity(nextSelection);
+      if (storedSelection !== nextSelection) {
+        writeOAuthBrowserSecurity(nextSelection);
+      }
+    }
+
+    void loadBrowserSecurityOptions();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  function handleOAuthBrowserSecurityChange(nextSelection: OAuthBrowserSecurity) {
+    setOauthBrowserSecurity(nextSelection);
+    writeOAuthBrowserSecurity(nextSelection);
+  }
 
   const googleEnabled = useMemo(
     () => providers.length === 0 || providers.includes("google"),
@@ -847,7 +905,11 @@ function Authentication() {
     let cancelled = false;
     const unlisteners: UnlistenFn[] = [];
 
-    async function completeOAuthWindowLogin(callbackUrl: string) {
+    async function completeOAuthWindowLogin(callbackUrl: string, attemptId: number) {
+      if (cancelled || !isNativeOAuthAttemptCurrent(attemptId)) {
+        return;
+      }
+
       setLoadState("loading");
 
       try {
@@ -864,12 +926,15 @@ function Authentication() {
 
         const tokens = await completeRedirectLogin(callbackUrl);
 
-        if (cancelled || !tokens) {
+        if (cancelled || !tokens || !isNativeOAuthAttemptCurrent(attemptId)) {
           return;
         }
 
         saveTokens(tokens);
         const loadedProfile = await loadProfile(tokens.accessToken);
+        if (cancelled || !isNativeOAuthAttemptCurrent(attemptId)) {
+          return;
+        }
         prepareOAuthProfileSetup(loadedProfile);
 
         if (!cancelled) {
@@ -893,8 +958,9 @@ function Authentication() {
           });
         }
       } finally {
-        completeNativeOAuthAttempt();
-        if (!cancelled) {
+        const isCurrentAttempt = isNativeOAuthAttemptCurrent(attemptId);
+        completeNativeOAuthAttempt(attemptId);
+        if (!cancelled && isCurrentAttempt) {
           setLoadState("idle");
           setOauthModalOpen(false);
         }
@@ -904,14 +970,21 @@ function Authentication() {
     async function subscribeOAuthWindowEvents() {
       unlisteners.push(
         await listen<OAuthCallbackPayload>("mira-oauth-callback", (event) => {
+          if (!isNativeOAuthAttemptCurrent(event.payload.attemptId)) {
+            console.info(
+              `[mira-client][oauth] attempt=${event.payload.attemptId} callback=ignored reason=stale`,
+            );
+            return;
+          }
+
           if (!event.payload.url) {
-            completeNativeOAuthAttempt();
+            completeNativeOAuthAttempt(event.payload.attemptId);
             setLoadState("idle");
             setOauthModalOpen(false);
             return;
           }
 
-          void completeOAuthWindowLogin(event.payload.url);
+          void completeOAuthWindowLogin(event.payload.url, event.payload.attemptId);
         }),
       );
     }
@@ -1166,6 +1239,16 @@ function Authentication() {
     }
   }
 
+  async function handleOAuthLoginCancel() {
+    await cancelNativeOAuthLogin();
+    setOauthModalOpen(false);
+    setLoadState("idle");
+    notify({
+      type: "info",
+      message: t("auth-oauth-cancelled"),
+    });
+  }
+
   /**
    * Description
    * Starts the Google OAuth sign-in flow.
@@ -1177,9 +1260,13 @@ function Authentication() {
       await prepareNewLogin();
       setProfile(undefined);
       setClientSettingsRemoteReady(false);
-      const result = await startGoogleLogin({ accentColor, locale });
+      const result = await startGoogleLogin({
+        accentColor,
+        browserSecurity: oauthBrowserSecurity,
+        locale,
+      });
 
-      if (isTauri() && !result?.ignored) {
+      if (isTauri() && !result?.ignored && isNativeOAuthInFlight()) {
         setOauthModalOpen(true);
       }
     } catch (caughtError) {
@@ -1203,9 +1290,13 @@ function Authentication() {
       await prepareNewLogin();
       setProfile(undefined);
       setClientSettingsRemoteReady(false);
-      const result = await startGithubLogin({ accentColor, locale });
+      const result = await startGithubLogin({
+        accentColor,
+        browserSecurity: oauthBrowserSecurity,
+        locale,
+      });
 
-      if (isTauri() && !result?.ignored) {
+      if (isTauri() && !result?.ignored && isNativeOAuthInFlight()) {
         setOauthModalOpen(true);
       }
     } catch (caughtError) {
@@ -1229,9 +1320,13 @@ function Authentication() {
       await prepareNewLogin();
       setProfile(undefined);
       setClientSettingsRemoteReady(false);
-      const result = await startDiscordLogin({ accentColor, locale });
+      const result = await startDiscordLogin({
+        accentColor,
+        browserSecurity: oauthBrowserSecurity,
+        locale,
+      });
 
-      if (isTauri() && !result?.ignored) {
+      if (isTauri() && !result?.ignored && isNativeOAuthInFlight()) {
         setOauthModalOpen(true);
       }
     } catch (caughtError) {
@@ -1248,9 +1343,13 @@ function Authentication() {
     setLoadState("loading");
 
     try {
-      const result = await startPasswordReset({ accentColor, locale });
+      const result = await startPasswordReset({
+        accentColor,
+        browserSecurity: oauthBrowserSecurity,
+        locale,
+      });
 
-      if (isTauri() && !result?.ignored) {
+      if (isTauri() && !result?.ignored && isNativeOAuthInFlight()) {
         setOauthModalOpen(true);
       }
     } catch (caughtError) {
@@ -1364,6 +1463,13 @@ function Authentication() {
               <h2 id="oauth-waiting-title">{t("auth-oauth-wait-title")}</h2>
               <p>{t("auth-oauth-wait-description")}</p>
             </div>
+            <button
+              className="secondary-button oauth-waiting-cancel"
+              type="button"
+              onClick={() => void handleOAuthLoginCancel()}
+            >
+              {t("auth-oauth-cancel")}
+            </button>
           </div>
         </div>
       ) : null}
@@ -1444,6 +1550,8 @@ function Authentication() {
         <Client
           accentColor={accentColor}
           backgroundChampion={backgroundChampion}
+          browserSecurity={oauthBrowserSecurity}
+          browserSecurityOptions={oauthBrowserOptions}
           chatPosition={chatPosition}
           clientSettingsFolders={clientSettingsFolders}
           clientAnimation={clientAnimation}
@@ -1465,6 +1573,7 @@ function Authentication() {
           uiScale={uiScale}
           onAccentColorChange={setAccentColor}
           onBackgroundChampionChange={setBackgroundChampion}
+          onBrowserSecurityChange={handleOAuthBrowserSecurityChange}
           onChatPositionChange={setChatPosition}
           onClientSettingsFoldersChange={setClientSettingsFolders}
           onClientAnimationChange={setClientAnimation}
@@ -1642,6 +1751,8 @@ function Authentication() {
         <SettingsModal
           accentColor={accentColor}
           backgroundChampion={backgroundChampion}
+          browserSecurity={oauthBrowserSecurity}
+          browserSecurityOptions={oauthBrowserOptions}
           chatPosition={chatPosition}
           clientAnimation={clientAnimation}
           friendRequestPolicy={friendRequestPolicy}
@@ -1656,6 +1767,7 @@ function Authentication() {
           vision="Vision.Auth"
           onAccentColorChange={setAccentColor}
           onBackgroundChampionChange={setBackgroundChampion}
+          onBrowserSecurityChange={handleOAuthBrowserSecurityChange}
           onChatPositionChange={setChatPosition}
           onClientAnimationChange={setClientAnimation}
           onFriendRequestPolicyChange={setFriendRequestPolicy}

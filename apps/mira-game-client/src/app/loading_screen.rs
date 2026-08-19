@@ -1,7 +1,7 @@
 //! Provides the client loading screen, including readiness tracking, player data, and UI synchronization.
 
 use super::settings::{ClientAppSettings, ClientLaunchSettings};
-use bevy::asset::RenderAssetUsages;
+use bevy::asset::{LoadState, RenderAssetUsages};
 use bevy::ecs::spawn::SpawnIter;
 use bevy::image::{CompressedImageFormats, ImageSampler, ImageType};
 use bevy::prelude::*;
@@ -13,7 +13,7 @@ use mira_game_api::network::{
     ChampionId, DisplayReady, LauncherMatchManifest, LoadingScreenPlayer, LoadingScreenStatus,
     ReliableCommandChannel,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 use std::sync::mpsc::{Receiver, channel};
 use std::time::Duration;
@@ -35,6 +35,7 @@ pub struct LoadingScreenState {
     active: bool,
     complete: bool,
     connection_error: Option<String>,
+    asset_error: Option<String>,
     wallpaper_assets_ready: bool,
     status_text: String,
     client_progress_percent: f32,
@@ -80,6 +81,7 @@ struct LoadingScreenReadyGate {
 #[derive(Resource, Debug, Default)]
 struct LoadingScreenConnectionState {
     has_connected: bool,
+    has_initial_server_state: bool,
     initial_retry_count: u8,
     retry_timer: Option<Timer>,
 }
@@ -121,8 +123,17 @@ impl LoadingScreenConnectionState {
 /// Tracks wallpaper assets while they are being preloaded.
 #[derive(Resource, Debug, Default)]
 struct LoadingScreenWallpaperPreload {
-    handles: Vec<Handle<Image>>,
+    assets: Vec<LoadingScreenWallpaperAsset>,
     expected_count: usize,
+    failed_assets: HashSet<AssetId<Image>>,
+    fallback: Option<Handle<Image>>,
+}
+
+#[derive(Debug)]
+struct LoadingScreenWallpaperAsset {
+    champion: ChampionId,
+    path: String,
+    handle: Handle<Image>,
 }
 
 #[derive(Resource)]
@@ -151,10 +162,6 @@ impl LoadingScreenImages {
             .get(&champion)
             .or_else(|| self.wallpapers.get(&ChampionId::LIRA))
             .expect("prototype roster must include Lira")
-    }
-
-    fn wallpaper_handles(&self) -> impl Iterator<Item = &Handle<Image>> {
-        self.wallpapers.values()
     }
 }
 
@@ -300,11 +307,27 @@ fn preload_loading_screen_wallpapers(
     asset_server: Res<AssetServer>,
     mut preload: ResMut<LoadingScreenWallpaperPreload>,
     mut state: ResMut<LoadingScreenState>,
+    mut ui_images: ResMut<Assets<Image>>,
     mut commands: Commands,
 ) {
     let images = LoadingScreenImages::load(&asset_server);
-    preload.handles = images.wallpaper_handles().cloned().collect();
-    preload.expected_count = preload.handles.len();
+    preload.assets =
+        ChampionId::PROTOTYPE_ROSTER
+            .into_iter()
+            .filter_map(|champion| {
+                let path = format!("ui/wallpapers/{}-loading.jpg", champion.asset_slug()?);
+                images.wallpapers.get(&champion).cloned().map(|handle| {
+                    LoadingScreenWallpaperAsset {
+                        champion,
+                        path,
+                        handle,
+                    }
+                })
+            })
+            .collect();
+    preload.expected_count = preload.assets.len();
+    preload.failed_assets.clear();
+    preload.fallback = Some(ui_images.add(fallback_loading_wallpaper()));
     commands.insert_resource(images);
 
     state.wallpaper_assets_ready = !state.active;
@@ -312,11 +335,40 @@ fn preload_loading_screen_wallpapers(
 
 fn update_loading_screen_wallpaper_status(
     mut state: ResMut<LoadingScreenState>,
-    preload: Res<LoadingScreenWallpaperPreload>,
+    asset_server: Res<AssetServer>,
+    mut preload: ResMut<LoadingScreenWallpaperPreload>,
+    mut loading_images: ResMut<LoadingScreenImages>,
     images: Res<Assets<Image>>,
 ) {
     if preload.expected_count == 0 {
         return;
+    }
+
+    let failed_wallpapers = preload
+        .assets
+        .iter()
+        .filter_map(|asset| {
+            matches!(
+                asset_server.get_load_state(asset.handle.id()),
+                Some(LoadState::Failed(_))
+            )
+            .then(|| (asset.champion, asset.path.clone(), asset.handle.id()))
+        })
+        .collect::<Vec<_>>();
+    for (champion, path, handle) in failed_wallpapers {
+        if preload.failed_assets.insert(handle) {
+            let detail = asset_server
+                .get_load_state(handle)
+                .and_then(|state| match state {
+                    LoadState::Failed(error) => Some(error.to_string()),
+                    _ => None,
+                })
+                .unwrap_or_else(|| "unknown asset error".to_string());
+            warn!(asset = %path, error = %detail, "Optional loading-screen asset failed; using fallback.");
+        }
+        if let Some(fallback) = preload.fallback.clone() {
+            loading_images.wallpapers.insert(champion, fallback);
+        }
     }
 
     let wallpapers_ready = wallpaper_handles_ready(&preload, &images);
@@ -334,11 +386,11 @@ fn wallpaper_handles_ready(
     preload: &LoadingScreenWallpaperPreload,
     images: &Assets<Image>,
 ) -> bool {
-    preload.handles.len() == preload.expected_count
-        && preload
-            .handles
-            .iter()
-            .all(|handle| images.get(handle.id()).is_some())
+    preload.assets.len() == preload.expected_count
+        && preload.assets.iter().all(|asset| {
+            preload.failed_assets.contains(&asset.handle.id())
+                || images.get(asset.handle.id()).is_some()
+        })
 }
 
 /// Creates loading-screen state from the supplied launch settings.
@@ -348,6 +400,7 @@ pub fn loading_screen_state(settings: &ClientLaunchSettings) -> LoadingScreenSta
         active: enabled,
         complete: !enabled,
         connection_error: None,
+        asset_error: None,
         wallpaper_assets_ready: !enabled,
         status_text: if enabled {
             "Loading local arena".to_string()
@@ -378,12 +431,32 @@ fn update_loading_screen_ready_gate(
     images: Option<Res<Assets<Image>>>,
     scene_roots: Query<&WorldAssetRoot>,
 ) {
-    if !state.active || state.client_ready || state.connection_error.is_some() {
+    if !state.active || state.client_ready || state.has_error() {
         return;
     }
 
     gate.minimum_timer.tick(time.delta());
     let minimum_done = gate.minimum_timer.is_finished();
+    let required_scene_failure = asset_server.as_deref().and_then(|asset_server| {
+        scene_roots.iter().find_map(|scene_root| {
+            let LoadState::Failed(error) = asset_server.load_state(scene_root.0.id()) else {
+                return None;
+            };
+            let path = asset_server
+                .get_path(scene_root.0.id())
+                .map(|path| path.to_string())
+                .unwrap_or_else(|| "unknown scene asset".to_string());
+            Some(format!(
+                "Required game asset failed to load: {path} ({error})"
+            ))
+        })
+    });
+    if let Some(error) = required_scene_failure {
+        error!("{error}");
+        state.set_asset_error(error);
+        return;
+    }
+
     let scene_assets_ready = asset_server
         .as_deref()
         .map(|asset_server| {
@@ -409,6 +482,7 @@ fn update_loading_screen_ready_gate(
         state.client_ready = true;
         state.client_progress_percent = 100.0;
         state.status_text = "Local arena ready".to_string();
+        info!("Required assets ready.");
         return;
     }
 
@@ -443,8 +517,7 @@ fn send_display_ready(
     connection: Res<LoadingScreenConnectionState>,
     mut senders: Query<&mut MessageSender<DisplayReady>, With<Client>>,
 ) {
-    if !state.active || !state.client_ready || state.ready_sent || state.connection_error.is_some()
-    {
+    if !state.active || !state.client_ready || state.ready_sent || state.has_error() {
         return;
     }
 
@@ -457,13 +530,14 @@ fn send_display_ready(
         sender.send::<ReliableCommandChannel>(DisplayReady);
     }
     state.ready_sent = true;
-    state.client_progress_percent = 100.0;
+    state.client_progress_percent = 95.0;
     state.status_text = "Waiting for players".to_string();
 }
 
 /// Applies the latest server loading status to local state and player profiles.
 fn receive_loading_screen_status(
     mut state: ResMut<LoadingScreenState>,
+    mut connection: ResMut<LoadingScreenConnectionState>,
     manifest: Res<ClientLoadingMatchManifest>,
     mut overhead_profiles: ResMut<OverheadPlayerProfiles>,
     mut receivers: Query<&mut MessageReceiver<LoadingScreenStatus>, With<Client>>,
@@ -485,15 +559,19 @@ fn receive_loading_screen_status(
         }
     }
 
-    if state.connection_error.is_some() {
+    if state.has_error() {
         return;
+    }
+
+    if !connection.has_initial_server_state {
+        connection.has_initial_server_state = true;
+        info!("Initial server state received.");
     }
 
     state.ready_players = status.ready_players;
     state.total_players = status.total_players.max(1);
-    if status.can_close {
-        state.status_text = "Entering arena".to_string();
-        state.complete = true;
+    if complete_loading_screen(&mut state, status.can_close) {
+        info!("Leaving loading screen. Gameplay entered.");
     } else if !state.complete && state.ready_sent {
         state.status_text = "Waiting for players".to_string();
     }
@@ -516,6 +594,7 @@ fn record_loading_screen_connection(
     }
 
     connection.mark_connected();
+    info!("Netcode handshake complete.");
 }
 
 /// Records a failed game-server connection while keeping the loading screen visible.
@@ -524,7 +603,7 @@ fn record_loading_screen_disconnect(
     mut state: ResMut<LoadingScreenState>,
     mut connection: ResMut<LoadingScreenConnectionState>,
 ) {
-    if !state.active || state.complete || state.connection_error.is_some() {
+    if !state.active || state.complete || state.has_error() {
         return;
     }
 
@@ -548,8 +627,8 @@ fn record_loading_screen_disconnect(
         warn!("Game server connection failed: {reason}");
         let status_text = loading_connection_error_text(reason);
         state.connection_error = Some(status_text.to_string());
-        state.client_ready = true;
-        state.client_progress_percent = 100.0;
+        state.client_ready = false;
+        state.client_progress_percent = 0.0;
         state.status_text = status_text.to_string();
         return;
     }
@@ -563,7 +642,7 @@ fn retry_initial_game_server_connection(
     disconnected_clients: Query<Entity, (With<Client>, With<Disconnected>)>,
     mut commands: Commands,
 ) {
-    if !state.active || state.complete || state.connection_error.is_some() {
+    if !state.active || state.complete || state.has_error() {
         return;
     }
     if !connection.retry_is_ready(time.delta()) {
@@ -587,6 +666,17 @@ fn loading_connection_error_text(reason: &str) -> &'static str {
     } else {
         "Connection to game server lost"
     }
+}
+
+/// Completes the loading transition once, even if the server repeats its ready status.
+fn complete_loading_screen(state: &mut LoadingScreenState, can_close: bool) -> bool {
+    if !can_close || state.complete {
+        return false;
+    }
+
+    state.status_text = "Entering arena".to_string();
+    state.complete = true;
+    true
 }
 
 #[derive(Component)]
@@ -1145,7 +1235,7 @@ fn sync_loading_screen_ui(
         *color = TextColor(accent_foreground_for(accent));
     }
 
-    let status_color = if state.connection_error.is_some() {
+    let status_color = if state.has_error() {
         Color::srgb_u8(0xED, 0x5C, 0x5C)
     } else {
         Color::srgba(0.78, 0.82, 0.88, 1.0)
@@ -1552,6 +1642,23 @@ fn progress_badge_shape_image(accent: Color) -> Image {
     )
 }
 
+/// Provides a deterministic in-memory background when a cosmetic wallpaper cannot load.
+fn fallback_loading_wallpaper() -> Image {
+    let width = 2;
+    let height = 2;
+    Image::new(
+        Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        vec![0x16, 0x22, 0x35, 0xFF].repeat((width * height) as usize),
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::default(),
+    )
+}
+
 fn accent_foreground_for(color: Color) -> Color {
     let srgba = color.to_srgba();
     let luminance = 0.2126 * srgba.red + 0.7152 * srgba.green + 0.0722 * srgba.blue;
@@ -1570,6 +1677,9 @@ impl LoadingScreenState {
 
     /// Returns the progress percentage shown by the loading screen.
     fn progress_percent(&self) -> f32 {
+        if self.has_error() {
+            return 0.0;
+        }
         if !self.ready_sent {
             return self.client_progress_percent.clamp(0.0, 100.0);
         }
@@ -1577,9 +1687,21 @@ impl LoadingScreenState {
             return 100.0;
         }
         if self.total_players == 0 {
-            return 0.0;
+            return 95.0;
         }
-        ((self.ready_players as f32 / self.total_players as f32) * 100.0).clamp(0.0, 100.0)
+        ((self.ready_players as f32 / self.total_players as f32) * 100.0).clamp(0.0, 99.0)
+    }
+
+    fn has_error(&self) -> bool {
+        self.connection_error.is_some() || self.asset_error.is_some()
+    }
+
+    fn set_asset_error(&mut self, error: String) {
+        self.asset_error = Some(error.clone());
+        self.client_ready = false;
+        self.ready_sent = false;
+        self.client_progress_percent = 0.0;
+        self.status_text = error;
     }
 }
 
@@ -1600,6 +1722,7 @@ mod tests {
             active: true,
             complete: false,
             connection_error: None,
+            asset_error: None,
             wallpaper_assets_ready: true,
             status_text: String::new(),
             client_progress_percent: 100.0,
@@ -1628,6 +1751,69 @@ mod tests {
         snapshot.ready_players = 2;
 
         assert_eq!(snapshot.progress_percent(), 42.0);
+    }
+
+    #[test]
+    fn loading_errors_never_report_one_hundred_percent() {
+        let mut snapshot = loading_screen_state_for_test();
+        snapshot.asset_error =
+            Some("Required game asset failed to load: game/maps/arena.glb".to_string());
+
+        assert_eq!(snapshot.progress_percent(), 0.0);
+        assert!(snapshot.is_visible());
+    }
+
+    #[test]
+    fn waiting_for_server_close_is_capped_below_one_hundred_percent() {
+        let mut snapshot = loading_screen_state_for_test();
+        snapshot.ready_players = 2;
+        snapshot.total_players = 2;
+
+        assert_eq!(snapshot.progress_percent(), 99.0);
+    }
+
+    #[test]
+    fn server_ready_repeats_complete_loading_only_once() {
+        let mut snapshot = loading_screen_state_for_test();
+
+        assert!(complete_loading_screen(&mut snapshot, true));
+        assert!(!complete_loading_screen(&mut snapshot, true));
+        assert!(snapshot.complete);
+    }
+
+    #[test]
+    fn failed_optional_wallpaper_is_ready_via_the_fallback_path() {
+        let mut images = Assets::<Image>::default();
+        let missing_wallpaper = images.add(fallback_loading_wallpaper());
+        images.remove(missing_wallpaper.id());
+        let mut failed_assets = HashSet::new();
+        failed_assets.insert(missing_wallpaper.id());
+        let preload = LoadingScreenWallpaperPreload {
+            assets: vec![LoadingScreenWallpaperAsset {
+                champion: ChampionId::LIRA,
+                path: "ui/wallpapers/lira-loading.jpg".to_string(),
+                handle: missing_wallpaper,
+            }],
+            expected_count: 1,
+            failed_assets,
+            fallback: Some(images.add(fallback_loading_wallpaper())),
+        };
+
+        assert!(wallpaper_handles_ready(&preload, &images));
+    }
+
+    #[test]
+    fn required_asset_failure_sets_a_deterministic_error_state() {
+        let mut snapshot = loading_screen_state_for_test();
+        snapshot
+            .set_asset_error("Required game asset failed to load: game/maps/arena.glb".to_string());
+
+        assert_eq!(
+            snapshot.asset_error.as_deref(),
+            Some("Required game asset failed to load: game/maps/arena.glb")
+        );
+        assert_eq!(snapshot.progress_percent(), 0.0);
+        assert!(!snapshot.client_ready);
     }
 
     #[test]
@@ -1677,6 +1863,12 @@ mod tests {
                 .connection_error
                 .as_deref(),
             Some("Connection to game server timed out")
+        );
+        assert_eq!(
+            app.world()
+                .resource::<LoadingScreenState>()
+                .progress_percent(),
+            0.0
         );
     }
 

@@ -69,27 +69,5 @@
       <div class="mark" aria-hidden="true">M</div>
       <div class="spinner" aria-hidden="true"></div>
     </main>
-    <script>
-      const params = new URLSearchParams(window.location.search);
-      const authUrl = params.get("authUrl");
-      const accent = params.get("accent");
-      const foreground = params.get("fontColor");
-
-      if (accent && /^#[0-9a-fA-F]{6}$/.test(accent)) {
-        document.documentElement.style.setProperty("--mira-oauth-accent", accent);
-      }
-
-      if (foreground === "white") {
-        document.documentElement.style.setProperty("--mira-oauth-foreground", "#ffffff");
-      } else if (foreground === "black") {
-        document.documentElement.style.setProperty("--mira-oauth-foreground", "#101216");
-      }
-
-      if (authUrl) {
-        window.setTimeout(() => {
-          window.location.replace(authUrl);
-        }, 80);
-      }
-    </script>
   </body>
 </html>

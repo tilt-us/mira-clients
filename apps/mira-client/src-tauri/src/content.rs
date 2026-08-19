@@ -122,10 +122,13 @@ pub(crate) fn ready_game_asset_root(app: &tauri::AppHandle) -> Result<PathBuf, S
     }
     let assets_root = install_root()?.join("assets");
     let game_root = assets_root.join(GAME_DIRECTORY);
-    if has_required_game_content(&game_root) {
+    if has_required_game_content(&game_root) && has_required_game_client_runtime_ui(&assets_root) {
         Ok(assets_root)
     } else {
-        Err("Game content is not installed at assets/game.".to_string())
+        Err(
+            "Required game assets are incomplete. Expected assets/game and assets/ui. Repair the Mira installation before starting a match."
+                .to_string(),
+        )
     }
 }
 
@@ -401,6 +404,31 @@ pub(crate) fn has_required_ui_content(ui_root: &Path) -> bool {
         .all(|directory| ui_root.join(directory).is_dir())
 }
 
+/// Verifies the exact UI assets loaded by the standalone Bevy game client.
+#[cfg(test)]
+pub(crate) fn has_required_game_client_ui_content(assets_root: &Path) -> bool {
+    [
+        "ui/wallpapers/lira-loading.jpg",
+        "ui/wallpapers/ignara-loading.jpg",
+        "ui/wallpapers/sophia-loading.jpg",
+        "ui/wallpapers/yuna-loading.jpg",
+        "ui/characters/lira.png",
+        "ui/characters/ignara.png",
+        "ui/characters/sophia.png",
+        "ui/characters/yuna.png",
+        "ui/fonts/Roboto-Bold.ttf",
+    ]
+    .iter()
+    .all(|asset| assets_root.join(asset).is_file())
+}
+
+pub(crate) fn has_required_game_client_runtime_ui(assets_root: &Path) -> bool {
+    ["characters", "fonts", "wallpapers"]
+        .iter()
+        .all(|directory| assets_root.join("ui").join(directory).is_dir())
+        && assets_root.join("ui/fonts/Roboto-Bold.ttf").is_file()
+}
+
 fn unzip_archive(archive_path: &Path, destination: &Path) -> Result<(), String> {
     let file = File::open(archive_path)
         .map_err(|error| format!("Could not open content archive: {error}"))?;
@@ -559,6 +587,31 @@ mod tests {
             fs::create_dir_all(ui_root.join(child)).unwrap();
         }
         assert!(has_required_ui_content(&ui_root));
+    }
+
+    #[test]
+    fn game_client_ui_validation_requires_all_assets_loaded_by_bevy() {
+        let directory = tempfile::tempdir().unwrap();
+        let assets_root = directory.path().join("assets");
+        assert!(!has_required_game_client_ui_content(&assets_root));
+
+        for asset in [
+            "ui/wallpapers/lira-loading.jpg",
+            "ui/wallpapers/ignara-loading.jpg",
+            "ui/wallpapers/sophia-loading.jpg",
+            "ui/wallpapers/yuna-loading.jpg",
+            "ui/characters/lira.png",
+            "ui/characters/ignara.png",
+            "ui/characters/sophia.png",
+            "ui/characters/yuna.png",
+            "ui/fonts/Roboto-Bold.ttf",
+        ] {
+            let path = assets_root.join(asset);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, []).unwrap();
+        }
+
+        assert!(has_required_game_client_ui_content(&assets_root));
     }
 
     #[test]

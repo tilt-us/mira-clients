@@ -37,6 +37,10 @@ impl Plugin for ClientAppPlugins {
         let app_settings = ClientAppSettings::default();
         let asset_root_path = app_settings.asset_root.to_string_lossy().into_owned();
         let ui_enabled = app_settings.ui_enabled;
+        if let Some(error) = app_settings.asset_root_error.clone() {
+            error!("{error}");
+            app.insert_resource(ClientLaunchGate::Blocked { message: error });
+        }
         let (screen_mode, health_bar_style, gameplay_settings) = app
             .world()
             .get_resource::<ClientLaunchSettings>()

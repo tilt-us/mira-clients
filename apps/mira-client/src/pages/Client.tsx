@@ -69,6 +69,7 @@ import {
   CHAT_API_BASE_URL,
   LIVE_API_BASE_URL,
 } from "../api/config";
+import type { OAuthBrowserOption, OAuthBrowserSecurity } from "../auth/browserSecurity";
 import { getValidAccessToken } from "../auth/keycloak";
 import ChampionSelection from "./ChampionSelection";
 import {
@@ -223,6 +224,8 @@ import {
 type ClientProps = {
   accentColor: string;
   backgroundChampion: BackgroundChampion;
+  browserSecurity: OAuthBrowserSecurity;
+  browserSecurityOptions: OAuthBrowserOption[];
   chatPosition: ChatPosition;
   clientSettingsFolders: ClientSettingsFolder[];
   clientAnimation: ClientAnimation;
@@ -232,6 +235,7 @@ type ClientProps = {
   locale: AppLocale;
   onAccentColorChange: (accentColor: string) => void;
   onBackgroundChampionChange: (backgroundChampion: BackgroundChampion) => void;
+  onBrowserSecurityChange: (browserSecurity: OAuthBrowserSecurity) => void;
   onChatPositionChange: (chatPosition: ChatPosition) => void;
   onClientSettingsFoldersChange: (folders: ClientSettingsFolder[]) => void;
   onClientAnimationChange: (clientAnimation: ClientAnimation) => void;
@@ -264,6 +268,8 @@ type ClientBackTarget = "main" | "gameSelector" | "lobby";
 function Client({
   accentColor,
   backgroundChampion,
+  browserSecurity,
+  browserSecurityOptions,
   chatPosition,
   clientSettingsFolders,
   clientAnimation,
@@ -273,6 +279,7 @@ function Client({
   locale,
   onAccentColorChange,
   onBackgroundChampionChange,
+  onBrowserSecurityChange,
   onChatPositionChange,
   onClientSettingsFoldersChange,
   onClientAnimationChange,
@@ -357,6 +364,7 @@ function Client({
     useState<GameLaunchParameters>();
   const [gameClientRunning, setGameClientRunning] = useState(false);
   const [gameClientClosedByClient, setGameClientClosedByClient] = useState(false);
+  const [gameServerAvailable, setGameServerAvailable] = useState(false);
   const [gameContentStatus, setGameContentStatus] = useState<GameContentStatus>(() =>
     isTauri() ? initialGameContentStatus : { ...initialGameContentStatus, state: "ready" },
   );
@@ -1435,6 +1443,7 @@ function Client({
     setGameInProgress(true);
     setGameClientRunning(false);
     setGameClientClosedByClient(Boolean(storedSession.closedByClient));
+    setGameServerAvailable(true);
     setPresenceStatus("ingame");
     publishActivePresence("IN_GAME");
   }, [profilePublicId]);
@@ -1453,11 +1462,16 @@ function Client({
         if (active) {
           if (didGameClientExit(observedGameClientRunningRef.current, status.running)) {
             observedGameClientRunningRef.current = false;
-            finishGameSession();
-            notify({
-              type: "error",
-              message: t("client-game-session-ended"),
-            });
+            setGameClientRunning(false);
+            setGameClientClosedByClient(true);
+            const parameters = gameLaunchParametersRef.current;
+            if (parameters) {
+              writeStoredGameSession({
+                closedByClient: true,
+                parameters,
+                playerPublicId: profilePublicId,
+              });
+            }
             return;
           }
 
@@ -1848,6 +1862,11 @@ function Client({
           hydratedMatch.matchId === gameLaunchParameters.matchId)
       ) {
         finishGameSession(hydratedMatch);
+      } else if (
+        !gameLaunchParameters?.matchId ||
+        hydratedMatch.matchId === gameLaunchParameters.matchId
+      ) {
+        setGameServerAvailable(hydratedMatch.status === "READY");
       }
 
       return;
@@ -2461,6 +2480,7 @@ function Client({
     setGameInProgress(false);
     setGameClientRunning(false);
     setGameClientClosedByClient(false);
+    setGameServerAvailable(false);
     setGameLaunchParameters(undefined);
     setGameReconnectBusy(false);
     setLobbySearchStartedAt(undefined);
@@ -3147,6 +3167,7 @@ function Client({
     setGameInProgress(false);
     setGameLaunchParameters(undefined);
     setGameClientClosedByClient(false);
+    setGameServerAvailable(false);
     clearStoredGameSession();
 
     const result = await createRankedLobby({
@@ -3993,6 +4014,7 @@ function Client({
     setGameLaunchParameters(parameters);
     setGameClientRunning(true);
     setGameClientClosedByClient(false);
+    setGameServerAvailable(true);
     setPresenceStatus("ingame");
     publishActivePresence("IN_GAME");
     writeStoredGameSession({
@@ -4238,7 +4260,7 @@ function Client({
             </strong>
             {canReconnectGameClient(
               gameClientRunning,
-              gameClientClosedByClient,
+              gameServerAvailable,
               gameLaunchParameters,
             ) ? (
               <button
@@ -5129,6 +5151,8 @@ function Client({
         <SettingsModal
           accentColor={accentColor}
           backgroundChampion={backgroundChampion}
+          browserSecurity={browserSecurity}
+          browserSecurityOptions={browserSecurityOptions}
           chatPosition={chatPosition}
           clientAnimation={clientAnimation}
           friendRequestPolicy={friendRequestPolicy}
@@ -5143,6 +5167,7 @@ function Client({
           vision="Vision.ALL"
           onAccentColorChange={onAccentColorChange}
           onBackgroundChampionChange={onBackgroundChampionChange}
+          onBrowserSecurityChange={onBrowserSecurityChange}
           onChatPositionChange={onChatPositionChange}
           onClientAnimationChange={onClientAnimationChange}
           onClose={onSettingsClose}

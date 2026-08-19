@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Gamepad2, MessageCircle, Monitor, Search, Users } from "lucide-react";
+import { Gamepad2, MessageCircle, Monitor, Search, ShieldCheck, Users } from "lucide-react";
+import type { OAuthBrowserOption, OAuthBrowserSecurity } from "../auth/browserSecurity";
 import { uiAssetUrl } from "../uiAssets";
 import type { AppLocale } from "../i18n";
 import type {
@@ -17,6 +18,8 @@ import type { SettingsVision, Translate } from "../types/ui";
 type SettingsModalProps = {
   accentColor: string;
   backgroundChampion: BackgroundChampion;
+  browserSecurity: OAuthBrowserSecurity;
+  browserSecurityOptions: OAuthBrowserOption[];
   chatPosition: ChatPosition;
   clientAnimation: ClientAnimation;
   friendRequestPolicy: FriendRequestPolicy;
@@ -29,6 +32,7 @@ type SettingsModalProps = {
   uiScale: UiScale;
   onAccentColorChange: (accentColor: string) => void;
   onBackgroundChampionChange: (backgroundChampion: BackgroundChampion) => void;
+  onBrowserSecurityChange: (browserSecurity: OAuthBrowserSecurity) => void;
   onChatPositionChange: (chatPosition: ChatPosition) => void;
   onClientAnimationChange: (clientAnimation: ClientAnimation) => void;
   onClose: () => void;
@@ -42,7 +46,7 @@ type SettingsModalProps = {
   vision: SettingsVision;
 };
 
-type SettingsTab = "interface" | "game" | "social";
+type SettingsTab = "interface" | "game" | "security" | "social";
 
 const germanFlagUrl = uiAssetUrl("icons/flags/de.svg");
 const unitedKingdomFlagUrl = uiAssetUrl("icons/flags/gb.svg");
@@ -128,6 +132,8 @@ const chatPositionOptions: Array<{
 function SettingsModal({
   accentColor,
   backgroundChampion,
+  browserSecurity,
+  browserSecurityOptions,
   chatPosition,
   clientAnimation,
   friendRequestPolicy,
@@ -140,6 +146,7 @@ function SettingsModal({
   uiScale,
   onAccentColorChange,
   onBackgroundChampionChange,
+  onBrowserSecurityChange,
   onChatPositionChange,
   onClientAnimationChange,
   onClose,
@@ -157,6 +164,7 @@ function SettingsModal({
   const [backgroundChampionDropdownOpen, setBackgroundChampionDropdownOpen] =
     useState(false);
   const [backgroundChampionSearch, setBackgroundChampionSearch] = useState("");
+  const [browserSecurityDropdownOpen, setBrowserSecurityDropdownOpen] = useState(false);
   const [chatPositionDropdownOpen, setChatPositionDropdownOpen] = useState(false);
   const [clientAnimationDropdownOpen, setClientAnimationDropdownOpen] =
     useState(false);
@@ -202,6 +210,9 @@ function SettingsModal({
   const selectedChatPosition =
     chatPositionOptions.find((option) => option.value === chatPosition)?.labelId ??
     "settings-chat-position-right";
+  const selectedBrowserSecurity =
+    browserSecurityOptions.find((option) => option.id === browserSecurity) ??
+    browserSecurityOptions[0];
   const filteredBackgroundChampionOptions = backgroundChampionOptions.filter((option) =>
     option.label.toLowerCase().includes(backgroundChampionSearch.trim().toLowerCase()),
   );
@@ -214,6 +225,7 @@ function SettingsModal({
 
   function closeDropdowns() {
     setBackgroundChampionDropdownOpen(false);
+    setBrowserSecurityDropdownOpen(false);
     setChatPositionDropdownOpen(false);
     setClientAnimationDropdownOpen(false);
     setFriendRequestPolicyDropdownOpen(false);
@@ -231,6 +243,11 @@ function SettingsModal({
   function handleClientAnimationSelect(nextClientAnimation: ClientAnimation) {
     onClientAnimationChange(nextClientAnimation);
     setClientAnimationDropdownOpen(false);
+  }
+
+  function handleBrowserSecuritySelect(nextBrowserSecurity: OAuthBrowserSecurity) {
+    onBrowserSecurityChange(nextBrowserSecurity);
+    setBrowserSecurityDropdownOpen(false);
   }
 
   function handleBackgroundChampionSelect(nextBackgroundChampion: BackgroundChampion) {
@@ -308,6 +325,14 @@ function SettingsModal({
                 <span>{t("settings-social")}</span>
               </button>
             ) : null}
+            <button
+              className={activeSettingsTab === "security" ? "active" : ""}
+              type="button"
+              onClick={() => setActiveSettingsTab("security")}
+            >
+              <ShieldCheck size={17} />
+              <span>{t("settings-security")}</span>
+            </button>
           </nav>
 
           <div className="settings-pane">
@@ -699,6 +724,52 @@ function SettingsModal({
                 </div>
               </>
             ) : null}
+
+            {activeSettingsTab === "security" ? (
+              <div className="settings-row">
+                <span>{t("settings-browser-security")}</span>
+                <div
+                  className="settings-dropdown"
+                  onMouseDown={(event) => event.stopPropagation()}
+                >
+                  <button
+                    aria-expanded={browserSecurityDropdownOpen}
+                    aria-haspopup="listbox"
+                    className="settings-dropdown-trigger"
+                    type="button"
+                    onClick={() => {
+                      closeDropdowns();
+                      setBrowserSecurityDropdownOpen((open) => !open);
+                    }}
+                  >
+                    <span>
+                      {selectedBrowserSecurity
+                        ? getBrowserSecurityOptionLabel(selectedBrowserSecurity, t)
+                        : t("settings-browser-security-smart-screen")}
+                    </span>
+                  </button>
+
+                  {browserSecurityDropdownOpen ? (
+                    <div
+                      className="settings-dropdown-menu settings-dropdown-menu-scroll"
+                      role="listbox"
+                    >
+                      {browserSecurityOptions.map((option) => (
+                        <button
+                          aria-selected={browserSecurity === option.id}
+                          key={option.id}
+                          role="option"
+                          type="button"
+                          onClick={() => handleBrowserSecuritySelect(option.id)}
+                        >
+                          <span>{getBrowserSecurityOptionLabel(option, t)}</span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
           </div>
         </div>
 
@@ -741,6 +812,18 @@ function formatBackgroundChampionName(name: string) {
     .filter(Boolean)
     .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
     .join(" ");
+}
+
+function getBrowserSecurityOptionLabel(option: OAuthBrowserOption, t: Translate) {
+  if (option.kind === "smart-screen") {
+    return t("settings-browser-security-smart-screen");
+  }
+
+  if (option.kind === "system-browser") {
+    return t("settings-browser-security-system-browser");
+  }
+
+  return option.name ?? t("settings-browser-security-system-browser");
 }
 
 function getMinimumVisibleResolution(

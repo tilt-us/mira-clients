@@ -23,8 +23,8 @@ pub fn run() {
             game::launch_game,
             oauth::prepare_oauth_redirect_uri,
             oauth::cancel_oauth_attempt,
+            oauth::oauth_browser_options,
             oauth::start_oauth_window,
-            oauth::open_system_browser,
             game::stop_game_client
         ])
         .setup(|app| {
