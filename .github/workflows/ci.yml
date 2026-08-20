@@ -18,7 +18,7 @@ concurrency:
 jobs:
   deployment-publish:
     name: Deployment and Garage publish tests
-    runs-on: ubuntu-latest
+    runs-on: tilt-us-node-builder
 
     steps:
       - name: Checkout
@@ -34,7 +34,7 @@ jobs:
 
   mira-client:
     name: mira-client tests
-    runs-on: ubuntu-latest
+    runs-on: tilt-us-node-builder
     defaults:
       run:
         working-directory: apps/mira-client
@@ -60,7 +60,9 @@ jobs:
         run: npm ci
 
       - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium
+        # tilt-us-node-builder must provide Playwright Chromium's Linux libraries.
+        # Browser installation itself is performed in user space.
+        run: npx playwright install chromium
 
       - name: Unit tests with coverage
         run: npm run test:unit:coverage
@@ -95,7 +97,7 @@ jobs:
 
   mira-game-client:
     name: mira-game-client tests
-    runs-on: ubuntu-latest
+    runs-on: tilt-us-rust-builder
 
     steps:
       - name: Checkout
