@@ -39,10 +39,10 @@ test("passes the resolved environment to every release build and isolates Garage
 
   assert.equal(workflow.split(resolvedEnvironment).length - 1, 4);
   assert.doesNotMatch(workflow, /MIRA_ENV:\s*prod/);
-  assert.match(workflow, /runs-on: mira-clients-publisher/);
+  assert.match(workflow, /runs-on: tilt-us-publisher/);
   assert.match(workflow, /os: windows-latest/);
   assert.match(workflow, /os: macos-15/);
-  assert.match(workflow, /os: ubuntu-latest/);
+  assert.match(workflow, /os: tilt-us-rust-builder/);
   assert.equal(workflow.split('CI: "true"').length - 1, 2);
   assert.equal(workflow.split("--ci --verbose").length - 1, 3);
   assert.doesNotMatch(workflow, /workflow_run/);
