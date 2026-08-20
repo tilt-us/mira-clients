@@ -22,7 +22,7 @@ concurrency:
 jobs:
   prepare:
     name: Resolve deployment environment
-    runs-on: ubuntu-latest
+    runs-on: tilt-us-node-builder
     outputs:
       environment: ${{ steps.resolve.outputs.environment }}
       is_production: ${{ steps.resolve.outputs.is_production }}
@@ -37,6 +37,30 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Set up GitHub CLI
+        env:
+          GH_VERSION: 2.93.0
+          GH_SHA256_AMD64: 02d1290eba130e0b896f3709ffff22e1c75a51475ddb70476a85abc6b5807af0
+          GH_SHA256_ARM64: c55feb33684abba57e9909737340d5b39282257c0363e1edde6785ac4a413be7
+        run: |
+          set -euo pipefail
+
+          case "$(uname -m)" in
+            x86_64) gh_arch=amd64; gh_sha256="${GH_SHA256_AMD64}" ;;
+            aarch64|arm64) gh_arch=arm64; gh_sha256="${GH_SHA256_ARM64}" ;;
+            *) echo "Unsupported architecture for GitHub CLI: $(uname -m)"; exit 1 ;;
+          esac
+
+          archive="${RUNNER_TEMP}/gh_${GH_VERSION}_linux_${gh_arch}.tar.gz"
+          install_dir="${RUNNER_TEMP}/gh-${GH_VERSION}"
+          curl --fail --location --retry 3 --output "${archive}" \
+            "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${gh_arch}.tar.gz"
+          echo "${gh_sha256}  ${archive}" | sha256sum --check --status
+          mkdir -p "${install_dir}"
+          tar -xzf "${archive}" -C "${install_dir}" --strip-components=1
+          echo "${install_dir}/bin" >> "${GITHUB_PATH}"
+          "${install_dir}/bin/gh" --version
 
       - name: Resolve deployment environment
         id: resolve
@@ -172,7 +196,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: tilt-us-rust-builder
             label: linux
           - os: windows-latest
             label: windows
@@ -758,13 +782,37 @@ jobs:
       - build-mira-client
       - build-mira-installer
     if: needs.prepare.outputs.is_production == 'true'
-    runs-on: ubuntu-latest
+    runs-on: tilt-us-node-builder
 
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           path: release-artifacts
+
+      - name: Set up GitHub CLI
+        env:
+          GH_VERSION: 2.93.0
+          GH_SHA256_AMD64: 02d1290eba130e0b896f3709ffff22e1c75a51475ddb70476a85abc6b5807af0
+          GH_SHA256_ARM64: c55feb33684abba57e9909737340d5b39282257c0363e1edde6785ac4a413be7
+        run: |
+          set -euo pipefail
+
+          case "$(uname -m)" in
+            x86_64) gh_arch=amd64; gh_sha256="${GH_SHA256_AMD64}" ;;
+            aarch64|arm64) gh_arch=arm64; gh_sha256="${GH_SHA256_ARM64}" ;;
+            *) echo "Unsupported architecture for GitHub CLI: $(uname -m)"; exit 1 ;;
+          esac
+
+          archive="${RUNNER_TEMP}/gh_${GH_VERSION}_linux_${gh_arch}.tar.gz"
+          install_dir="${RUNNER_TEMP}/gh-${GH_VERSION}"
+          curl --fail --location --retry 3 --output "${archive}" \
+            "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${gh_arch}.tar.gz"
+          echo "${gh_sha256}  ${archive}" | sha256sum --check --status
+          mkdir -p "${install_dir}"
+          tar -xzf "${archive}" -C "${install_dir}" --strip-components=1
+          echo "${install_dir}/bin" >> "${GITHUB_PATH}"
+          "${install_dir}/bin/gh" --version
 
       - name: Publish release
         env:
@@ -860,7 +908,7 @@ jobs:
       - build-mira-game-client
       - build-mira-client
       - build-mira-installer
-    runs-on: mira-clients-publisher
+    runs-on: tilt-us-publisher
     environment: ${{ needs.prepare.outputs.github_environment }}
 
     steps:
